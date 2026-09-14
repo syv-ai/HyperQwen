@@ -45,3 +45,4 @@ dflash2-z-adaptive-emitted.patch
 dspark-draft-quant-config.patch
 vllm-pr54282-draft-gumbel-salt.patch
 mamba-align-retire-null-gaps.patch
+sse-keep-alive.patch
