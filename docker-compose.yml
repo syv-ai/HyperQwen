@@ -39,6 +39,8 @@ x-qwen: &qwen
   volumes:
     - ${MODELS_DIR:-./models}:/app/models
     - qwen-cache:/cache
+    # override the built-in prepare.sh (template-patch step is optional via HARDEN_TEMPLATES=0)
+    - ./docker/prepare.sh:/app/docker/prepare.sh:ro
 
 x-serve: &serve
   <<: *qwen
