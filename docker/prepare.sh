@@ -62,7 +62,11 @@ done
 # Some clients (JetBrains AI Assistant) send tool-call arguments as a JSON
 # array instead of an object; harden the templates so `|items` does not blow up
 # ("Can only get item pairs from a mapping.") once for every prepared model.
-python prepare/harden_chat_template.py
+# HARDEN_TEMPLATES=0 skips this: templates that do not match the known pattern
+# print "unknown" and would abort prepare under set -e.
+if [ "${HARDEN_TEMPLATES:-1}" != "0" ]; then
+  python prepare/harden_chat_template.py
+fi
 LEFT=$(state | sed 's/\bdflash2\b//')
 [ -z "${LEFT// /}" ] || { echo "prepare: steps still missing after run: $LEFT"; exit 1; }
 echo "prepare: model ready at $BASE$([ "${FAST_VARIANT:-1}" != 0 ] && echo " (+ $BASE-fast)")"
