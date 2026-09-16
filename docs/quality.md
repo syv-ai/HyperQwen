@@ -8,8 +8,9 @@ Three checks against this exact serving stack:
 
 **IFBench** ([AllenAI's](https://github.com/allenai/IFBench) out-of-distribution
 instruction-following benchmark, 299 prompts, official eval scripts), thinking
-enabled at `reasoning_effort: xhigh` (the model default), model-default
-sampling:
+enabled at `reasoning_effort: xhigh` (the **eval protocol**, matching the model
+card default — not the house serving default, which is `medium`; see
+[house-serving.md](house-serving.md)), model-default sampling:
 
 | accuracy | prompt-level | instruction-level |
 |---|---|---|

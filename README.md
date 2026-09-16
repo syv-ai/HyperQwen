@@ -840,6 +840,7 @@ bug, `python bench/residue_sweep.py <tag>` (all 128 residues) with
 | [docs/optimizations.md](docs/optimizations.md) | Every optimization in full: why it was needed, what it measured, which patch implements it. Includes the two speculative-decoding modes (MTP and DFlash2) and the lookup drafter. |
 | [docs/gotchas.md](docs/gotchas.md) | 18 things that each cost us hours — read before debugging something that looks like a vLLM bug. |
 | [docs/quality.md](docs/quality.md) | IFBench, perplexity and GSM8K per configuration. |
+| [docs/house-serving.md](docs/house-serving.md) | House window 64K and client `reasoning_effort=medium`, without a restart. |
 | [docs/docker.md](docs/docker.md) | The container image, and an independent WSL2 reproduction. |
 | [docs/long-context.md](docs/long-context.md) | 262k context with the KVarN 4/2-bit KV cache, what vLLM's own per-token-head KV modes are worth here, and how to run the DFlash2 drafter past 64k (`CTX=long`, 114-139k — worth it only for context reproduction). |
 | [batch/](batch/) · [single-user/](single-user/) | The two serving modes: full benchmark tables, every env knob, systemd units. |
