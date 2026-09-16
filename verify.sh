@@ -124,6 +124,28 @@ else: print("  WARN  draft head missing (prepare/build_draft_vocab.py --ids prep
 missing = [f for f in set(idx.values()) if not os.path.exists(d + f)]
 if missing: fail(f"safetensors shards missing: {missing}")
 else: ok(f"{len(set(idx.values()))} safetensors shards present")
+# duplicate tensors across shards: vLLM reads every key of every shard it opens,
+# not just the index-mapped ones, so a tensor that lives in more than its mapped
+# shard gets loaded twice — the second load wins, or a shape mismatch aborts the
+# boot far from the cause. This happens for real when a model dir is assembled by
+# hardlinking shards from the dir it was built from and one of them still carries
+# superseded tensors (e.g. an int8 MTP module surviving inside a hardlinked
+import struct
+def keys_of(f):
+    with open(d + f, "rb") as fh:
+        n = struct.unpack("<Q", fh.read(8))[0]
+        return set(k for k in json.loads(fh.read(n)) if k != "__metadata__")
+holders = {}
+for f in (f for f in os.listdir(d) if f.endswith(".safetensors") and ".bak" not in f):
+    for k in keys_of(f):
+        holders.setdefault(k, []).append(f)
+colliding = [(name, hs) for name, hs in
+             ((name, holders.get(name, [])) for name in idx) if hs != [idx[name]]]
+if colliding:
+    for name, hs in colliding:
+        fail(f"tensor {name} present in {hs}, index maps {idx[name]}")
+else:
+    ok(f"every index tensor lives in exactly its mapped shard (no duplicates across {len(set(idx.values()))} mapped + stray files)")
 sys.exit(1 if F else 0)
 EOF
 [ $? -ne 0 ] && FAILS=$((FAILS+1))
