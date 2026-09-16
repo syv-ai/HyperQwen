@@ -112,9 +112,29 @@ def ok(m): print("  PASS ", m)
 def fail(m):
     global F
     print("  FAIL ", m); F += 1
-# lm_head / embed int8
-if "lm_head.weight_packed" in idx and any(g["targets"] == ["re:.*lm_head$"] and g["weights"]["num_bits"] == 8 for g in groups.values()): ok("lm_head requantized to int8 (prepare/quant_lm_head.py)")
-else: fail("lm_head not requantized: run prepare/quant_lm_head.py")
+# lm_head requantized to int8 (prepare/quant_lm_head.py), or int4-GPTQ as the
+# drafter/ pipeline writes it (the shipped ...-AutoRound-fast layout). The width
+# is whatever config declares; what must hold is the packed geometry it implies,
+# so a config claiming int4 over int8 tensors (or vice versa) still fails here.
+lm_g = next((g for g in groups.values() if g.get("targets") == ["re:.*lm_head$"]), None)
+lm_bits = lm_g["weights"]["num_bits"] if lm_g else None
+if "lm_head.weight_packed" not in idx or lm_bits not in (4, 8):
+    fail(f"lm_head not requantized to int4/int8 (prepare/quant_lm_head.py; lm_head group says num_bits={lm_bits})")
+else:
+    tc = c.get("text_config", c)
+    V, K = tc.get("vocab_size"), tc.get("hidden_size")
+    sh = {}
+    with open(d + idx["lm_head.weight_packed"], "rb") as f:
+        import struct
+        n = struct.unpack("<Q", f.read(8))[0]
+        hdr = json.loads(f.read(n))
+    for k in ("lm_head.weight_packed", "lm_head.weight_scale"):
+        if k in hdr: sh[k] = tuple(hdr[k]["shape"])
+    want = {"lm_head.weight_packed": (V, K * lm_bits // 32), "lm_head.weight_scale": (V, K // 128)}
+    if sh == want:
+        ok(f"lm_head requantized to int{lm_bits}, packed geometry matches the declared width (prepare/quant_lm_head.py / fast variant)")
+    else:
+        fail(f"lm_head declares int{lm_bits} but packed geometry {sh} != implied {want}")
 if any(k.endswith("embed_tokens.weight_packed") for k in idx) and any(g["targets"] == ["re:.*embed_tokens$"] for g in groups.values()): ok("embed_tokens requantized to int8 (prepare/quant_embed.py)")
 else: fail("embed_tokens not requantized: run prepare/quant_embed.py")
 if "mtp.layers.0.mlp.down_proj.weight_packed" in idx and "mtp.layers.0.mlp.down_proj" not in ign: ok("MTP draft module quantized (prepare/quant_mtp.py)")
