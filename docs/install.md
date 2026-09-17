@@ -12,7 +12,7 @@ manual venv path is for hacking on the stack, or running it bare-metal.
 
 > **Python 3.14 works natively** — nothing in this repo needs changing, but
 > `python3.14-dev` does need installing. See [python-314.md](python-314.md),
-> with a full RTX 3090 reproduction of the tables below in
+> with a full RTX 3090 reproduction of the benchmark tables in
 > [docs/reproductions/native-3090.md](reproductions/native-3090.md).
 
 You need: a 24 GB Ampere or newer NVIDIA card, a recent driver, Python 3.12,
@@ -67,8 +67,8 @@ venv/bin/python prepare/fetch_fast_variant.py
 # optional: the W4A16 DFlash2 block drafter (1.2 GB) for SPEC=dflash2 single-user mode
 venv/bin/python prepare/fetch_dflash2.py
 # optional: a third-party checkpoint instead of the base model (e.g. the uncensored
-# build, ~18.6 GB, its own requant step; MODEL= serves it -- see "Third-party
-# checkpoints" above)
+# build, ~18.6 GB, its own requant step; MODEL= serves it --
+# see docs/third-party-checkpoints.md)
 venv/bin/python prepare/fetch_thirdparty.py
 venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A16
 
