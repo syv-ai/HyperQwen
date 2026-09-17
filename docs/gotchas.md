@@ -746,7 +746,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
        agent's heartbeat pinging between chat turns is exactly that — can
        each evict the other before its recheck: measured as 0-of-3 warm in a
        3-context round-robin on 24 GB
-       ([docs/wsl2-4090.md](wsl2-4090.md), retention section). The CPU
+       ([wsl2-4090.md](wsl2-4090.md), retention section). The CPU
        offload tier turns that back into 3-of-3 (a RAM restore instead of a
        re-prefill).
     5. **The isolating experiment.** Bypass every proxy and fire the same

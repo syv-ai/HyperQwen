@@ -257,7 +257,7 @@ The same server measured on random tokens (256 in, 1,024 out) reads anywhere fro
 tables above use real prompts. For comparison against another engine on this card,
 [ninfer-3090](https://github.com/Don-Chad/ninfer-3090) publishes 71.00 tok/s decode
 at C1 on its own protocol (short real prompts, thinking on); the caveats are in the
-[main README](../README.md#vs-ninfer-3090).
+[main README](../docs/benchmarks.md#vs-ninfer-3090).
 
 ### How the draft got cheap
 
@@ -331,7 +331,7 @@ DeltaNet layers can't verify a tree.
 
 ## Setup
 
-Do the [common setup](../README.md#setup) first (venv, model download,
+Do the [common setup](../docs/install.md) first (venv, model download,
 requantization, draft head, the fast variant via `prepare/fetch_fast_variant.py`, vLLM
 patches; `bash verify.sh --no-server` checks all of it). Then:
 
@@ -438,3 +438,76 @@ cp batch/qwen-serving.service ~/.config/systemd/user/   # or single-user/
 systemctl --user daemon-reload
 systemctl --user start qwen-serving
 ```
+
+## If you are the only user, do this
+
+The command above starts the conservative default — MTP speculation, 8 request
+slots, 64k context, 120 tok/s greedy at C1. Two settings are worth more than
+every other knob in this repo put together, and a third is worth a great deal on
+one particular workload:
+
+```bash
+printf 'SPEC=dflash2\nPREFIX_CACHE=1\n' >> .env
+# add DFLASH_TOKENS=15 if your answers quote your prompts — see below
+docker compose --profile single up -d
+```
+
+or, in the venv install:
+
+```bash
+venv/bin/python prepare/fetch_dflash2.py   # once, 1.2 GB (Docker's prepare step does it for you)
+SPEC=dflash2 PREFIX_CACHE=1 bash single-user/start_qwen.sh
+```
+
+`SPEC=dflash2` swaps Qwen's MTP head for the DFlash2 block drafter: 7 tokens
+proposed in one pass instead of 4 chained ones. `DFLASH_TOKENS=15` then lets the
+target verify 16 tokens per step — the drafter still proposes the 7 it was
+trained for, and the remaining positions are filled from the request's own
+context, which costs nothing to draft and is exactly right whenever the answer
+quotes the prompt. `PREFIX_CACHE=1` keeps the document you already sent, both
+its attention KV and its recurrent state. One request at a time, greedy, RTX
+3090 at 250 W:
+
+| decode | MTP (default) | `SPEC=dflash2` | `+ DFLASH_TOKENS=15` |
+|---|---|---|---|
+| 8 real chat prompts | 118 tok/s | 132 | **133** |
+| reproducing a 25k-token document | n/a* | 260 | **382** |
+| request slots / context | 8 / 64k | 8 / 64k | 4 / 56k |
+
+`VLLM_DFLASH2_CHAIN=1` adds drafter-free n-gram chains on top
+([#38](https://github.com/syv-ai/HyperQwen/issues/38), ported from
+@Dmtrii-tesla's fork with permission): while a request keeps reproducing its
+context, whole verify blocks come from history alone and the drafter's forward
+and graph replay are skipped until the first rejected token — +7% on the copy
+cell here (256.9 → 276 tok/s at `DFLASH_TOKENS=7`), flat on prose, greedy
+requests only by default (`patches/dflash2-ngram-chains.patch` explains why
+sampling keeps the drafter). Off by default.
+
+<sub>\* drafting from the context only exists in `SPEC=dflash2`. The two right
+columns are one server session, where run-to-run greedy divergence is ±3-5%;
+reproduce them with `venv/bin/python bench/labd_bench.py <tag> --ctx 20000`.</sub>
+
+`PREFIX_CACHE=1` is orthogonal to the other two and worth as much again in a
+chat client: a second turn against that same 25k-token document takes 0.56 s to
+first token instead of 22.4 s, with the answers unchanged token for token.
+
+**Read that table by column, not by its last cell.** `SPEC=dflash2` is the upgrade
+for everyone; `DFLASH_TOKENS=15` is for one workload. On chat it is worth 1%,
+because the eight positions past the drafter's own block are filled from the
+prompt and a chat answer does not quote the prompt — measured over
+`bench/prompts_real.jsonl`, positions 7-14 take **72 of 11,069 accepted tokens
+(0.65%)**, and @changtimwu measured exactly zero for them on a TP=2 box in
+[#22](https://github.com/syv-ai/HyperQwen/issues/22). What you pay for
+that 1% is half the request slots and 8k of context, because a 16-token verify
+block doubles the recurrent-state page every resident request holds (1.66 GiB
+against 0.88 by the gotcha-33 fit). So: set it if you are quoting documents or
+applying edits, where it is worth 47%, and leave it at the default 7 for a chat
+or agentic client. `DRAFT_TOKENS`/`DFLASH_TOKENS` is one variable you can flip
+per service.
+
+All of it is lossless: speculative decoding samples the same distribution as no
+speculation at all, the prefix cache resumes recurrent state rather than
+approximating it, and GSM8K reads 96.0-96.5% across the three columns.
+`SPEC=dflash2` is a one-user mode either way
+(see [concurrency](../docs/long-context.md#dflash2-at-240k-ctxhuge-kvarn-also-combines-with-specdflash2)).
+Every other knob: [single-user/](.).

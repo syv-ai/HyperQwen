@@ -2,7 +2,7 @@
 
 The published W4A16 quant of Qwen3.8-27B is not servable on 24 GB as it ships: two
 2.5 GB bf16 embedding matrices and an unquantized MTP draft module. These scripts
-fix that in place, on the CPU, once. They are the [Setup](../README.md#setup) steps,
+fix that in place, on the CPU, once. They are the [Setup](../docs/install.md) steps,
 and `docker compose run --rm prepare` (see [docker/prepare.sh](../docker/prepare.sh))
 runs exactly them, each skipped when its result is already in the model dir.
 

@@ -154,7 +154,7 @@ capacity caveat are in [docs/gotchas.md](../docs/gotchas.md) #49.
 
 ## Setup
 
-Do the [common setup](../README.md#setup) first (venv, model download,
+Do the [common setup](../docs/install.md) first (venv, model download,
 requantization, vLLM patches). Then:
 
 ```bash
