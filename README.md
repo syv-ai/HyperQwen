@@ -35,62 +35,41 @@ spare on a GPU we have never touched.
 
 ## Quick start
 
-The image is prebuilt and pushed to
-[ghcr.io](https://github.com/syv-ai/HyperQwen/pkgs/container/hyperqwen)
-on every commit — the build applies all `patches/` and runs `verify.sh` as its
-gate, so `latest` is always the current stack. The first start pulls it (9.5 GB),
-downloads and requantizes the model (~20 GB, once, into `./models`), and serves
-on port 18020. Pick a mode — one GPU serves one at a time:
-
 ```bash
 git clone https://github.com/syv-ai/HyperQwen && cd HyperQwen
+cp .env.example .env                      # PowerShell: Copy-Item .env.example .env
 
-cp .env.example .env                 # Linux / WSL
-# PowerShell: Copy-Item .env.example .env
-
-docker compose --profile single up -d    # one or a few people chatting
-docker compose --profile batch  up -d    # API backend, many concurrent requests
+docker compose --profile single up -d     # one or a few people chatting
+docker compose --profile batch  up -d     # API backend, many concurrent requests
 ```
 
-The example uses the recommended single-user `SPEC=dflash2` profile. If Docker
-Desktop is using WSL2, keep `VLLM_WSL2_ENABLE_PIN_MEMORY=1` enabled in `.env` or
-the V2 runner will abort with `RuntimeError: UVA is not available`. The example
-leaves API-key authentication disabled for local-only use; set `VLLM_API_KEY`
-before exposing the server beyond this machine.
+First start pulls the image (9.5 GB) and requantizes the model (~20 GB, once,
+into `./models`), then serves on `:18020`. One GPU runs one mode at a time.
+
+- **Before exposing it** — the server binds `0.0.0.0` with no auth:
+  `echo "VLLM_API_KEY=$(openssl rand -hex 24)" > .env`
+- **Docker Desktop on WSL2** — keep `VLLM_WSL2_ENABLE_PIN_MEMORY=1` in `.env`, or
+  the V2 runner aborts with `RuntimeError: UVA is not available`
+- **No compose, or no Docker at all** —
+  [docs/docker.md](docs/docker.md#plain-docker-no-compose) ·
+  [docs/install.md](docs/install.md)
+
+### Which mode
 
 | | **batch** → [batch/](batch/) | **single** → [single-user/](single-user/) |
 |---|---|---|
 | **best for** | API backends, pipelines, many concurrent requests | one or a few people chatting |
-| **64 concurrent** (128 in / 512 out) | **~1,035 tok/s** decode, 948 end-to-end | n/a — 8 slots |
-| **single stream** (C1) | 46 tok/s | **127 tok/s** |
+| **64 concurrent** (128 in / 512 out) | **~1,035 tok/s** decode, 948 e2e — ~1,222 with every layer int8 | n/a — 8 slots |
+| **single stream** (C1) | 46 tok/s | **127 tok/s** — 121 on the older MTP path |
 | **quoting its own prompt** | 46 tok/s | **381 tok/s** at 25k context |
+| **prefill**, 1k in | ~1,810 tok/s | ~1,440 — **~1,850-1,940** with `INT8_ACT=int8` |
+| **how** | 16-bit recurrent state, int8 tensor-core GEMMs | 7 drafts proposed per pass, 15 tokens verified per step off the context |
 
-**batch** — 16-bit recurrent state, int8 tensor-core GEMMs. Every layer int8
-raises it to ~1,222 / 1,042.
-
-**single** — `SPEC=dflash2` proposes 7 tokens in one pass (127 default, 130
-greedy). The older MTP path gives 121 / 120 at `CTX=fast` (64k), 96 / 102 at
-`CTX=long` (150k). When the answer quotes the prompt, DFlash2 drafts out of the
-context itself and verifies 15 tokens per step — that is the 381.
-
-**prefill** is a separate budget — ~1,810 tok/s batch, ~1,440 single, **~1,850-1,940
-with `INT8_ACT=int8`** ([full matrix](batch/README.md#prefill)).
-
-Both modes share one install; the mode is just which script you run. Speculation
-wins below ~8 concurrent users, plain batching above — earlier on long sessions,
-where a speculating request reserves recurrent-state pages the pool has few of
-([measurement](docs/long-context.md)). If the card is yours alone, see
-[If you are the only user](#if-you-are-the-only-user).
-
-The server binds `0.0.0.0` and is unauthenticated unless you give it a key:
-
-```bash
-echo "VLLM_API_KEY=$(openssl rand -hex 24)" > .env
-```
-
-Without compose: [docs/docker.md](docs/docker.md#plain-docker-no-compose). By
-hand in a venv: [docs/install.md](docs/install.md). How each number was won:
-[docs/optimizations.md](docs/optimizations.md).
+Speculation wins below ~8 concurrent users, plain batching above — earlier on long
+sessions, where a speculating request reserves recurrent-state pages the pool has
+few of ([measurement](docs/long-context.md)). Both modes share one install.
+[Full prefill matrix](batch/README.md#prefill) ·
+[how each number was won](docs/optimizations.md).
 
 ## If you are the only user
 
