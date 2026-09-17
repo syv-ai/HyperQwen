@@ -166,7 +166,7 @@ Two things fall out, and the second is the one worth carrying away:
   here, 351 vs 517 there): not a tradeoff, a loss.
 - **The 4090's per-stream advantage widens with N: +16% at N=1 → +89% at N=8.** This is
   consistent with, and extends, the README's own explanation of its +1.9% 4090 row
-  ([#32](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/32)): *batch-1 decode is
+  ([#32](https://github.com/syv-ai/HyperQwen/issues/32)): *batch-1 decode is
   bandwidth-bound, the extra compute has nothing to bite on.* Raise N and the forward pass
   goes compute-bound, so sm_89 pulls away. **Sizing a card from a single-stream benchmark
   under-buys for concurrency by roughly 5× the error you think you are making.**
@@ -193,7 +193,7 @@ token counts differ per box, per run, per rep by design.
 
 Every env-toggle A/B on this stack is a **cross-boot** comparison (the toggle needs a
 restart), so it is only readable against a measured boot-to-boot floor. Ours, on this build
-(`fa11c73`, pre-[#38](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/38)), warmed,
+(`fa11c73`, pre-[#38](https://github.com/syv-ai/HyperQwen/issues/38)), warmed,
 median of 2 passes per boot, env read back from `/proc/<pid>/environ` rather than trusted from
 the shell:
 

@@ -37,7 +37,7 @@ speculates, and its numbers are in the next table; do not compare across the two
 ### What it costs in single-user mode, which is where it hurts
 
 The 1.22× above is batch mode at 100k. Single-user mode speculates, and the tax is
-much larger there — reported in [#11](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/11)
+much larger there — reported in [#11](https://github.com/syv-ai/HyperQwen/issues/11)
 and reproduced here. MTP-3, one request, 112,648-token prompts, `PREFIX_CACHE=1`,
 two general tasks (summarize, answer-a-question), streamed so prefill is excluded
 (`bench/labd_bench.py <tag> --ctx 100000 --corpus ~/bench/labd_corpus_long.txt

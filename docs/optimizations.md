@@ -159,7 +159,7 @@ two interleaved arms per condition, each reproducing to 0.1%): 1,167 / 1,126 /
 1,012 tok/s at 4k / 16k / 51k against 1,164 / 1,114 / 980 stock — +0.3%,
 +1.1%, +3.3%, the gain growing with context exactly as the attention share
 does. A WSL2 3090 measured the same standalone cell 1-6% negative
-([#62](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/62)), so treat
+([#62](https://github.com/syv-ai/HyperQwen/issues/62)), so treat
 `PREFILL_ATTN` alone as noise-to-slightly-positive and pair it with
 `INT8_ACT`, where the same kernel is worth +1.8% at 16k and +4.5% at 51k on
 top (1,826 / 1,491 against 1,793 / 1,427).

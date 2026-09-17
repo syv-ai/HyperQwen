@@ -333,7 +333,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     warns you. On a card you also render on, drop `KV_MEM` by at least what the
     desktop is holding (`nvidia-smi` before you start the server): `KV_MEM=4000000000`
     was enough for the reporter of
-    [#12](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/12). Setting `KV_MEM=`
+    [#12](https://github.com/syv-ai/HyperQwen/pull/12). Setting `KV_MEM=`
     empty falls back to `GPU_UTIL`, which profiles the actual free memory instead.
 32. **A model dir with no `tokenizer.json` is not an error to transformers — it is an
     empty vocabulary, and vLLM reports it as a reasoning-parser problem.**
@@ -350,7 +350,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
 
     which names neither the tokenizer nor the directory, and prints the strings as
     empty because they are the *unset* config fields, not the ones the parser supplied.
-    Reported as [#15](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/15), where it
+    Reported as [#15](https://github.com/syv-ai/HyperQwen/issues/15), where it
     looked like a `SPEC=dflash2` bug: it reproduces with no speculative config at all,
     and the reason only the single-user modes failed is that they serve
     `models/Qwen3.8-27B-W4A16-AutoRound-fast` while batch mode serves the base dir.
@@ -372,14 +372,14 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     box running `MAX_LEN=240000` with a tool parser attached — 400 tokens of fluent
     Danish that open with a malformed `<think>` under `enable_thinking=false` and
     invent a translation task, `2/1146` verbatim at 3.38 tok/step
-    ([#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25), mjungnickel18).
+    ([#25](https://github.com/syv-ai/HyperQwen/issues/25), mjungnickel18).
     So do not test for a symptom. The only property all three share is that the copy
     did not come back, which is what `bench/verbatim.py` scores and what both sweeps
     now judge on.
 
     Two conditions, and it took two people to see both. The **hit** is necessary:
     a fresh server, one request, no warm-up, never collapses at any length
-    ([#13](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/13), mjungnickel18) —
+    ([#13](https://github.com/syv-ai/HyperQwen/pull/13), mjungnickel18) —
     which is also why `PREFIX_CACHE=0` always looked clean. The **residue** decides
     whether a hit corrupts, and it is a clean function of the draft count:
 
@@ -466,7 +466,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     graphs, answers `/health`, and then dies on the first concurrent batch with
     `torch.OutOfMemoryError` inside the engine — `EngineDeadError`, every request 500,
     `/health` still 200. Same shape as gotcha 15 and as
-    [#18](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/18): a memory bill that
+    [#18](https://github.com/syv-ai/HyperQwen/issues/18): a memory bill that
     the startup profile does not see. `single-user/start_qwen.sh` now caps the derived
     `CG` at 64, which leaves every shipped default untouched and makes the oversized
     batches run piecewise instead of not at all. Set `CG` explicitly to override, and
@@ -496,7 +496,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     Reproduced twice with byte-identical counters.
 
     The seat count is only one door into that shortfall.
-    [@mjungnickel18 named the real subject](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25#issuecomment-5392694387)
+    [@mjungnickel18 named the real subject](https://github.com/syv-ai/HyperQwen/issues/25#issuecomment-5392694387)
     — *how much non-KV headroom does the engine need*, with `MAX_SEQS` and `KV_MEM` as
     two doors into the same room — after a `KV_MEM` pin on his box produced a failure
     this table does not contain (below). The same room walked through the `KV_MEM`
@@ -521,7 +521,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     configuration anywhere on either ladder was ever merely *slow*.
 
     That last sentence is the platform note, and it is the part that cost a week of
-    cross-box debugging in [#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25):
+    cross-box debugging in [#25](https://github.com/syv-ai/HyperQwen/issues/25):
     on bare-metal Linux this failure has exactly two states, full speed or a loud named
     `torch.OutOfMemoryError`. Under WSL2 the WDDM driver backs the failed mapping with
     host memory instead, so the same exhaustion produces **no error at all** — just
@@ -529,7 +529,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     @mjungnickel18 under a `KV_MEM` pin that left ~630 MiB free). A WSL user who raises
     `KV_MEM` gets the context they asked for, no warning, and 5–10× the TTFT, with
     nothing in the logs and no `nvidia-smi` number that flags it. The two boxes in
-    [#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25) make it concrete: the
+    [#25](https://github.com/syv-ai/HyperQwen/issues/25) make it concrete: the
     same pin (`KV_MEM=6871947673` at `CTX=fast`, `MAX_SEQS=2`; the boxes produce
     byte-identical pool geometry, 81,368 tokens at the fixed sibling pin) read
     ~630 MiB free after boot on WSL and served — slowly — for four days, while on bare
@@ -539,7 +539,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     prompt-length ladder against a known-good rate. On WSL, ladder any `KV_MEM` above
     stock before trusting it; the launcher now prints a warning when the pin exceeds
     the profile default. A cheaper live check, from a second WSL2 box in
-    [#61](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/61): `nvidia-smi dmon`
+    [#61](https://github.com/syv-ai/HyperQwen/issues/61): `nvidia-smi dmon`
     while it generates. Healthy decode on a 24 GB card is high SM occupancy *and*
     high power draw; host-backed memory shows as **SM near 100% at only 100-200 W**,
     because the SMs are stalled on PCIe rather than doing work. That reporter's rule
@@ -559,7 +559,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     residency were already useless (they queue, then preempt). Past 12 at `CTX=huge`
     they stop being useless and become fatal.
 36. **Tool calling / structured output under a speculator killed requests at the
-    grammar's end** ([#31](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/31),
+    grammar's end** ([#31](https://github.com/syv-ai/HyperQwen/issues/31),
     fixed by `patches/xgrammar-spec-terminated.patch`). A speculative verify window
     can legally accept tokens past the point where the xgrammar matcher terminates —
     the newline after a closing `</tool_call>` tag, the stop token itself, anything
@@ -584,7 +584,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     predates (and survives) this fix.
 37. **sm80 (GA100) Marlin repack can Xid-31 the whole card under memory
     pressure — and the kernel in the traceback is innocent.** Community
-    finding, [@ahnguyen17 in #27](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/27#issuecomment-5397500895),
+    finding, [@ahnguyen17 in #27](https://github.com/syv-ai/HyperQwen/issues/27#issuecomment-5397500895),
     on a CMP 170HX 40 GB: with ~27 GB resident, `gptq_marlin_repack`'s GB-scale
     int64 intermediates (k×n int64 ≈ 1.4 GB per 27B layer, several live at
     once) churn sm80 VMM mappings until an unrelated, trivially correct
@@ -658,7 +658,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     fits beside a tier one day refuses at KV sizing the next. Sized right,
     the tier behaves as a high-churn working set rather than a resident
     store: the reporter in
-    [#95](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/95) measured
+    [#95](https://github.com/syv-ai/HyperQwen/issues/95) measured
     658 GiB CPU->GPU, 541 GiB GPU->CPU and 15.95M external prefix hits
     through a 12 GiB tier in ~3 h (dfein38347g).
     And when eviction probing, keep the resend prompt BYTE-identical: a
@@ -666,7 +666,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     convincing, fake "per-request hash instability" (ask how we know).
 39. **"Every request re-prefills" is measurable, and the cause is usually the
     client's bytes, not the cache.** Reported against an agent client in
-    [#47](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/47) (44 s mean
+    [#47](https://github.com/syv-ai/HyperQwen/issues/47) (44 s mean
     TTFT at ~44k context, i.e. a full recompute per turn, while plain chat
     clients on the same server sat at the documented decode rates). Work the
     list in order:
@@ -684,7 +684,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
        DOWN to a multiple of the hybrid attention block `B` — and the final
        block of a cached request is never served, because its recurrent
        state was never checkpointed at that boundary. Measured on the box
-       over two block sizes ([#102](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/102)):
+       over two block sizes ([#102](https://github.com/syv-ai/HyperQwen/issues/102)):
 
            cached_tokens = max(0, floor(n_prefix / B) - 1) * B
 
@@ -757,7 +757,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
 40. **`CTX=long`'s fp8 KV cache has exactly one attention backend on sm86, and
     it is the one cell of the matrix this repo cannot A/B.** `FLASH_ATTN`
     refuses fp8 KV at startup ("requires FA3 on SM90 or FA4 on SM100" —
-    [#34](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/34)) and
+    [#34](https://github.com/syv-ai/HyperQwen/issues/34)) and
     `TRITON_ATTN` refuses it too ("native FP8 (fp8e4nv) requires SM89+",
     measured on the reference 3090), so the tier always auto-selects
     FlashInfer. #34 tracks a deterministic Xid-31 MMU write-fault (same
@@ -819,11 +819,11 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     intact. Unreachable on sm86: Triton refuses fp8 KV below SM89
     ("native FP8 (fp8e4nv) requires SM89+"), so int8 is the only
     flashinfer-free option on a 3090. Reported and verified on a 4090 by a
-    contributor ([#87](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/87)).
+    contributor ([#87](https://github.com/syv-ai/HyperQwen/issues/87)).
 41. **On a low-RAM host, don't let the stock loader race page-cache eviction —
     stream the weights.** A 16 GB host (~10 GiB actually free) died loading the
     15.9 GiB checkpoint at shard 5/8
-    ([#39](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/39)). Measured
+    ([#39](https://github.com/syv-ai/HyperQwen/issues/39)). Measured
     here under a 10 GiB cgroup cap standing in for that box: the **stock
     loader's memory peak was the cap to the byte** (10,737,418,240) — it loads
     by consuming everything and betting reclaim keeps up, which a fast NVMe
@@ -982,7 +982,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     prewarmed.
 46. **`prompt_logprobs` is wrong on `CTX=huge` + `SPEC=mtp` + prefix caching, and
     the NaN 400s are only its visible half.** Reported as
-    [#64](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/64) from a WSL2
+    [#64](https://github.com/syv-ai/HyperQwen/issues/64) from a WSL2
     3090 — `bench/quality_battery.py --ppl-only` failing with
     `{"message":"Out of range float values are not JSON compliant: nan"}` on
     some documents, and perplexity drifting 3.7% between identical runs.
@@ -1025,7 +1025,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
 47. **`DFLASH_TOKENS=15` asserted at engine start on the int4 path, because the
     drafter's promoted block only has to *cover* the primary page, not divide
     it.** Filed as
-    [#63](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/63), fixed in
+    [#63](https://github.com/syv-ai/HyperQwen/issues/63), fixed in
     `patches/hybrid-sw-block-promote.patch`. `alternative.sh`
     (`int4_per_token_head`) died in a bare `assert` in
     `kv_cache_coordinator.py` at `DFLASH_TOKENS=15` — at any `MAX_LEN`, with
@@ -1058,7 +1058,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     model length is 180320`, a clear `ValueError` rather than an assert).
 48. **A benchmark row without its compile-cache state is not reproducible, because the
     autotuner's timing race picks the kernels and the kernels pick the trajectory.**
-    Filed as [#75](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/75). Six Triton
+    Filed as [#75](https://github.com/syv-ai/HyperQwen/issues/75). Six Triton
     kernels in the chunked Gated DeltaNet path are autotuned at first use; vLLM caches the
     winners, but a fresh container or `VLLM_DISABLE_COMPILE_CACHE=1` re-runs the race, and a
     different winner is a different reduction order, a different last bit, and at greedy a
@@ -1074,7 +1074,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     (state it, or pin `--kv-cache-memory`).
 49. **A high acceptance rate can mean the drafter is good or the generation has collapsed,
     and the counter cannot tell you which.** Degenerate text is trivially predictable. One
-    repetition loop during the [#73](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/73)
+    repetition loop during the [#73](https://github.com/syv-ai/HyperQwen/issues/73)
     work scored 79.7% acceptance per drafted token against a normal 35 to 45%, with a
     distinct-word ratio of 0.051 against 0.77 to 0.83, and it was echoing the instruction
     appended to its own prompt. So acceptance is heavy-tailed, a t-test over a dozen short
@@ -1126,7 +1126,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     is a function of seed and position, so repeat boots on a quiet box come back bit-identical
     on every counter, and "reproducible to three significant figures from two passes" measures
     a deterministic harness rather than bounding an effect. The 16% DFlash2 acceptance
-    regression in [#73](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/73) was invisible
+    regression in [#73](https://github.com/syv-ai/HyperQwen/issues/73) was invisible
     on one README prompt at 256 output tokens with six seeds *and* with thirty (seed spread
     ten points, sd about four), and reproduced immediately through `bench/prefill_ab.sh` on the
     cohort at 1024. Prompt choice alone moved acceptance from 22.7% on the cohort to 36.8% on a
@@ -1189,7 +1189,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
       card it named.
 
     Measured in the
-    [#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25) comments of
+    [#25](https://github.com/syv-ai/HyperQwen/issues/25) comments of
     2026-09-05 (items 13 and 14, and the corrections to items 9 and 11).
 
 54. **`verify.sh` reported two patches as not applied on a correctly patched
@@ -1209,10 +1209,10 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     ```
 
     It cost a cross-card comparison in
-    [#89](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/89), where a real
+    [#89](https://github.com/syv-ai/HyperQwen/pull/89), where a real
     paired result on the native 3090 was discounted as "not like-for-like"
     on the strength of that false negative. Fixed in
-    [#92](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/92): the hunks are
+    [#92](https://github.com/syv-ai/HyperQwen/pull/92): the hunks are
     gone, the installed tree no longer collects them, and a box that ran the
     cleanup verifies green. The general rule is that a patch which creates a
     file makes that file part of what verification demands, so a patch should
@@ -1244,7 +1244,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
 56. **Registering an env var in vLLM's `envs.py` puts it in the torch.compile
     cache key, so `VLLM_INT4_MQ_3D_DEBUG=1` now recompiles from cold.**
     `patches/int4-mq3d-envs.patch`
-    ([#93](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/93)) registers
+    ([#93](https://github.com/syv-ai/HyperQwen/pull/93)) registers
     `VLLM_INT4_MQ_3D` and `VLLM_INT4_MQ_3D_DEBUG`. That is not cosmetic:
     `vllm/envs.py:compile_factors()` starts from every known vLLM env var,
     drops only the names in its `ignored_factors` set, and hashes the rest;

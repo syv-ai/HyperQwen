@@ -43,7 +43,7 @@ before exposing the server beyond this machine.
 `bench/prompts_real.jsonl`, 1024 output tokens, C1, decode rate taken as
 `C / mean TPOT`. Quote them against that harness: a client with a different output
 length is not measuring the same thing, and mixing the two is how
-[#3](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/3) got confusing.</sub>
+[#3](https://github.com/syv-ai/HyperQwen/issues/3) got confusing.</sub>
 
 > Version note: this branch pins vLLM 0.28.0; the throughput and quality tables are
 > retained as reference baselines while the v0.28.0 GPU matrix is being re-measured.
@@ -126,7 +126,7 @@ its attention KV and its recurrent state. One request at a time, greedy, RTX
 | request slots / context | 8 / 64k | 8 / 64k | 4 / 56k |
 
 `VLLM_DFLASH2_CHAIN=1` adds drafter-free n-gram chains on top
-([#38](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/38), ported from
+([#38](https://github.com/syv-ai/HyperQwen/issues/38), ported from
 @Dmtrii-tesla's fork with permission): while a request keeps reproducing its
 context, whole verify blocks come from history alone and the drafter's forward
 and graph replay are skipped until the first rejected token — +7% on the copy
@@ -148,7 +148,7 @@ because the eight positions past the drafter's own block are filled from the
 prompt and a chat answer does not quote the prompt — measured over
 `bench/prompts_real.jsonl`, positions 7-14 take **72 of 11,069 accepted tokens
 (0.65%)**, and @changtimwu measured exactly zero for them on a TP=2 box in
-[#22](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/22). What you pay for
+[#22](https://github.com/syv-ai/HyperQwen/issues/22). What you pay for
 that 1% is half the request slots and 8k of context, because a 16-token verify
 block doubles the recurrent-state page every resident request holds (1.66 GiB
 against 0.88 by the gotcha-33 fit). So: set it if you are quoting documents or
@@ -210,7 +210,7 @@ WSL for native Windows does not recover it: the same contributor ran
 `aivrar/vllm-windows-build` (0.27.1, 18 of 19 patches apply after a CRLF→LF
 pass) on the same box and measured native Windows *slower* than WSL2 — 66.0
 vs 76.2 tok/s across the task mix, a 4.4× longer warm boot, and the same
-WDDM paging behavior underneath ([#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25)).
+WDDM paging behavior underneath ([#25](https://github.com/syv-ai/HyperQwen/issues/25)).
 The bare-metal column is reachable from a Windows box only by putting Linux
 on the metal.
 
@@ -292,7 +292,7 @@ which take a different number of steps are not comparable. Past 8k the two are w
 noise on bare metal (111.8 vs 109.3 tok/s at 8k, 78.2 vs 86.1 at 16k, 68.9 vs 73.3 at
 32k, 58.4 vs 56.0 at 50k, unique prompts, one server per mode). Under GPU passthrough on
 a VM the same comparison costs 2-3x, reported in
-[#13](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/13) and consistent with the
+[#13](https://github.com/syv-ai/HyperQwen/pull/13) and consistent with the
 uncaptured verify being launch-bound: launches that are nearly free here are not free
 there.
 
@@ -302,7 +302,7 @@ more than one user, and what the long verify block costs.
 **It is a one-stream mode, and the limit is the pool rather than `MAX_SEQS`.** An
 earlier version of this paragraph said the knob was the seat count and that
 `MAX_SEQS=8` lifts it. It does not, and @mjungnickel18 was right to push back in
-[#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25). A *resident* request
+[#25](https://github.com/syv-ai/HyperQwen/issues/25). A *resident* request
 reserves 1+k = 8 recurrent-state slots — **15.8% of the 69,758-token `CTX=fast` pool**,
 ~0.82 GiB of its pinned 5.20, which is the 0.88 GiB [gotcha 33](docs/gotchas.md) fitted
 from the memory model — before it holds one token of context. Seven fit with 128-token
@@ -408,7 +408,7 @@ back, and `bench/verbatim.py` self-tests that rule against all three shapes.
 
 **Ready-made:**
 [leminkozey/Qwen3.8-27B-Uncensored-W4A16-AutoRound](https://huggingface.co/leminkozey/Qwen3.8-27B-Uncensored-W4A16-AutoRound)
-([#45](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/45)) is an
+([#45](https://github.com/syv-ai/HyperQwen/issues/45)) is an
 abliterated Qwen3.8-27B already quantized with this repo's own recipe —
 AutoRound W4A16 body plus the `prepare/` head requant — so it serves without
 any preparation. Its author measured ~100 tok/s warm at `SPEC=dflash2
@@ -419,7 +419,7 @@ community-verified; not benchmarked on this repo's reference box.
 **Any other export**, including single-shard and asymmetric-AWQ ones the base
 model's three `quant_*.py` scripts cannot open, goes through the streaming
 requant (contributed in
-[#37](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/37)). The worked
+[#37](https://github.com/syv-ai/HyperQwen/pull/37)). The worked
 example is
 [philbert440/Qwen3.8-27B-Uncensored-Aggressive-W4A16-AWQ](https://huggingface.co/philbert440/Qwen3.8-27B-Uncensored-Aggressive-W4A16-AWQ)
 — an abliterated (de-refused) Qwen3.8-27B, W4A16 AWQ, with the vision tower and
@@ -490,7 +490,7 @@ padded-page view error under the hybrid block-promotion geometry, and a
 causal-only assert plus missing per-seq-causal plumbing in the int4 Triton
 kernel, which the drafter's 8-row draft block needs
 (`patches/int4-kv-per-token-head.patch`, contributed in
-[#42](https://github.com/syv-ai/qwen38-27b-rtx3090/pull/42) by @lachhabw).
+[#42](https://github.com/syv-ai/HyperQwen/pull/42) by @lachhabw).
 
 The trade: the Triton attention backend plus the per-step int4 unpack cost
 about 20% of decode against the shipped config on short prompts (~86 vs ~104
@@ -531,11 +531,11 @@ another, and 4 and 3 do neither way; pipeline parallelism needs an even layer
 split, and 64 does not divide by 3. So on a three-card box the third card
 cannot join the engine — run a TP=2 engine on two cards plus a second
 standalone engine on the third
-([#104](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/104)), and if both
+([#104](https://github.com/syv-ai/HyperQwen/issues/104)), and if both
 serve containers share one host, set `VLLM_OFFLOAD_KEEP_SHM=1` on both: each
 launcher's stale-offload-region reaper only sees its own container's processes
 and would delete the other engine's live region
-([#33](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/33)).
+([#33](https://github.com/syv-ai/HyperQwen/issues/33)).
 
 Under Docker, the same two knobs live in `.env` — `GPU_COUNT` says how many
 cards the container gets, `EXTRA_ARGS` says how many the engine uses, and
@@ -575,7 +575,7 @@ either fits at boot or refuses at boot, instead of OOMing on the first
 request, and it is the only way two benchmark arms are comparable.
 
 What the second card is worth is now measured, not assumed —
-[#40](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/40) ran a controlled
+[#40](https://github.com/syv-ai/HyperQwen/issues/40) ran a controlled
 1-vs-2×3090 A/B on this harness (same box, same install, PCIe 4.0 x8, **no
 NVLink**, 275 W):
 
@@ -595,14 +595,14 @@ NVLink**, 275 W):
   (same issue) lost 27% at C1 with the lookup-filled tail accepting nothing,
   which is under diagnosis. The launcher warns.
 - NVLink appears to buy little:
-  [#7](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/7)'s NVLink box at
+  [#7](https://github.com/syv-ai/HyperQwen/issues/7)'s NVLink box at
   330 W and #40's PCIe-x8 box at 275 W land within a few percent of each other
   at C1.
 - **Past two cards, or on a consumer board with the cards on separate PCIe root
   ports, you may need `NCCL_P2P_LEVEL=SYS`** and
   `EXTRA_ARGS="--disable-custom-all-reduce"`. Reported from a 4x RTX 5060 Ti box
   on a community-patched P2P driver
-  ([#105](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/105)): NCCL would
+  ([#105](https://github.com/syv-ai/HyperQwen/issues/105)): NCCL would
   not bring up peer-to-peer across four separate root ports until P2P was forced
   down to `SYS`, and vLLM's custom all-reduce faulted on that driver even at
   TP=2. Neither is reproducible on this repo's single-card box, so treat both as
@@ -615,10 +615,10 @@ NCCL_P2P_LEVEL=SYS SPEC=dflash2 PREFIX_CACHE=1 \
 ```
 
 Also reported working: **2× RTX 5060 Ti 16 GB**
-([#22](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/22)) — the "would
+([#22](https://github.com/syv-ai/HyperQwen/issues/22)) — the "would
 not fit on one card" case — and **4× RTX 5060 Ti 16 GB** (TP4, sm120, PCIe 4.0
 x8, 180 W, community-patched P2P driver,
-[#105](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/105)). The tok/s
+[#105](https://github.com/syv-ai/HyperQwen/issues/105)). The tok/s
 numbers in #105 are not quoted here: its two arms moved drafter, KV dtype and
 prefix cache together, so the ratio is a profile delta rather than a drafter
 delta. The graph budget and `MAX_SEQS` defaults are still single-card
@@ -653,7 +653,7 @@ prefix caching on, cached prefixes (and, under `--mamba-cache-mode align`,
 their recurrent-state pages) stay resident through the cohort ladder, so the
 DFlash2 residency ceiling bites earlier and this cell reads ~324 tok/s with a
 2-3 s TTFT on the current stack — independently measured at 321.8 in
-[#40](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/40), which is what
+[#40](https://github.com/syv-ai/HyperQwen/issues/40), which is what
 prompted the re-measurement. C1–C4 read the same or slightly better than the
 table. One card, many concurrent users: `SPEC=mtp` remains the right mode.
 
@@ -691,7 +691,7 @@ Community reproductions of the single-user headline number, harness runs first.
 
 **Set the power limit before you compare anything.** Every number in this repo
 is an RTX 3090 at 250 W, and on this card that is not a soft preference. A
-sustained-load ladder from [#62](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/62)
+sustained-load ladder from [#62](https://github.com/syv-ai/HyperQwen/issues/62)
 (14 minutes per cell, same service): 200 W gives 57.5 tok/s at 781 MHz, 250 W
 gives 85.6 at 978 MHz, and 280 W gives 86.7 — it hits 90 °C within two minutes,
 pins the fan at 100% and throttles back to the same throughput. Prefill loses
@@ -702,7 +702,7 @@ noise.
 | card | power | C1 decode | notes | source |
 |---|---|---|---|---|
 | RTX 3090 (reference) | 250 W | 133 tok/s | pool 57,669 tok, ppl 8.09 | this README |
-| RTX 4090 | 450 W | **135.5 tok/s** | pool 57,669 and ppl 8.0921 reproduce exactly; no-spec control 60.3 (DFlash2 worth 2.31x); +1.9% from ~8% more bandwidth — batch-1 decode is bandwidth-bound, the extra compute has nothing to bite on | [#32](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/32) |
+| RTX 4090 | 450 W | **135.5 tok/s** | pool 57,669 and ppl 8.0921 reproduce exactly; no-spec control 60.3 (DFlash2 worth 2.31x); +1.9% from ~8% more bandwidth — batch-1 decode is bandwidth-bound, the extra compute has nothing to bite on | [#32](https://github.com/syv-ai/HyperQwen/issues/32) |
 
 Measured with their own clients rather than the harness — comparable to each
 other only loosely, and not rows for the table above:
@@ -710,13 +710,13 @@ other only loosely, and not rows for the table above:
 - **CMP 170HX 40 GB (GA100, sm80)**: 133.7 tok/s median (3x900 tok, greedy) on
   the shipped fast target — the first sm80 datapoint, level with the 3090 —
   and 97.8 tok/s on their own w8a16 int8 target after the sm80 repack
-  workaround in [#27](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/27)
+  workaround in [#27](https://github.com/syv-ai/HyperQwen/issues/27)
   (gotcha 41).
 - **RTX 5090 32 GB (sm120)**: ~410-449 tok/s on code and ~198 on prose at
   `CTX=fast`, 500 W cap, roughly flat out to `CTX=huge` at 240k — different
   prompts, output length and rate definition, so deliberately not in the table
   (their own insistence, and correct). Setup gotchas and the full ladder:
-  [#35](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/35).
+  [#35](https://github.com/syv-ai/HyperQwen/issues/35).
 - **RTX 4090, Windows 11 / WSL2 (Docker path)**: reproduces with zero repo
   changes; CTX ladder incl. huge's pool byte-identical to the 3090 reference
   (268,169), concurrency ladder to N=8, and a measured both-ways case for
@@ -726,18 +726,18 @@ other only loosely, and not rows for the table above:
   real-task numbers on the MTP + FP8 daily-driver profile — 62 tok/s decode on
   QA over the document, TTFT 5.4 s → 0.33 s on a repeat turn. Also the
   `nvidia-smi dmon` detector for WSL2 host-backed memory now in gotcha 43 —
-  [#61](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/61).
+  [#61](https://github.com/syv-ai/HyperQwen/issues/61).
 - **RTX 3090, Windows 11 / WSL2**: independent confirmation of the int8 prefill
   stack on Ampere — `INT8_ACT=int8` +59%/+57%/+37% at 5k/21k/66k, the int8-QK
   attention adding +1.8% at 21k and +6.3% at 66k on top, against this repo's
   +2.7% at 16k and +5.3% at 51k. Plus the power-limit ladder quoted above —
-  [#62](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/62).
+  [#62](https://github.com/syv-ai/HyperQwen/issues/62).
 - **Dual-GPU reports**: the controlled 1-vs-2×3090 A/B in
-  [#40](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/40) (+16–35%,
+  [#40](https://github.com/syv-ai/HyperQwen/issues/40) (+16–35%,
   161.6 C1 greedy at 275 W, PCIe x8 without NVLink; independently reproduced
   in-thread at 153.6/250 W by a second dual-3090 box), the NVLink dual 3090 in
-  [#7](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/7), dual 5060 Ti in
-  [#22](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/22). See "More
+  [#7](https://github.com/syv-ai/HyperQwen/issues/7), dual 5060 Ti in
+  [#22](https://github.com/syv-ai/HyperQwen/issues/22). See "More
   than one GPU" above for what transfers.
 
 ### Why this isn't just `vllm serve`
