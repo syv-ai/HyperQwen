@@ -128,8 +128,10 @@ happens when the streams are big. Where it is *not* the better choice:
   5 sliding-window layers from padding the target's attention/GDN layers (105 →
   78 KB of pool per token; without it this mode caps out at ~40k), and the V2
   runner's profiled activation peak swings ~1 GiB between starts, which makes a
-  utilization-based setting non-deterministic. `CTX=huge` stays MTP (the script falls back
-  with a message). `CTX=long` doubles the context — 138,696 tokens at `DFLASH_TOKENS=7`,
+  utilization-based setting non-deterministic. `CTX=huge` combines with this drafter —
+  268k tokens of pool at 245760 max-model-len over the KVarN cache
+  ([docs/long-context.md](../docs/long-context.md#dflash2-at-240k-ctxhuge-kvarn-also-combines-with-specdflash2));
+  any other `CTX` falls back to MTP with a message. `CTX=long` doubles the context — 138,696 tokens at `DFLASH_TOKENS=7`,
   114,224 at 15 — by moving to an `int8_per_token_head` cache on the Triton backend; it is
   worth it only for context reproduction, and `SPEC=mtp CTX=long` beats it about 2:1 on
   everything else. See [docs/long-context.md](../docs/long-context.md#dflash2-past-64k-specdflash2-ctxlong).
