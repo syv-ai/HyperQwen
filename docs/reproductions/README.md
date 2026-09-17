@@ -6,6 +6,13 @@ full reproductions; the list below collects the shorter reports from issues.
 [← back to the main README](../../README.md)
 
 - [native-3090.md](native-3090.md) — the reference bare-metal 3090 run
+  (Python 3.14, no container): hardware table, README-parity benches, needle
+  recall, the prompt-shape finding
+- [../ubuntu-3090.md](../ubuntu-3090.md) — the later campaign on that same box:
+  the offload-fix control arm, retention bisection, the MAX_SEQS ladder, and the
+  batch arm only a headless box can run
+- [../wsl2-4090.md](../wsl2-4090.md) — RTX 4090 under Windows 11 / WSL2, the
+  cross-platform half of the same campaign
 
 ## Results from other hardware
 

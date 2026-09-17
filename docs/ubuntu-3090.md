@@ -14,7 +14,7 @@ detailed table.
 
 ## Offload fix validation (the native control arm)
 
-The [OffloadingConnector WSL2 fix](wsl2-4090.md#cpu-offload-tier-under-wsl2--the-offloadingconnector-fix-2026-08-28)
+The [OffloadingConnector WSL2 fix](wsl2-4090.md#cpu-offload-tier-under-wsl2-the-offloadingconnector-fix-2026-08-28)
 must be a no-op on native Linux, and "no-op" was validated as three arms, not
 assumed:
 

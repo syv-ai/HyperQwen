@@ -241,9 +241,8 @@ step and costs 5%. And decode CUDA graphs are captured for
 the common case — fell back to piecewise and paid 8% (27.9 ms against 25.9 ms for the same
 8-token step on a 7-slot server).
 
-Reproduction mode also costs KV pool per request slot rather than per token
-(`--mamba-cache-mode align` reserves state pages per slot per speculative block), so it runs
-4 slots and 56k of context instead of 8 and 64k.
+Reproduction mode runs 4 slots and 56k of context instead of 8 and 64k
+([why](../docs/optimizations.md#drafting-from-the-context-lookup1)).
 
 Quality is unchanged: GSM8K 96.5% (200 questions, greedy) with the lookup on, the same as
 without it, and 96.0% with the hold — one question, which is what a 200-question sample
