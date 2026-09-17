@@ -73,10 +73,7 @@ fi
 REPO="$(dirname "$DIR")"
 cd "$REPO"
 
-if [ -z "$MODEL" ] && [ -d "$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast" ]; then
-  MODEL=$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast
-fi
-MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}
+source "$REPO/single-user/select_model.sh"
 PORT=${PORT:-18020}
 MAX_SEQS=${MAX_SEQS:-}
 # Seconds between SSE ': keep-alive' comment lines on a streaming response, so

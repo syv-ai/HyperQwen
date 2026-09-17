@@ -10,6 +10,16 @@ permissions:
   contents: read
 
 jobs:
+  model-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check model verification and selection without a GPU
+        run: python bench/test_model_verification.py
+
   git-apply:
     runs-on: ubuntu-latest
     steps:
