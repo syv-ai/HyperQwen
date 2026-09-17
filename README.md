@@ -11,6 +11,7 @@
 <a href="https://github.com/vllm-project/vllm"><img alt="vLLM 0.28.0" src="https://img.shields.io/badge/vLLM-0.28.0-5C3EE8"></a>
 <a href="LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/github/license/syv-ai/HyperQwen"></a>
 <a href="https://github.com/syv-ai/HyperQwen/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/syv-ai/HyperQwen?style=flat"></a>
+<a href="https://ko-fi.com/mhenrichsen"><img alt="support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support%20GPU%20time-FF5E5B?logo=kofi&logoColor=white"></a>
 </p>
 
 ![Stock vLLM against this repo, same card, same prompts](docs/media/demo.gif)
@@ -161,6 +162,10 @@ badly, which is usually the more useful half.
 If you can help, open an issue titled "compute offer" and we will take it from
 there. Small amounts are genuinely useful: a single day on one unfamiliar card
 has historically been worth more to this project than a month on a familiar one.
+
+Money works too, if that is easier than credits:
+[ko-fi.com/mhenrichsen](https://ko-fi.com/mhenrichsen) — it goes to rented GPU
+hours and the runs get written up here like any other reproduction.
 
 
 ## Documentation
