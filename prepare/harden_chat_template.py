@@ -101,9 +101,19 @@ def main() -> int:
             print(f"harden_chat_template: {p}: {e}", file=sys.stderr)
             rc = 1
             continue
-        print(f"{res}: {os.path.relpath(p, os.getcwd())}")
         if res == "unknown":
-            rc = 1
+            # A template we do not recognise is not a prepare failure. prepare
+            # runs under set -e after a ~19.5 GB download and a requantisation,
+            # so exiting non-zero here the day upstream revises the Qwen3
+            # template would leave a ready model dir behind a failed prepare,
+            # for a hardening that only matters to clients sending array
+            # tool-call arguments. Warn and serve. An unreadable template
+            # (OSError above) stays a failure.
+            print(f"warning: {res}: {os.path.relpath(p, os.getcwd())} — "
+                  "left as-is; array tool-call arguments may still 400",
+                  file=sys.stderr)
+            continue
+        print(f"{res}: {os.path.relpath(p, os.getcwd())}")
     return rc
 
 
