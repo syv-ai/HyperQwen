@@ -61,6 +61,12 @@ difference is gotcha 16 below.
   `verify.sh --no-server` before every start — so a missing or half-prepared
   model heals itself, and a real FAIL refuses to serve (`PREPARE=0` / `VERIFY=0`
   skip the two steps).
+  Single-mode startup verifies the same model it will serve: an explicit
+  `MODEL` wins, otherwise the fast variant is selected when present. Batch
+  keeps its base-model default. Verification accepts the base model's packed
+  8-bit head and the fast variant's packed 4-bit head. The standalone `verify`
+  command still defaults to the base model; set `MODEL` explicitly to check
+  another directory.
 - **More than one GPU:** `GPU_COUNT` in `.env` sets how many cards the
   container gets (default 1, which is whichever card the runtime enumerates
   first — GPU 0), and `EXTRA_ARGS="--tensor-parallel-size 2"` sets how many the

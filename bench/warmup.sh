@@ -41,17 +41,14 @@ fi
 
 HOST=${HOST:-127.0.0.1}
 PORT=${PORT:-18020}
-# Resolve the model the way single-user/start_qwen.sh does: the fast variant
-# when present, else the base dir. Only the tokenizer matters here (its vocab
-# size drives random-token generation; no weights are loaded), and the request
-# is matched on --served-model-name, so any variant of the same model works.
-MODEL=${MODEL:-}
-if [ -z "$MODEL" ]; then
-    MODEL="$REPO/models/Qwen3.8-27B-W4A16-AutoRound"
-    if [ -d "$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast" ]; then
-        MODEL="$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast"
-    fi
-fi
+# Resolve the model with the same resolver the launcher and the Docker gate
+# use (`single-user/select_model.sh`: an explicit $MODEL wins, else the fast
+# variant when present, else the base dir), so the directory this warmup
+# points at cannot drift from the one being served. Only the tokenizer matters
+# here (its vocab size drives random-token generation; no weights are loaded),
+# and the request is matched on --served-model-name, so any variant of the same
+# model works.
+source "$REPO/single-user/select_model.sh"
 
 # Build the command as an array, not a string: an unquoted "$B" re-splits and
 # re-globs, so a path with a space or glob character would break, and a
