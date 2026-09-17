@@ -65,62 +65,32 @@ before exposing the server beyond this machine.
 | **single stream** (C1) | 46 tok/s | **127 tok/s** |
 | **quoting its own prompt** | 46 tok/s | **381 tok/s** at 25k context |
 
-**batch** gets there with a 16-bit recurrent state and int8 tensor-core GEMMs.
-Quantizing every layer to int8 raises the concurrent figures to ~1,222 tok/s
-decode and 1,042 end-to-end.
+**batch** — 16-bit recurrent state, int8 tensor-core GEMMs. Every layer int8
+raises it to ~1,222 / 1,042.
 
-**single** speculates. `SPEC=dflash2` — native vLLM 0.28.0 DFlash2, 7 drafts in
-one pass, int4-requantized — gives the 127 tok/s above at default sampling and
-130 greedy. The older MTP path (4 cheap drafts, a draft vocabulary calibrated on
-what the model actually says, an int4 lm_head and drafter, split-KV verify
-attention) gives 121 default and 120 greedy at `CTX=fast` (64k), or 96 / 102 at
-`CTX=long` (150k).
+**single** — `SPEC=dflash2` proposes 7 tokens in one pass (127 default, 130
+greedy). The older MTP path gives 121 / 120 at `CTX=fast` (64k), 96 / 102 at
+`CTX=long` (150k). When the answer quotes the prompt, DFlash2 drafts out of the
+context itself and verifies 15 tokens per step — that is the 381.
 
-The 381 tok/s row is the one worth understanding, because it is the common case
-and does not look like a speculation win: when the answer quotes the prompt —
-returning a document, applying an edit — DFlash2 drafts straight out of the
-context and lands 15.0 tokens per verify step (`SPEC=dflash2` with
-`DFLASH_TOKENS=15`).
+**prefill** is a separate budget — ~1,810 tok/s batch, ~1,440 single, **~1,850-1,940
+with `INT8_ACT=int8`** ([full matrix](batch/README.md#prefill)).
 
-<sub>Single-stream numbers re-measured 2026-08-22 on current main with
-`bash bench/run_benchmarks.sh single` — `vllm bench serve`, the 8 prompts in
-`bench/prompts_real.jsonl`, 1024 output tokens, C1, decode rate taken as
-`C / mean TPOT`. Quote them against that harness: a client with a different output
-length is not measuring the same thing, and mixing the two is how
-[#3](https://github.com/syv-ai/HyperQwen/issues/3) got confusing.</sub>
-
-> Version note: this branch pins vLLM 0.28.0; the throughput and quality tables are
-> retained as reference baselines while the v0.28.0 GPU matrix is being re-measured.
-
-Both modes share one install — the mode is just which launch script you run.
-Speculation wins below ~8 concurrent users on short prompts, plain batching above;
-on long independent sessions the crossover is much earlier, because a speculating
-request reserves recurrent-state pages the pool has few of — the concurrency
-paragraph in [docs/long-context.md](docs/long-context.md) has the measurement.
-Numbers are `vllm bench serve` on an RTX 3090 at a 250 W power limit. If the
-card is yours alone, the fastest configuration is two settings away — see
+Both modes share one install; the mode is just which script you run. Speculation
+wins below ~8 concurrent users, plain batching above — earlier on long sessions,
+where a speculating request reserves recurrent-state pages the pool has few of
+([measurement](docs/long-context.md)). If the card is yours alone, see
 [If you are the only user](#if-you-are-the-only-user).
 
-Prefill is a separate budget from either: ~1,810 tok/s at 1k inputs in batch
-mode, and ~1,440 stock or **~1,850-1,940 with `INT8_ACT=int8`** in single-user
-mode — [full matrix](batch/README.md#prefill). How each number was won:
-[docs/optimizations.md](docs/optimizations.md).
-
-The server listens on `0.0.0.0` and is unauthenticated unless you give it a key.
-For anything past your own machine, add one first — everything reads it from
-`.env` or `api_key.txt`, and nothing needs it otherwise:
+The server binds `0.0.0.0` and is unauthenticated unless you give it a key:
 
 ```bash
 echo "VLLM_API_KEY=$(openssl rand -hex 24)" > .env
 ```
 
-Compose is not required: plain `docker run` starts the same image and prepares
-the model itself on first boot — the command, and the mapping from `.env` knobs
-to `-e` flags, are in
-[docs/docker.md](docs/docker.md#plain-docker-no-compose).
-
-Or by hand in a venv (same steps: model download, requantization, vLLM
-patches, `verify.sh`) — see [docs/install.md](docs/install.md).
+Without compose: [docs/docker.md](docs/docker.md#plain-docker-no-compose). By
+hand in a venv: [docs/install.md](docs/install.md). How each number was won:
+[docs/optimizations.md](docs/optimizations.md).
 
 ## If you are the only user
 

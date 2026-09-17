@@ -18,6 +18,10 @@ Realistic chat prompts (8 mixed English/Danish/code tasks in
 > These are vLLM 0.27.1 baseline measurements. Re-benchmark on a GPU after the
 > v0.28.0 upgrade before using the figures for capacity planning.
 
+Quote these against that harness. A client with a different output length is not
+measuring the same thing, and mixing the two is how
+[#3](https://github.com/syv-ai/HyperQwen/issues/3) got confusing.
+
 **`CTX=fast` + fast variant (the default; 64k context)**, as reproduced by
 `bash bench/run_benchmarks.sh single`:
 
