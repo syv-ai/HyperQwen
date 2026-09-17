@@ -14,7 +14,7 @@ configured as a runtime. The 250 W power limit is a host setting
 (`sudo nvidia-smi -pl 250`), the container cannot set it.
 
 ```bash
-git clone https://github.com/syv-ai/qwen38-27b-rtx3090 && cd qwen38-27b-rtx3090
+git clone https://github.com/syv-ai/HyperQwen && cd HyperQwen
 cp .env.example .env                              # all knobs live in .env (gitignored)
 # PowerShell: Copy-Item .env.example .env
 echo "VLLM_API_KEY=$(openssl rand -hex 24)" >> .env   # skip only if the port stays on this machine
@@ -28,12 +28,12 @@ required by the V2 runner before model loading begins. The detailed failure
 signature and other WSL2 workarounds are below.
 
 **The image is prebuilt**: every push to `main` builds and pushes
-`ghcr.io/syv-ai/qwen38-27b-rtx3090:latest` (plus an immutable `sha-<7>` tag
+`ghcr.io/syv-ai/hyperqwen:latest` (plus an immutable `sha-<7>` tag
 per commit) from CI, with the Dockerfile's own patch application and
 `verify.sh --install` as the gate — a patch that stops applying fails the
 build and nothing is pushed. The first `up` pulls it (~9.5 GB,
 `pull_policy: missing`); to pin a known
-build, set `image: ghcr.io/syv-ai/qwen38-27b-rtx3090:sha-<7>` in a compose
+build, set `image: ghcr.io/syv-ai/hyperqwen:sha-<7>` in a compose
 override. Building locally instead still works — `docker compose build` (or
 `up --build`) produces the identical image (~20 minutes) — and the `prepare` service downloads
 the model into `./models` and runs the same requantization scripts as above
@@ -92,7 +92,7 @@ command, no checkout:
 ```bash
 docker run -d --name qwen --gpus all --ipc=host -p 18020:18020 \
   -v qwen-models:/app/models -v qwen-cache:/cache \
-  --restart unless-stopped ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+  --restart unless-stopped ghcr.io/syv-ai/hyperqwen:latest
 ```
 
 - The entrypoint runs the same idempotent `prepare` before serving, so the

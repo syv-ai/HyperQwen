@@ -1,8 +1,8 @@
 # Build the Docker image and push it to GitHub Container Registry, so
 # `docker compose pull` replaces the 20-minute local build.
 #
-#   ghcr.io/syv-ai/qwen38-27b-rtx3090:latest      tracks main
-#   ghcr.io/syv-ai/qwen38-27b-rtx3090:sha-<7>     immutable, one per commit
+#   ghcr.io/syv-ai/hyperqwen:latest      tracks main
+#   ghcr.io/syv-ai/hyperqwen:sha-<7>     immutable, one per commit
 #
 # The Dockerfile itself is the quality gate: it applies every patch in
 # patches/ against the pinned vLLM and runs `verify.sh --install`, so a
@@ -60,7 +60,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/syv-ai/hyperqwen
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
@@ -71,5 +71,5 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/syv-ai/hyperqwen:buildcache
+          cache-to: type=registry,ref=ghcr.io/syv-ai/hyperqwen:buildcache,mode=max

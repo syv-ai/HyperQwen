@@ -46,8 +46,8 @@ x-qwen: &qwen
   # first `up` pulls it (~9.5 GB, pull_policy below) instead of the 20-minute
   # local build. `docker compose build` (or `up --build`) still builds the
   # identical image under the same tag name. Immutable per-commit tags:
-  # ghcr.io/syv-ai/qwen38-27b-rtx3090:sha-<7>.
-  image: ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+  # ghcr.io/syv-ai/hyperqwen:sha-<7>.
+  image: ghcr.io/syv-ai/hyperqwen:latest
   build: .
   pull_policy: missing
   ipc: host

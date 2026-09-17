@@ -9,14 +9,14 @@ API with key auth, in two ready-made modes.
 ## Quick start
 
 The image is prebuilt and pushed to
-[ghcr.io](https://github.com/syv-ai/qwen38-27b-rtx3090/pkgs/container/qwen38-27b-rtx3090)
+[ghcr.io](https://github.com/syv-ai/HyperQwen/pkgs/container/hyperqwen)
 on every commit — the build applies all `patches/` and runs `verify.sh` as its
 gate, so `latest` is always the current stack. The first start pulls it (9.5 GB),
 downloads and requantizes the model (~20 GB, once, into `./models`), and serves
 on port 18020. Pick a mode — one GPU serves one at a time:
 
 ```bash
-git clone https://github.com/syv-ai/qwen38-27b-rtx3090 && cd qwen38-27b-rtx3090
+git clone https://github.com/syv-ai/HyperQwen && cd HyperQwen
 
 cp .env.example .env                 # Linux / WSL
 # PowerShell: Copy-Item .env.example .env
@@ -80,7 +80,7 @@ survives container replacement):
 ```bash
 docker run -d --name qwen --gpus all --ipc=host -p 18020:18020 \
   -v qwen-models:/app/models -v qwen-cache:/cache \
-  --restart unless-stopped ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+  --restart unless-stopped ghcr.io/syv-ai/hyperqwen:latest
 ```
 
 `batch` after the image name is the other mode, and the knobs compose reads
@@ -815,7 +815,7 @@ loader peaks at whatever RAM exists; the streamer is bounded and faster). Everyt
 things; the container details live in [docs/docker.md](docs/docker.md).
 
 ```bash
-git clone https://github.com/syv-ai/qwen38-27b-rtx3090 ~/qwen-serving
+git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
 
 python3 -m venv venv
