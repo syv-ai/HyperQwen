@@ -18,6 +18,40 @@ CTX=huge` on a 3090 with coherent output and a 45k-context needle retrieved,
 and a second tester confirmed `SPEC=mtp` works. Community-built and
 community-verified; not benchmarked on this repo's reference box.
 
+**Ready-made, Swift + uncensored:**
+[ultimaterex/Swift-Qwen3.8-27B-Uncensored-W4A16-AutoRound](https://huggingface.co/ultimaterex/Swift-Qwen3.8-27B-Uncensored-W4A16-AutoRound)
+combines two things at once:
+[ukisai/Swift-Qwen3.8-27b](https://huggingface.co/ukisai/Swift-Qwen3.8-27b)'s
+reasoning-token-efficiency adapter with an abliterated, uncensored base
+([d0xin/Swift-Qwen3.8-27B-Uncensored-BF16](https://huggingface.co/d0xin/Swift-Qwen3.8-27B-Uncensored-BF16)),
+quantized with this repo's own AutoRound + `prepare/` recipe — so like the
+checkpoint above, it serves without any preparation. Boots and serves
+correctly at both a `CTX=fast`-equivalent tier (148 tok/s) and a
+`CTX=long`/KVarN-equivalent tier (96 tok/s) on a 3090. A 6-task correctness
+battery against the base checkpoint (arithmetic, code generation, factual
+recall, a constraint-logic puzzle, a security-training explanation, strict
+output-format compliance) came back 6/6 on both, with a measured 31.2%
+reduction in reasoning tokens on that same battery — real, but well short of
+the Swift adapter's own headline "58.3% fewer thinking tokens" claim; treat
+that number as a per-task estimate, not a guarantee (one logic puzzle in the
+battery actually used *more* reasoning tokens than the baseline). Gated
+(Swift Open License v1.0 — free below $1M annual revenue, separate license
+from UkisAI above that; see the repo's `NOTICE` for the full attribution
+chain back through the base model).
+
+Two earlier attempts at this same Swift + uncensored combination —
+[jamesbrunet/Swift-Qwen3.8-27b-W4A16-AutoRound](https://huggingface.co/jamesbrunet/Swift-Qwen3.8-27b-W4A16-AutoRound)
+and
+[greglechin/Swift-Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16](https://huggingface.co/greglechin/Swift-Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16)
+— both hit `torch.OutOfMemoryError` at KV cache init on a 24GB card, at
+every context tier tried, reproduced independently before building the
+checkpoint above. Root cause both times: `lm_head`, `embed_tokens`, and the
+vision tower were left fully unquantized at BF16, several GB heavier than
+the three `quant_*.py` scripts leave them. That int8 head/embed pass is what
+actually makes a Swift + uncensored export fit on a 24GB card — worth
+knowing before assuming a checkpoint like this is broken outright rather
+than just missing that step.
+
 **Any other export**, including single-shard and asymmetric-AWQ ones the base
 model's three `quant_*.py` scripts cannot open, goes through the streaming
 requant (contributed in
