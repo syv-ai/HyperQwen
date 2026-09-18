@@ -18,39 +18,49 @@ CTX=huge` on a 3090 with coherent output and a 45k-context needle retrieved,
 and a second tester confirmed `SPEC=mtp` works. Community-built and
 community-verified; not benchmarked on this repo's reference box.
 
-**Ready-made, Swift + uncensored:**
-[ultimaterex/Swift-Qwen3.8-27B-Uncensored-W4A16-AutoRound](https://huggingface.co/ultimaterex/Swift-Qwen3.8-27B-Uncensored-W4A16-AutoRound)
-combines two things at once:
-[ukisai/Swift-Qwen3.8-27b](https://huggingface.co/ukisai/Swift-Qwen3.8-27b)'s
-reasoning-token-efficiency adapter with an abliterated, uncensored base
-([d0xin/Swift-Qwen3.8-27B-Uncensored-BF16](https://huggingface.co/d0xin/Swift-Qwen3.8-27B-Uncensored-BF16)),
-quantized with this repo's own AutoRound + `prepare/` recipe — so like the
-checkpoint above, it serves without any preparation. Boots and serves
-correctly at both a `CTX=fast`-equivalent tier (148 tok/s) and a
-`CTX=long`/KVarN-equivalent tier (96 tok/s) on a 3090. A 6-task correctness
-battery against the base checkpoint (arithmetic, code generation, factual
-recall, a constraint-logic puzzle, a security-training explanation, strict
-output-format compliance) came back 6/6 on both, with a measured 31.2%
-reduction in reasoning tokens on that same battery — real, but well short of
-the Swift adapter's own headline "58.3% fewer thinking tokens" claim; treat
-that number as a per-task estimate, not a guarantee (one logic puzzle in the
-battery actually used *more* reasoning tokens than the baseline). Gated
-(Swift Open License v1.0 — free below $1M annual revenue, separate license
-from UkisAI above that; see the repo's `NOTICE` for the full attribution
-chain back through the base model).
+### Ready-made, Swift + uncensored
 
-Two earlier attempts at this same Swift + uncensored combination —
-[jamesbrunet/Swift-Qwen3.8-27b-W4A16-AutoRound](https://huggingface.co/jamesbrunet/Swift-Qwen3.8-27b-W4A16-AutoRound)
-and
-[greglechin/Swift-Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16](https://huggingface.co/greglechin/Swift-Qwen3.8-27B-Uncensored-GPTQ-Int4-sym-G128-MTP-BF16)
-— both hit `torch.OutOfMemoryError` at KV cache init on a 24GB card, at
-every context tier tried, reproduced independently before building the
-checkpoint above. Root cause both times: `lm_head`, `embed_tokens`, and the
-vision tower were left fully unquantized at BF16, several GB heavier than
-the three `quant_*.py` scripts leave them. That int8 head/embed pass is what
-actually makes a Swift + uncensored export fit on a 24GB card — worth
-knowing before assuming a checkpoint like this is broken outright rather
-than just missing that step.
+[ultimaterex/Swift-Qwen3.8-27B-Uncensored-W4A16-AutoRound](https://huggingface.co/ultimaterex/Swift-Qwen3.8-27B-Uncensored-W4A16-AutoRound)
+
+**Why Swift matters here.** Every extra token a model spends "thinking" before
+it answers costs latency and money, and that cost compounds hard in an
+agentic loop that re-reasons on every tool call. UkisAI's
+[Swift-Qwen3.8-27b](https://huggingface.co/ukisai/Swift-Qwen3.8-27b) adapter
+targets exactly that: a reasoning-efficiency LoRA trained to reach the same
+answer with a shorter chain of thought, with a claimed 58.3% reduction in
+thinking tokens. Pairing it with an uncensored base compounds the value for
+automation use cases specifically — fewer stalled tool calls from
+unnecessary refusals, on top of the speed gain.
+
+**What we did.** Took
+[d0xin/Swift-Qwen3.8-27B-Uncensored-BF16](https://huggingface.co/d0xin/Swift-Qwen3.8-27B-Uncensored-BF16)
+(Swift adapter merged, then rank-1 residual-stream ablation on top) and ran
+it through this repo's own quantization pipeline end to end:
+
+1. **AutoRound W4A16**, reproducing this repo's published recipe against the
+   Swift+uncensored base instead of the official checkpoint — `in_proj_a`/
+   `in_proj_b`, the vision tower, and the MTP draft head kept BF16, everything
+   else quantized to W4A16 g128 symmetric.
+2. **This repo's `prepare/` scripts** on top — int8 shrink of `lm_head` and
+   `embed_tokens`, int8 requant of the MTP module, and a 40,960-token draft
+   vocabulary build for speculative decoding.
+
+**Validation.** Boots and serves correctly at both a `CTX=fast`-equivalent
+tier and a `CTX=long`/KVarN-equivalent tier on a 3090:
+
+| | Decode throughput |
+|---|---|
+| `CTX=fast`-equivalent | 148 tok/s |
+| `CTX=long`/KVarN-equivalent | 96 tok/s |
+
+A 6-task correctness battery against the base checkpoint (arithmetic, code
+generation, factual recall, a constraint-logic puzzle, a security-training
+explanation, strict output-format compliance) came back **6/6 on both**,
+with a measured **31.2% reduction in reasoning tokens** on that same
+battery — real, but well short of the adapter's own 58.3% headline claim,
+and not uniform across tasks (one logic puzzle in the battery actually used
+*more* reasoning tokens than the baseline). Treat the efficiency gain as a
+per-task estimate, not a guarantee.
 
 **Any other export**, including single-shard and asymmetric-AWQ ones the base
 model's three `quant_*.py` scripts cannot open, goes through the streaming
