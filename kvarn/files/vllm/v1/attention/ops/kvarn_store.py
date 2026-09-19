@@ -17,9 +17,10 @@ The output is a packed record matching the cache layout from
 
 from __future__ import annotations
 
-import os
 
 import torch
+
+import vllm.envs as envs
 
 from vllm.model_executor.layers.quantization.kvarn.sinkhorn import (
     variance_normalize,
@@ -33,7 +34,7 @@ def _rtn_range(t: torch.Tensor, dim: int):
     for k2v2 on models like Qwen3-30B-A3B-Thinking where K outliers
     (max/std ≈ 6) waste 2-bit resolution.
     """
-    q_str = os.environ.get("KVARN_RTN_QUANTILE", "")
+    q_str = envs.KVARN_RTN_QUANTILE
     if q_str and float(q_str) > 0:
         q = float(q_str)
         lo = torch.quantile(t, q, dim=dim, keepdim=True)

@@ -39,13 +39,13 @@ Apply from the repo root, after spec-decode-attn.patch:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
---- exported from cpuchip/vllm 2c429487f (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 12c66f4c4 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 700553011..680d44068 100755
+index b1deb5e33..61fabdebb 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1855,7 +1855,7 @@
+@@ -1899,7 +1899,7 @@
      return _SPEC_ATTN_QMAX
  
  
@@ -54,7 +54,7 @@ index 700553011..680d44068 100755
      from vllm.v1.attention.ops.spec_decode_attn import SpecDecodeAttention
  
      key = (impl.num_heads, impl.head_size, q.device)
-@@ -1874,4 +1874,5 @@
+@@ -1918,4 +1918,5 @@
          )
          _SPEC_ATTN[key] = att
      att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
@@ -62,10 +62,10 @@ index 700553011..680d44068 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q,
 +            k_scale_cache=k_scale_cache, v_scale_cache=v_scale_cache)
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 4b1c167e7..fd5469386 100644
+index 48dd30d66..ee4d10906 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
-@@ -41,6 +41,11 @@
+@@ -40,6 +40,11 @@
      triton_reshape_and_cache_flash_per_token_head_quant,
  )
  from vllm.v1.attention.ops.triton_unified_attention import unified_attention
@@ -77,7 +77,7 @@ index 4b1c167e7..fd5469386 100644
  from vllm.v1.kv_cache_interface import (
      AttentionSpec,
      KVQuantMode,
-@@ -707,6 +712,44 @@
+@@ -649,6 +654,44 @@
  
          mm_prefix_range_tensor = attn_metadata.mm_prefix_range_tensor
  
@@ -123,7 +123,7 @@ index 4b1c167e7..fd5469386 100644
              q=query[:num_actual_tokens],
              k=key_cache,
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
-index ed6e4f8ab..76b7ef36e 100644
+index 494f9acce..8694bc6c9 100644
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -21,6 +21,22 @@

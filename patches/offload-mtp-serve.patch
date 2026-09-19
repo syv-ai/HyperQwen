@@ -35,10 +35,15 @@ those tokens loaded the unwritten slot. Clamp the finished watermark to num_toke
 clamps to the prompt first. Upstream wrote #52771 against a tree that already had this
 fix, and its EAGLE trailing-block tests fail without it.
 
---- exported from cpuchip/vllm 05f30f521 (offload-mtp-serve); regenerate with scripts/export-patch.sh, do not edit ---
+Ported to 0.29.0 from the fork's PR#100 branch (syv-ai/qwen38-27b-rtx3090, patches/offload-mtp-serve.patch at 3284992); all seven hunks apply unchanged. Neither upstream fix is in the v0.29.0 tag.
+
+Signed-off-by: Michael Stufflebeam <cpuchip@gmail.com>
+Co-authored-by: Claude <noreply@anthropic.com>
+
+--- exported from cpuchip/vllm 32ec876d3 (offload-mtp-serve); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-index 4e0bde520..2ec503338 100644
+index bf12f4740..3ae8893e2 100644
 --- a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 +++ b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 @@ -240,7 +240,19 @@
@@ -142,7 +147,7 @@ index 4e0bde520..2ec503338 100644
  
              # Skip prefix-hit chunks for block-level policy; for
              # request-level, next_stored_chunk_idx stays at 0 so all
-@@ -1305,7 +1322,10 @@
+@@ -1379,7 +1396,10 @@
              if req.status is RequestStatus.FINISHED_ABORTED:
                  num_tokens_after_batch = req.num_computed_tokens
              elif req.is_finished():

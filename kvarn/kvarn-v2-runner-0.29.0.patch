@@ -2,7 +2,16 @@ KVarN V2-runner compatibility fixes for vLLM 0.28.0.
 
 These changes are applied after the 0.28 KVarN base port and the repo's DFlash2 patches. They keep sliding-window groups out of prefix-cache arithmetic, use the Mamba group's block size for resumed-state indexing, and harden DFlash2 selector buffers against degenerate scores.
 
---- exported from cpuchip/vllm 02f123638 (kvarn-v2-runner-0.28.0); regenerate with scripts/export-patch.sh, do not edit ---
+Ported to 0.29.0: the four kv_cache_utils.py hunks are retired. Upstream rewrote that function as
+resolve_kv_cache_block_sizes (#51718, #53896): the hash unit is now the GCD over prefix-cacheable groups
+only and every spec's per-state alignment is checked, which is what the hunks did by hand for the
+drafter's sliding-window groups. On this model the groups are the KVarN full-attention layers and the
+Mamba layers at the aligned block (2176 tokens for k4v2_g128) and the drafter's sliding-window layers at
+block 128 with their page padded to the primary page, so both trees compute the same scheduler block
+(2176) and hash unit (128); the hunks changed nothing for this geometry, and the coordinator hunks below
+still exempt a sliding-window block that does not divide the scheduler block.
+
+--- exported from cpuchip/vllm e23d277a2 (kvarn-v2-runner-0.29.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
 index 246d99893..a16e731a5 100644
@@ -50,10 +59,10 @@ index 246d99893..a16e731a5 100644
              sw_per_token = self.attn_backend.customize_spec(
                  SlidingWindowSpec(
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index 03b5dd53d..e03c8ad49 100644
+index d38adfc88..cbcf78c39 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -244,6 +244,15 @@
+@@ -224,6 +224,15 @@
          )
  
          self.sliding_window = sliding_window
@@ -70,10 +79,10 @@ index 03b5dd53d..e03c8ad49 100644
              self.num_heads,
              self.head_dim,
 diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
-index 8efaf9252..09b1d2818 100644
+index b3a9b4c03..5ec0c2f9b 100644
 --- a/v1/core/kv_cache_coordinator.py
 +++ b/v1/core/kv_cache_coordinator.py
-@@ -88,7 +88,8 @@
+@@ -90,7 +90,8 @@
          # The scheduling granularity (LCM of all group block sizes), must be a multiple
          # of the hash_block_size and the block size of each group.
          assert scheduler_block_size % hash_block_size == 0 and all(
@@ -83,8 +92,8 @@ index 8efaf9252..09b1d2818 100644
              for g in kv_cache_config.kv_cache_groups
          )
          self.scheduler_block_size = scheduler_block_size
-@@ -601,7 +602,12 @@
-             manager.block_size for manager in self.single_type_managers
+@@ -607,7 +608,12 @@
+             if group.kv_cache_spec.prefix_cacheable
          ]
          assert all(
 -            block_size % hash_block_size == 0 for block_size in group_block_sizes
@@ -97,54 +106,11 @@ index 8efaf9252..09b1d2818 100644
          ), (
              "Each KV cache group's real block_size must be divisible by "
              f"hash_block_size. block_sizes={group_block_sizes}, "
-diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index a46c38df5..c0c28fe7a 100644
---- a/v1/core/kv_cache_utils.py
-+++ b/v1/core/kv_cache_utils.py
-@@ -636,6 +636,18 @@
-         else g.kv_cache_spec.block_size
-         for g in groups
-     ]
-+    _all_group_block_sizes = list(group_block_sizes)
-+    # Sliding-window groups do not participate in prefix matching. Excluding
-+    # them keeps their small rolling-window block from skewing the scheduler
-+    # LCM and the prefix-hash GCD used by the target group.
-+    non_sw = [
-+        bs
-+        for g, bs in zip(groups, group_block_sizes)
-+        if not isinstance(g.kv_cache_spec, SlidingWindowSpec)
-+    ]
-+    _hash_gcd_all = math.gcd(*_all_group_block_sizes)
-+    if non_sw:
-+        group_block_sizes = non_sw
-     scheduler_block_size = math.lcm(*group_block_sizes)
- 
-     # Block hashes are only consumed by prefix caching and KV connectors
-@@ -648,16 +660,16 @@
-     # Mamba groups outside align mode break divisibility; back off to the
-     # scheduler block size. Read the mode from the resolved group spec because
-     # its block size may have been updated independently of cache_config.
--    if any(
-+    if cache_config.prefix_match_unit is None and any(
-         isinstance(g.kv_cache_spec, MambaSpec)
-         and g.kv_cache_spec.mamba_cache_mode != "align"
-         for g in groups
-     ):
--        return scheduler_block_size, scheduler_block_size
-+        return scheduler_block_size, _hash_gcd_all
- 
-     requested = cache_config.prefix_match_unit
-     hash_block_size = (
--        requested if requested is not None else math.gcd(*group_block_sizes)
-+        requested if requested is not None else _hash_gcd_all
-     )
-     if any(bs % hash_block_size != 0 for bs in group_block_sizes):
-         raise ValueError(
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 890e21417..b980266d8 100644
+index 92e5fc6e2..60a1c7542 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -928,6 +928,11 @@
+@@ -936,6 +936,11 @@
          assert dcp_world_size == 1, "DCP not support sliding window attn now."
          assert pcp_world_size == 1, "PCP not support sliding window attn now."
          # Fine-grained partial hits are not supported for sliding window now
@@ -156,7 +122,7 @@ index 890e21417..b980266d8 100644
          assert alignment_tokens % kv_cache_spec.block_size == 0, (
              "SlidingWindowManager does not support fine-grained (partial) cache hits"
          )
-@@ -1116,6 +1121,24 @@
+@@ -1124,6 +1129,24 @@
          """
          return 0
  
@@ -179,13 +145,13 @@ index 890e21417..b980266d8 100644
 +        super().cache_blocks(request, num_tokens, retention_interval=retention_interval)
 +
  
- class ChunkedLocalAttentionManager(SingleTypeKVCacheManager):
-     def __init__(self, kv_cache_spec: ChunkedLocalAttentionSpec, **kwargs) -> None:
+ class CircularBufferManager(FullAttentionManager):
+     """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 203ad4da0..5b77e85c2 100644
+index 3ce6998ef..94bffa6e1 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1114,9 +1114,14 @@
+@@ -1158,9 +1158,14 @@
              is_prefilling_np=is_prefilling_np,
              has_prefill=bool(is_prefilling_np.any()),
          )
@@ -202,10 +168,10 @@ index 203ad4da0..5b77e85c2 100644
      def prepare_inputs(
          self,
 diff --git a/v1/worker/gpu/model_states/mamba_hybrid.py b/v1/worker/gpu/model_states/mamba_hybrid.py
-index 2715f790d..3a218c83c 100644
+index 6d07c1588..86c358e0f 100644
 --- a/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/v1/worker/gpu/model_states/mamba_hybrid.py
-@@ -100,8 +100,13 @@
+@@ -118,8 +118,13 @@
          self.num_accepted_tokens_gpu[req_index].fill_(1)
          if self._align_mode:
              # Seed the running state block from the resumed/prefilled position.
@@ -221,7 +187,7 @@ index 2715f790d..3a218c83c 100644
  
      def _get_mamba_group_info(
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 3d532f105..c49178cda 100644
+index f41485210..e1ab3565f 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@

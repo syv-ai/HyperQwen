@@ -2,13 +2,19 @@ KVarN dense KV-cache integration for vLLM 0.28.0.
 
 The 0.28 KV cache API uses KVQuantMode values and FullAttentionSpec.state_content_bytes rather than the old TQFullAttentionSpec/tq_slot_size representation. This port preserves the packed KVarN tile layout and tail-pool budgeting on the new interfaces.
 
---- exported from cpuchip/vllm 05c23bab2 (kvarn-0.28.0); regenerate with scripts/export-patch.sh, do not edit ---
+Ported to 0.29.0: the registry hunk re-anchored (AMX_MLA now precedes TURBOQUANT); the attn_utils.py
+strided-view hunk retired, because the KV cache layout refactor (#51718) moved page views into
+kv_cache_interface.compute_layout_strides, where the block stride follows the spec's page size
+(padded or not) for every backend; the KVarN backend now declares its layout (LBNHC) and folds the
+per-token [N, C] slots of the runner's 4D view back into one tile per (block, head).
+
+--- exported from cpuchip/vllm ecd756ce7 (kvarn-0.29.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/cache.py b/config/cache.py
-index 654e9a535..777e59c37 100644
+index dc4e6faf3..f5e4c18dd 100644
 --- a/config/cache.py
 +++ b/config/cache.py
-@@ -29,6 +29,10 @@
+@@ -49,6 +49,10 @@
      "turboquant_4bit_nc",
      "turboquant_k3v4_nc",
      "turboquant_3bit_nc",
@@ -19,6 +25,66 @@ index 654e9a535..777e59c37 100644
      "int4_per_token_head",
      "int8_per_token_head",
      "fp8_per_token_head",
+diff --git a/envs.py b/envs.py
+index 7a98270ef..6bd0fa019 100755
+--- a/envs.py
++++ b/envs.py
+@@ -220,6 +220,26 @@
+     VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
+     VLLM_DRAFT_TEMP_SCALE: float = 1.0
+     VLLM_MARLIN_REPACK_STAGED: str | None = None
++    KVARN_POW2_SLOT: bool = False
++    KVARN_POOL_MEM_FRAC: str | None = None
++    KVARN_FA_SCRATCH_CAP: str | None = None
++    KVARN_SINKHORN_ITERS: int = 8
++    KVARN_SINK_TOKENS: int = 128
++    KVARN_QUANT_SLIDING: bool = False
++    KVARN_FUSED_VERIFY: bool = True
++    KVARN_FUSED_VERIFY_MAXQ: int = 8
++    KVARN_FUSED_VERIFY_MIN_BLOCKS: int = 64
++    KVARN_DBG_LAYERS: bool = False
++    KVARN_POOL_SLOTS: int = 0
++    KVARN_LOOKUP_BLOCKS: int = 0
++    KVARN_SPEC_DEBUG: bool = False
++    KVARN_SHARED_VERIFY: bool = False
++    KVARN_FAST_FLUSH: bool = True
++    KVARN_DUMP_TILES: str = ""
++    KVARN_RTN_QUANTILE: str = ""
++    KVARN_NUM_KV_SPLITS: str | None = None
++    KVARN_FUSED_DECODE: bool = True
++    KVARN_SPLIT_K: str | None = None
+     # GiB of vision-tower weights to keep in pinned host memory; 0 disables.
+     VLLM_VISION_CPU_OFFLOAD_GB: float = 0.0
+     VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
+@@ -1587,6 +1607,28 @@
+     "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
+     # sm80 Marlin repack staging buffer: "1"/"0" override, unset = on for compute capability 8.0 only
+     "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
++    # KVarN KV cache (kvarn/, Huawei CSL naming kept): the knobs its modules read. None-typed ones keep
++    # "unset" distinct from a value because the readers branch on presence.
++    "KVARN_POW2_SLOT": lambda: os.environ.get("KVARN_POW2_SLOT", "0") == "1",
++    "KVARN_POOL_MEM_FRAC": lambda: os.environ.get("KVARN_POOL_MEM_FRAC"),
++    "KVARN_FA_SCRATCH_CAP": lambda: os.environ.get("KVARN_FA_SCRATCH_CAP"),
++    "KVARN_SINKHORN_ITERS": lambda: int(os.environ.get("KVARN_SINKHORN_ITERS", "8")),
++    "KVARN_SINK_TOKENS": lambda: int(os.environ.get("KVARN_SINK_TOKENS", "128")),
++    "KVARN_QUANT_SLIDING": lambda: os.environ.get("KVARN_QUANT_SLIDING") == "1",
++    "KVARN_FUSED_VERIFY": lambda: os.environ.get("KVARN_FUSED_VERIFY", "1") == "1",
++    "KVARN_FUSED_VERIFY_MAXQ": lambda: int(os.environ.get("KVARN_FUSED_VERIFY_MAXQ", "8")),
++    "KVARN_FUSED_VERIFY_MIN_BLOCKS": lambda: int(os.environ.get("KVARN_FUSED_VERIFY_MIN_BLOCKS", "64")),
++    "KVARN_DBG_LAYERS": lambda: os.environ.get("KVARN_DBG_LAYERS") == "1",
++    "KVARN_POOL_SLOTS": lambda: int(os.environ.get("KVARN_POOL_SLOTS", "0")),
++    "KVARN_LOOKUP_BLOCKS": lambda: int(os.environ.get("KVARN_LOOKUP_BLOCKS", "0")),
++    "KVARN_SPEC_DEBUG": lambda: os.environ.get("KVARN_SPEC_DEBUG", "0") == "1",
++    "KVARN_SHARED_VERIFY": lambda: os.environ.get("KVARN_SHARED_VERIFY", "0") == "1",
++    "KVARN_FAST_FLUSH": lambda: os.environ.get("KVARN_FAST_FLUSH", "1") == "1",
++    "KVARN_DUMP_TILES": lambda: os.environ.get("KVARN_DUMP_TILES", ""),
++    "KVARN_RTN_QUANTILE": lambda: os.environ.get("KVARN_RTN_QUANTILE", ""),
++    "KVARN_NUM_KV_SPLITS": lambda: os.environ.get("KVARN_NUM_KV_SPLITS"),
++    "KVARN_FUSED_DECODE": lambda: os.environ.get("KVARN_FUSED_DECODE", "1") == "1",
++    "KVARN_SPLIT_K": lambda: os.environ.get("KVARN_SPLIT_K"),
+     "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
+         os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
+     ),
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
 index ff0c7a33a..246d99893 100644
 --- a/model_executor/layers/attention/attention.py
@@ -51,7 +117,7 @@ index ff0c7a33a..246d99893 100644
                  block_size=block_size,
                  num_kv_heads=self.num_kv_heads,
 diff --git a/platforms/cuda.py b/platforms/cuda.py
-index bfe08a577..edc441cfa 100644
+index 0aff4ff9b..a3f35080f 100644
 --- a/platforms/cuda.py
 +++ b/platforms/cuda.py
 @@ -151,6 +151,7 @@
@@ -107,7 +173,7 @@ index bfe08a577..edc441cfa 100644
 +                else getattr(hf_text_config, "sliding_window", None) is not None
 +            )
 +            skip_layers = cache_config.kv_cache_dtype_skip_layers
-+            if os.environ.get("KVARN_QUANT_SLIDING") == "1":
++            if envs.KVARN_QUANT_SLIDING:
 +                while "sliding_window" in skip_layers:
 +                    skip_layers.remove("sliding_window")
 +            elif has_swa and "sliding_window" not in skip_layers:
@@ -142,7 +208,7 @@ index bfe08a577..edc441cfa 100644
      def get_current_memory_usage(
          cls, device: torch.types.Device | None = None
 diff --git a/platforms/interface.py b/platforms/interface.py
-index 5c041f163..59cca9a9c 100644
+index d7a31323b..b54641fd7 100644
 --- a/platforms/interface.py
 +++ b/platforms/interface.py
 @@ -807,6 +807,23 @@
@@ -170,7 +236,7 @@ index 5c041f163..59cca9a9c 100644
              # TQ has a packed K|V layout; the standard FullAttentionSpec
              # formula over-sizes it and trips unify_kv_cache_spec_page_size
 diff --git a/utils/torch_utils.py b/utils/torch_utils.py
-index 0e133a377..599fa11e3 100644
+index faee4305c..555dd7fe7 100644
 --- a/utils/torch_utils.py
 +++ b/utils/torch_utils.py
 @@ -49,6 +49,10 @@
@@ -185,22 +251,22 @@ index 0e133a377..599fa11e3 100644
      "nvfp4_4over6": torch.uint8,
  }
 diff --git a/v1/attention/backends/registry.py b/v1/attention/backends/registry.py
-index 646227cc4..8917439a4 100644
+index 6fc9dd1e1..e8af36ad6 100644
 --- a/v1/attention/backends/registry.py
 +++ b/v1/attention/backends/registry.py
-@@ -123,6 +123,7 @@
-     )
+@@ -124,6 +124,7 @@
      CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
      CPU_MLA = "vllm.v1.attention.backends.mla.cpu_mla.CPUMLABackend"
+     AMX_MLA = "vllm.v1.attention.backends.mla.amx_mla.AMXMLABackend"
 +    KVARN = "vllm.v1.attention.backends.kvarn_attn.KVarNAttentionBackend"
      TURBOQUANT = "vllm.v1.attention.backends.turboquant_attn.TurboQuantAttentionBackend"
      # Placeholder for third-party/custom backends - must be registered before use
      # set to None to avoid alias with other backend, whose value is an empty string
 diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
-index 90391f6ef..3e0770399 100644
+index 1007c48a2..50127678f 100644
 --- a/v1/kv_cache_interface.py
 +++ b/v1/kv_cache_interface.py
-@@ -51,6 +51,7 @@
+@@ -54,6 +54,7 @@
      TURBOQUANT_4BIT_NC = 7
      TURBOQUANT_K3V4_NC = 8
      TURBOQUANT_3BIT_NC = 9
@@ -208,7 +274,7 @@ index 90391f6ef..3e0770399 100644
  
      @property
      def is_per_token_head(self) -> bool:
-@@ -76,6 +77,11 @@
+@@ -79,6 +80,11 @@
              KVQuantMode.TURBOQUANT_3BIT_NC,
          )
  
@@ -220,7 +286,7 @@ index 90391f6ef..3e0770399 100644
  
  def get_kv_quant_mode(kv_cache_dtype: str) -> KVQuantMode:
      """Map a ``kv_cache_dtype`` string to a :class:`KVQuantMode`."""
-@@ -89,6 +95,8 @@
+@@ -92,6 +98,8 @@
          return KVQuantMode.NVFP4
      if isinstance(kv_cache_dtype, str) and kv_cache_dtype.startswith("turboquant_"):
          return KVQuantMode[kv_cache_dtype.upper()]
@@ -229,23 +295,3 @@ index 90391f6ef..3e0770399 100644
      if isinstance(kv_cache_dtype, str) and kv_cache_dtype.startswith("fp8"):
          return KVQuantMode.FP8_PER_TENSOR
      return KVQuantMode.NONE
-diff --git a/v1/worker/gpu/attn_utils.py b/v1/worker/gpu/attn_utils.py
-index 9a6352150..c9bc6fb01 100644
---- a/v1/worker/gpu/attn_utils.py
-+++ b/v1/worker/gpu/attn_utils.py
-@@ -307,7 +307,14 @@
-             "kv-first layouts are not supported."
-         )
-         dtype_size = get_dtype_size(kv_cache_spec.dtype)
--        page_stride = kv_cache_spec.page_size_bytes // dtype_size
-+        if kv_cache_spec.kv_quant_mode.is_kvarn:
-+            # KVarN stores one packed tile per block/head. Hybrid page
-+            # unification may publish a larger logical page (including
-+            # num_head_slots), but the physical block stride is the packed
-+            # backend shape: one tile for every physical KV head.
-+            page_stride = prod(kv_cache_shape[1:])
-+        else:
-+            page_stride = kv_cache_spec.page_size_bytes // dtype_size
- 
-         num_blocks_dim = inv_order[0]
-         strides = list(torch.empty(permuted_kv_cache_shape, device="meta").stride())

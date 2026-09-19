@@ -45,33 +45,8 @@ Status: validated on the 170HX (4 boot cycles + a full serving session,
 bit-exact, 0 Xid) and in production there — but as load-time hygiene, not
 as the wedge fix this header originally proposed; see the history above.
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_MARLIN_REPACK_STAGED
+--- exported from cpuchip/vllm 932293aab (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
 
---- exported from cpuchip/vllm f2c2629e4 (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
-
-diff --git a/envs.py b/envs.py
-index 51cb3aed6..10cb33a26 100755
---- a/envs.py
-+++ b/envs.py
-@@ -201,6 +201,8 @@
-     VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
-     VLLM_MARLIN_INT8_INCLUDE_RE: str = ""
-     VLLM_MARLIN_INT8_EXCLUDE_RE: str = "lm_head|mtp"
-+    # syv patch (marlin-repack-staged-sm80): "1"/"0" override of the staging buffer, unset = on for sm80 only
-+    VLLM_MARLIN_REPACK_STAGED: str | None = None
-     # syv patch (hybrid-kv-groups-v2-cudagraph): MiB reserved for V2 CUDA graphs before the KV cache is sized
-     VLLM_V2_CUDAGRAPH_MEM_MIB: float = 0.0
-     # syv patch (spec-decode-attn): split-KV verify kernel switch, query-token cap for its partial buffers
-@@ -1571,6 +1573,8 @@
-     "VLLM_MARLIN_INT8_EXCLUDE_RE": lambda: os.environ.get(
-         "VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp"
-     ),
-+    # syv patch (marlin-repack-staged-sm80)
-+    "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
-     # syv patch (hybrid-kv-groups-v2-cudagraph)
-     "VLLM_V2_CUDAGRAPH_MEM_MIB": lambda: float(os.environ.get("VLLM_V2_CUDAGRAPH_MEM_MIB", "0") or 0),
-     # syv patch (spec-decode-attn)
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index 3975b26c2..891cd3b3a 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py

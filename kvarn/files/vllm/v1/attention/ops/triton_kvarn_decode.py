@@ -27,16 +27,17 @@ layer forwards in a step.
 
 from __future__ import annotations
 
-import os
 
 import torch
+
+import vllm.envs as envs
 
 from vllm.triton_utils import tl, triton
 
 # Number of KV-sequence splits for the split-K flash-decoding kernel. More
 # splits = better load-balancing of ragged burst seqlens across SMs, at the cost
 # of a larger fp32 partial-output scratch + more stage-2 combine work.
-KVARN_NUM_KV_SPLITS = int(os.environ.get("KVARN_NUM_KV_SPLITS", "16"))
+KVARN_NUM_KV_SPLITS = int(envs.KVARN_NUM_KV_SPLITS or "16")
 KVARN_MAX_KV_SPLITS = 64  # cap of the context-adaptive schedule below
 
 # Shared autotune space for the decode kernels (single-token, split-K stage1,
@@ -69,7 +70,7 @@ def adaptive_num_kv_splits(max_blocks_per_req: int) -> int:
     a ~28% stage-1 win, growing at longer ctx (16K: 82->49us). Split-K is
     log-sum-exp-combined, so the count never changes the OUTPUT, only occupancy;
     32 is the floor up to 256 blocks. KVARN_NUM_KV_SPLITS overrides."""
-    env = os.environ.get("KVARN_NUM_KV_SPLITS")
+    env = envs.KVARN_NUM_KV_SPLITS
     if env is not None:
         return int(env)
     if max_blocks_per_req <= 256:
@@ -741,7 +742,7 @@ def kvarn_decode_attention(
     #   MATERIALIZE — build packed fp16 K/V then stock FlashAttention (≥2.25x
     #                FP16 KV traffic; kept for A/B and as a fallback).
     max_blocks_per_req = md.fa_max_blocks_per_req
-    use_fused = os.environ.get("KVARN_FUSED_DECODE", "1") == "1"
+    use_fused = envs.KVARN_FUSED_DECODE
     # Both the single-stage kernel and stage1 are @triton.autotune'd over
     # BLOCK_N/num_warps (keyed on D/GROUP/Q_PER_KV/K_BITS/V_BITS) — no
     # BLOCK_N/num_warps/num_stages passed at the launch sites.
@@ -782,7 +783,7 @@ def kvarn_decode_attention(
     # (defensive — real decode batches always fit, but a padded dummy run can
     # be wider). The single-stage kernel handles any batch size.
     _mid_fits = impl._mid_o_buf is not None and N <= impl._mid_o_buf.shape[0]
-    _sk_env = os.environ.get("KVARN_SPLIT_K")
+    _sk_env = envs.KVARN_SPLIT_K
     if _sk_env is not None:
         split_k = use_fused and _sk_env == "1" and _mid_fits
     else:
@@ -943,7 +944,7 @@ def kvarn_verify_attention(
             # output) through a mechanism not yet isolated — suspicion is an
             # interaction with async scheduling / drafter metadata rather
             # than kernel math. Re-enable for debugging only.
-            and os.environ.get("KVARN_SHARED_VERIFY", "0") == "1"):
+            and envs.KVARN_SHARED_VERIFY):
         # SHARED-DEQUANT uniform path: split-K shaped (SPLITS=1 degenerates
         # cleanly); stage2 combines into the flat [NQ*Hq, D] output.
         B = NQ // qlen
@@ -987,7 +988,7 @@ def kvarn_verify_attention(
     # KVARN_SPLIT_K=1 is an explicit force-on; KVARN_SPLIT_K=0 does not disable
     # the correctness-required auto split.
     _sw = int(getattr(impl, "sliding_window", 0) or 0)
-    _sk_env = os.environ.get("KVARN_SPLIT_K")
+    _sk_env = envs.KVARN_SPLIT_K
     auto_split = (_sw <= 0) and (max_ctx_blocks >= 16)
     split_k = auto_split or _sk_env == "1"
 

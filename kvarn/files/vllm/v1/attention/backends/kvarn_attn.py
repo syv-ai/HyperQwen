@@ -38,12 +38,13 @@ from __future__ import annotations
 
 import functools
 import math
-import os
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 import torch
 import torch.nn.functional as F
+
+import vllm.envs as envs
 
 from vllm.config.cache import CacheDType
 from vllm.v1.attention.backend import (
@@ -57,6 +58,7 @@ from vllm.v1.attention.backend import (
     CommonAttentionMetadata,
     MultipleOf,
 )
+from vllm.v1.kv_cache_interface import KVCacheLayout
 from vllm.v1.attention.backends.fa_utils import (
     get_flash_attn_version,
     is_flash_attn_varlen_func_available,
@@ -201,6 +203,17 @@ class KVarNAttentionBackend(AttentionBackend):
     @staticmethod
     def get_name() -> str:
         return "KVARN"
+
+    @classmethod
+    def supported_kv_cache_layouts(cls) -> tuple[KVCacheLayout, ...]:
+        # port(0.29): vLLM 0.29 derives every layer's physical layout from its
+        # spec ([B, H, N, C] bytes; get_kv_cache_shape is no longer consulted).
+        # KVarN needs the N per-token slots of one head to sit back to back so
+        # they fold into the one tile per (block, head) its kernels address:
+        # physical order [L, B, H, N, C], which is LBHNC (the enum letters are
+        # the physical order; LBNHC puts tokens outside heads and the fold's
+        # view() refuses it, which is the intended loud failure).
+        return (KVCacheLayout.LBHNC,)
 
     @staticmethod
     def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
@@ -411,7 +424,7 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
     # KVARN_FUSED_VERIFY=0 reverts to single-token-only support.
     _cudagraph_support: ClassVar[AttentionCGSupport] = (
         AttentionCGSupport.UNIFORM_BATCH
-        if os.environ.get("KVARN_FUSED_VERIFY", "1") == "1"
+        if envs.KVARN_FUSED_VERIFY
         else AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
     )
 
@@ -440,7 +453,7 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
         self._init_reorder_batch_threshold(
             1,
             supports_spec_as_decode=(
-                os.environ.get("KVARN_FUSED_VERIFY", "1") == "1"),
+                envs.KVARN_FUSED_VERIFY),
         )
         # KV-cache-group key, must match KVarNAttentionImpl._group_key for this
         # group's layers so the builder mutates the right group's slot allocator.
@@ -1190,7 +1203,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # (head_size, num_kv_heads, sliding_window) uniquely identifies the group
         # and is computable identically by the per-group builder and each impl.
         self._group_key = (head_size, self.num_kv_heads, self.sliding_window)
-        if os.environ.get("KVARN_DBG_LAYERS") == "1":
+        if envs.KVARN_DBG_LAYERS:
             print(f"[KVARN_LAYER] head_size={head_size} num_heads={num_heads} "
                   f"num_kv_heads={self.num_kv_heads} sliding_window={self.sliding_window}",
                   flush=True)
@@ -1339,7 +1352,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             # memory budget — making the pool both exhaustion-safe (the scheduler
             # can never exceed it) and OOM-safe (it is <= the budget). No
             # per-model tuning; KVARN_POOL_SLOTS still pins the count exactly.
-            env_slots = int(os.environ.get("KVARN_POOL_SLOTS", "0"))
+            env_slots = envs.KVARN_POOL_SLOTS
             if env_slots > 0:
                 pool_size = max(env_slots, 64)
             else:
@@ -1558,7 +1571,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         Over-sizing costs 4 B per slot and nothing in-kernel: every kernel
         guards ``block_id < NUM_BLOCKS_LOOKUP``. ``KVARN_LOOKUP_BLOCKS`` pins it.
         0 when no bound can be derived (unit tests): the 1024 floor applies."""
-        env = int(os.environ.get("KVARN_LOOKUP_BLOCKS", "0"))
+        env = envs.KVARN_LOOKUP_BLOCKS
         if env > 0:
             return env
         try:
@@ -1582,7 +1595,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         16 / equality to 1 -- for the warmup launch and the first real launches,
         so a warmup-vs-serving variant mismatch can be read off the log rather
         than inferred (``--jit-monitor-verbose`` truncates the attrs)."""
-        if os.environ.get("KVARN_SPEC_DEBUG", "0") != "1":
+        if not envs.KVARN_SPEC_DEBUG:
             return
         cls = type(self)
         counts = cls.__dict__.get("_spec_debug_count")
@@ -1728,7 +1741,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # deployment, don't compile/autotune it here either.
         if (_qlen >= 2
                 and ((_qlen * qpk_pad) & (_qlen * qpk_pad - 1)) == 0
-                and os.environ.get("KVARN_SHARED_VERIFY", "0") == "1"):
+                and envs.KVARN_SHARED_VERIFY):
             from vllm.v1.attention.ops.triton_kvarn_decode import (
                 _kvarn_fused_verify_stage1,
             )
@@ -1804,6 +1817,18 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
 
     def _hadamard(self, device: torch.device) -> torch.Tensor:
         return _build_hadamard(self.head_size, device)
+
+    @staticmethod
+    def _as_tile_view(kv_cache: torch.Tensor) -> torch.Tensor:
+        """port(0.29): fold the runner's ``[B, H, N, C]`` byte view into the
+        ``(num_blocks, num_kv_heads, tile_bytes_aligned)`` view the kernels and
+        ``_flat_block`` address. The spec publishes one ``tile_bytes_aligned //
+        group`` slot per token, so N * C is exactly one tile; under LBNHC the
+        N and C dims are contiguous, and ``view`` (not ``reshape``) makes a
+        wrong layout fail loudly instead of silently copying."""
+        if kv_cache.dim() == 4:
+            return kv_cache.view(kv_cache.shape[0], kv_cache.shape[1], -1)
+        return kv_cache
 
     def _flat_block(self, kv_cache: torch.Tensor, block_id: int, head: int) -> torch.Tensor:
         """Contiguous ``[tile_bytes_aligned]`` uint8 view for one (block, head).
@@ -1958,7 +1983,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         layout; only the data movement is batched."""
         if not flush_pairs:
             return
-        if os.environ.get("KVARN_FAST_FLUSH", "1") != "1":
+        if not envs.KVARN_FAST_FLUSH:
             return cls._batched_flush_legacy(flush_pairs)
 
         cfg = flush_pairs[0][0].kvarn_config
@@ -2071,7 +2096,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             V_stack = torch.stack(V_list, dim=0)
             # Optional: dump first chunk's raw (pre-Sinkhorn) tiles for outlier
             # analysis (KVARN_DUMP_TILES=/path/to/file.pt).
-            dump_path = os.environ.get("KVARN_DUMP_TILES", "")
+            dump_path = envs.KVARN_DUMP_TILES
             if dump_path and not getattr(cls, "_tiles_dumped", False):
                 cls._tiles_dumped = True
                 # Capture per-tile (layer_idx, block_id) for per-layer analysis.
@@ -2139,6 +2164,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         N = slot_mapping.shape[0]
         if N <= 0:
             return
+        kv_cache = self._as_tile_view(kv_cache)
         device = key.device
         Hk = self.num_kv_heads
         D = self.head_size
@@ -2201,6 +2227,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
     ) -> torch.Tensor:
         num_tokens = query.shape[0]
         device = query.device
+        kv_cache = self._as_tile_view(kv_cache)
 
         if output is None:
             output = torch.zeros(
@@ -2573,11 +2600,11 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # continuations), where one materialization amortizes over thousands
         # of query tokens. KVARN_FUSED_VERIFY=0 forces materialize always.
         _group = self.kvarn_config.group
-        if (os.environ.get("KVARN_FUSED_VERIFY", "1") == "1"
+        if (envs.KVARN_FUSED_VERIFY
                 and md.max_query_len
-                <= int(os.environ.get("KVARN_FUSED_VERIFY_MAXQ", "8"))
+                <= envs.KVARN_FUSED_VERIFY_MAXQ
                 and (int(md.max_seq_len) + _group - 1) // _group
-                >= int(os.environ.get("KVARN_FUSED_VERIFY_MIN_BLOCKS", "64"))
+                >= envs.KVARN_FUSED_VERIFY_MIN_BLOCKS
                 and B > 0):
             return self._fused_verify_path(q, kv_cache, md)
         if (not _HAS_FLASH_ATTN or self.head_size > 256

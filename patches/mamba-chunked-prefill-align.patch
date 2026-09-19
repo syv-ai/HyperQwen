@@ -15,7 +15,7 @@ Fix state loss and NaN generation during chunked prefill in Mamba/GDN models:
 Apply from the installed vllm package directory:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/mamba-chunked-prefill-align.patch
 
---- exported from cpuchip/vllm 1ce4d9876 (mamba-chunked-prefill-align); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 1330b0e1e (mamba-chunked-prefill-align); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/third_party/flash_linear_attention/ops/chunk_o.py b/third_party/flash_linear_attention/ops/chunk_o.py
 index 0c323b8ce..11b9db360 100644
@@ -41,10 +41,10 @@ index 0c323b8ce..11b9db360 100644
      b_A = tl.where(m_A, b_A, 0)
  
 diff --git a/v1/worker/mamba_utils.py b/v1/worker/mamba_utils.py
-index 9b89af081..21568ff91 100644
+index 53e46a9cf..262e3dd84 100644
 --- a/v1/worker/mamba_utils.py
 +++ b/v1/worker/mamba_utils.py
-@@ -416,15 +416,15 @@
+@@ -534,15 +534,15 @@
      state_idx = tl.load(state_idx_ptr + req_indices, mask=mask, other=-1)
      num_accepted = tl.load(num_accepted_tokens_ptr + req_indices, mask=mask, other=1)
  

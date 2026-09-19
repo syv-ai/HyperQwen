@@ -12,13 +12,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
---- exported from cpuchip/vllm 4ee0f709b (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 701d87033 (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 744bf38fc..b28f4f8f9 100644
+index 384142f56..d332f8ea1 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
-@@ -86,6 +86,26 @@
+@@ -88,6 +88,26 @@
              prefix=maybe_prefix(prefix, "embed_tokens"),
          )
  
@@ -45,7 +45,7 @@ index 744bf38fc..b28f4f8f9 100644
          # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
          # missing from hf_quant_config.json exclude_modules. Force unquantized.
          # Ref: https://github.com/vllm-project/vllm/pull/38650
-@@ -251,6 +271,12 @@
+@@ -255,6 +275,12 @@
              self.lm_head = PPMissingLayer()
  
          self.logits_processor = LogitsProcessor(config.vocab_size)
@@ -58,7 +58,7 @@ index 744bf38fc..b28f4f8f9 100644
  
      def embed_input_ids(
          self,
-@@ -297,11 +323,26 @@
+@@ -301,11 +327,26 @@
          hidden_states: torch.Tensor,
          spec_step_idx: int = 0,
      ) -> torch.Tensor | None:

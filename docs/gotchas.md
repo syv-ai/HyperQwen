@@ -196,13 +196,13 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     padded to `num_speculative_tokens` and a worker asking for fewer is ignored, silently.
     Adaptive block length (`LOOKUP=1` with `DFLASH_TOKENS > 7`) needs `ASYNC_SCHED=0`; at
     batch 1 that costs under 1%.
-    Still true on 0.28.0, and worth knowing *why*, because 0.28 looks like it
+    Still true on 0.29.0, and worth knowing *why*, because 0.29 looks like it
     handles this for you and does not: `VllmConfig` disables async scheduling
     automatically for speculative methods outside an allowlist, but that
     allowlist is `EagleModelTypes`, and `DFlashModelTypes` is inside it
-    (`config/speculative.py:66`). So dflash keeps async scheduling on unless
+    (`config/speculative.py:69` on 0.29.0, `:67` on 0.28.0). So dflash keeps async scheduling on unless
     something turns it off, and the launcher is that something.
-19. **`--async-scheduling` is already the default in 0.28.0.** The flag exists and passing it
+19. **`--async-scheduling` is already the default in 0.28.0 and 0.29.0.** The flag exists and passing it
     changes nothing; `--no-async-scheduling` is what turns it off. Two hours of "the adaptive
     block isn't working" was this.
 20. **The DFlash draft pass is a captured CUDA graph, so its Python runs once.**
@@ -631,7 +631,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     stored hits under `SPEC=mtp` and the cached count on a replay lands on the
     same block formula as the GPU path, one 832-token block more than before.
     **Sizing the tier, and why a default boot can show it doing nothing.**
-    Residency has no gauge in 0.28.0: both `kv_offload_cpu_cache_usage_perc`
+    Residency has no gauge in 0.28.0 or 0.29.0: both `kv_offload_cpu_cache_usage_perc`
     and its read twin count in-flight transfer pins (`num_used = allocated -
     free - evictable`, and `complete_store()` marks a block evictable the
     moment it lands), so a full tier reads 0.0 between transfers and a 0%

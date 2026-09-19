@@ -19,13 +19,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0 (issue #25, item 15). Reapply after upgrades.
 
---- exported from cpuchip/vllm d9efedb86 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 8e30713a7 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/utils.py b/model_executor/models/utils.py
-index 5e1236a7e..f01b939dc 100644
+index 9c6c7f6bb..74cee2369 100644
 --- a/model_executor/models/utils.py
 +++ b/model_executor/models/utils.py
-@@ -897,7 +897,7 @@
+@@ -943,7 +943,7 @@
  
      return (
          VllmConfig.get_quantization_config(draft_model_config, draft_load_config)

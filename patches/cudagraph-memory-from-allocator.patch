@@ -1,0 +1,75 @@
+Measure captured CUDA-graph memory by the allocator's reserved bytes instead of the driver's free-memory delta, and log the driver delta beside it. The graphs live in the allocator's private pool, so reserved bytes measure them on every platform; the driver delta also counts whatever else moved during capture. The FULL-graph samples the estimate extrapolates from are read the same way, so the estimate never mixes an allocator total with driver-measured samples (four of five profiles on the native 3090 run FULL graphs, so that path is the main one there and a mixed reading would have been silent only on a PIECEWISE-only box).
+
+Measured on 0.29.0 with the pool read both ways at the same two points of the same capture: native RTX 3090, real capture, allocator 0.09 GiB against driver 0.11 on the default profile and 0.21 against 0.24 on the KVarN huge-context profile; WSL2 RTX 4090, allocator 0.09 and 0.23 on the same profiles, cold or warm, while the driver's free-memory reading there is pinned at zero once the KV cache fills the budget (so the logged "actual" pool read 0.0) and collapses from 5.44 GiB to zero during the first compile of the KVarN kernels on a cold cache, which the graph-memory estimate then subtracted from the KV budget (5.44 GiB estimated for a 0.23 GiB pool) and refused the boot at -0.97 GiB available. With this reading that boot passes (4.19 GiB available, estimate 0.28).
+
+Knowingly unreserved by this reading: the driver-side residue of a capture (graph executables, module loads, per-kernel local memory, non-torch workspaces), measured on the native 3090 as the driver delta minus the allocator delta on the same real capture, 0.02 GiB on the default profile and 0.03 GiB on the huge-context profile (0.10 and 0.12 on the estimate's throwaway capture). The estimate itself is not made accurate by this change (1.03 GiB estimated against 0.09 actual on the default profile after it, on both cards; its throwaway capture is that much larger than the real one, and the FULL-sample extrapolation contributes nothing); what changes is that the actual is measured, and the KV budget gains the difference on every boot (native 3090 default profile 5.37 to 5.48 GiB, pool 73,631 to 75,173).
+
+--- exported from cpuchip/vllm 4879f94f3 (cudagraph-memory-from-allocator); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu/cudagraph_utils.py b/v1/worker/gpu/cudagraph_utils.py
+index 7abb953e7..c4f8d1bc3 100644
+--- a/v1/worker/gpu/cudagraph_utils.py
++++ b/v1/worker/gpu/cudagraph_utils.py
+@@ -408,7 +408,11 @@
+                             set_graph_pool_id(current_platform.graph_pool_handle())
+                         if self._capture_mem_samples is not None:
+                             torch.accelerator.synchronize()
+-                            free_before = torch.accelerator.get_memory_info()[0]
++                            # Sampled by the allocator's reserved bytes, the
++                            # same reading capture_model returns, so the
++                            # estimate never mixes an allocator total with
++                            # driver-measured samples.
++                            reserved_before = torch.accelerator.memory_reserved()
+                         with torch.cuda.graph(
+                             graph, self.pool, stream=current_stream()
+                         ):
+@@ -420,8 +424,8 @@
+                             get_offloader().join_after_forward()
+                         if self._capture_mem_samples is not None:
+                             torch.accelerator.synchronize()
+-                            free_after = torch.accelerator.get_memory_info()[0]
+-                            self._capture_mem_samples.append(free_before - free_after)
++                            reserved_after = torch.accelerator.memory_reserved()
++                            self._capture_mem_samples.append(reserved_after - reserved_before)
+                         self.graphs[desc] = graph
+                         compilation_counter.num_cudagraph_captured += 1
+         self._graphs_captured = True
+diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
+index 94bffa6e1..93aeaaca5 100644
+--- a/v1/worker/gpu/model_runner.py
++++ b/v1/worker/gpu/model_runner.py
+@@ -925,6 +925,7 @@
+         gc.collect()
+         torch.accelerator.empty_cache()
+         start_free_gpu_memory = torch.accelerator.get_memory_info()[0]
++        start_reserved = torch.accelerator.memory_reserved()
+ 
+         with self.maybe_setup_dummy_loras(self.lora_config):
+             if capture_encoder:
+@@ -960,13 +961,24 @@
+ 
+         end_time = time.perf_counter()
+         end_free_gpu_memory = torch.accelerator.get_memory_info()[0]
++        end_reserved = torch.accelerator.memory_reserved()
+         elapsed_time = end_time - start_time
+-        cuda_graph_size = start_free_gpu_memory - end_free_gpu_memory
++        # The graphs live in the allocator's private pool, so its reserved
++        # bytes measure them on every platform. The driver's free-memory
++        # delta also counts whatever else moved during capture, and under
++        # WSL2's paravirtual driver that reading collapses to zero during a
++        # cold compile: 5.44 GiB reported for a 0.23 GiB pool, which the
++        # memory profiler then subtracts from the KV budget and refuses the
++        # boot. Keep the driver delta in the log; return the pool.
++        cuda_graph_size = end_reserved - start_reserved
++        driver_delta = start_free_gpu_memory - end_free_gpu_memory
+         # This usually takes 5~20 seconds.
+         logger.info(
+-            "Graph capturing finished in %.0f secs, took %.2f GiB",
++            "Graph capturing finished in %.0f secs, took %.2f GiB "
++            "(driver free-memory delta %.2f GiB)",
+             elapsed_time,
+             cuda_graph_size / (1 << 30),
++            driver_delta / (1 << 30),
+         )
+         return cuda_graph_size
+ 

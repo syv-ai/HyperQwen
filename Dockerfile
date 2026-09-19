@@ -1,5 +1,5 @@
 # Same stack as the README's venv install, frozen: Python 3.12 venv at /app/venv,
-# vLLM 0.28.0 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in
+# vLLM 0.29.0 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in
 # patches/ applied,
 # the KVarN KV cache installed, verify.sh --install run at build time.
 #
@@ -31,7 +31,7 @@ RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm
     sed -e 's/#.*//' -e 's/^[[:space:]]*//;s/[[:space:]]*$//' -e '/^$/d' patches/series | \
     while IFS= read -r name; do \
       case "$name" in \
-        dflash2-backport.patch) echo "== skip $name (DFlash2 is native in vLLM 0.28.0)"; continue ;; \
+        dflash2-backport.patch) echo "== skip $name (DFlash2 is native since vLLM 0.28.0)"; continue ;; \
       esac; \
       echo "== $name"; patch -p1 --fuzz 0 --no-backup-if-mismatch -d "$SP" < "patches/$name"; \
     done; \

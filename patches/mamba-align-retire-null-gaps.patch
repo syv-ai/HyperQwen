@@ -14,21 +14,26 @@ returned at request end either way; the cost is peak pool pressure during
 long prefills, not a permanent leak.
 Applies on top of mamba-align-checkpoint-order.patch.
 
---- exported from cpuchip/vllm e329c903b (mamba-align-retire-null-gaps); regenerate with scripts/export-patch.sh, do not edit ---
+Ported to 0.29.0 from the fork's PR#101 branch (syv-ai/qwen38-27b-rtx3090, patches/mamba-align-retire-null-gaps.patch at 07f791a): the override hunk applies unchanged; the field init and the free-path pop re-anchored around 0.29's _num_checkpoint_blocks. Upstream #55450 is not in the v0.29.0 tag.
+
+Signed-off-by: Michael Stufflebeam <cpuchip@gmail.com>
+Co-authored-by: Claude <noreply@anthropic.com>
+
+--- exported from cpuchip/vllm 27f4d9303 (mamba-align-retire-null-gaps); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 0fdf2b415..890e21417 100644
+index d544bfd3b..92e5fc6e2 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -1293,6 +1293,7 @@
+@@ -1388,6 +1388,7 @@
              # Mapping from request ID to the index of the block
              # allocated in the previous step
              self.last_state_block_idx: dict[str, int] = {}
 +            self._num_retired_blocks: dict[str, int] = {}
              # The set of the requests that have been allocated blocks
              self._allocated_block_reqs: set[str] = set()
-             # Requests that registered their own last-prompt-boundary partial
-@@ -1445,6 +1446,27 @@
+             # Number of internal checkpoint blocks required by each request's
+@@ -1543,6 +1544,27 @@
  
          return mask
  
@@ -56,11 +61,11 @@ index 0fdf2b415..890e21417 100644
      def remove_skipped_blocks(
          self,
          request_id: str,
-@@ -1748,6 +1770,7 @@
+@@ -1871,6 +1893,7 @@
          if self.mamba_cache_mode == "align":
              self._allocated_block_reqs.discard(request_id)
              self.last_state_block_idx.pop(request_id, None)
 +            self._num_retired_blocks.pop(request_id, None)
+             self._num_checkpoint_blocks.pop(request_id, None)
              self._producer_partial_tail_reqs.pop(request_id, None)
-             # A hand-off whose request died in this same scheduling pass must
-             # not reach the connector: its unpin hook (free) has already run.
+             # An offer is only guaranteed to hold committed bytes until the end

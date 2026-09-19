@@ -1,0 +1,63 @@
+Make VLLM_USE_FLASHINFER_SAMPLER cover the drafter's candidate top-k, which it does not.
+
+kind: fix. Retires when upstream takes it.
+
+VLLM_USE_FLASHINFER_SAMPLER=0 reads as "do not use FlashInfer for sampling", and
+topk_topp_sampler.py:45 honours it. _flashinfer_topk() in logits_processor.py does not: it
+gates only on current_platform.is_cuda() and has_flashinfer(), so the switch is half a
+kill-switch. The drafter reaches it unconditionally -- Qwen3DFlash2.compute_candidates ->
+LogitsProcessor.get_top_k_tokens -> _topk -> _flashinfer_topk -- and that call exists in
+both v0.28.0 and v0.29.0.
+
+The consequence is a boot failure, not a slowdown. flashinfer 0.6.18's JIT emits
+--compress-mode=size, which nvcc older than 13.0 rejects; 0.6.16.post3's does not emit it,
+which is why the same code is harmless on the 0.28 line. No flashinfer-cubin release has
+ever carried top-k (checked 0.6.13 and 0.6.18: zero topk artefacts in a 6.3 GB, 85,496-file
+package), so the JIT is unavoidable for this op and a matching cubin does not rescue it.
+vLLM's own wheel pins flashinfer-python==0.6.18 in Requires-Dist on 0.29.0, so pinning back
+to 0.6.16.post3 fights the wheel. SPEC=dflash2 is the only line that reaches the call, which
+is why SPEC=off and mtp boot on the same box (syv-ai/qwen38-27b-rtx3090#106).
+
+The default is unchanged: the knob is bool = True, and =0 is the explicit opt-out, so this
+only affects a run that already asked FlashInfer not to be used for sampling.
+
+Measured on an RTX 3090, 0.29 image, cold FlashInfer cache, with a stub nvcc that always
+exits 1 with "nvcc fatal : Unknown option '--compress-mode=size'". Only the switch differs:
+
+  VLLM_USE_FLASHINFER_SAMPLER=1  ->  flashinfer.top_k,  _topk FAILED (JIT build)
+  VLLM_USE_FLASHINFER_SAMPLER=0  ->  None (torch.topk), _topk SUCCEEDED
+
+Env knobs this patch reads go through vllm.envs: VLLM_USE_FLASHINFER_SAMPLER (registered
+upstream; this patch registers nothing new).
+
+--- exported from cpuchip/vllm 337efb79f (topk-honour-flashinfer-sampler-switch); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/layers/logits_processor.py b/model_executor/layers/logits_processor.py
+index 694bb6b03..e5277d581 100644
+--- a/model_executor/layers/logits_processor.py
++++ b/model_executor/layers/logits_processor.py
+@@ -20,6 +20,7 @@
+     UnquantizedEmbeddingMethod,
+     VocabParallelEmbedding,
+ )
++import vllm.envs as envs
+ from vllm.platforms import current_platform
+ from vllm.utils.flashinfer import has_flashinfer
+ 
+@@ -35,6 +36,16 @@
+     """
+     if not current_platform.is_cuda():
+         return None
++    if not envs.VLLM_USE_FLASHINFER_SAMPLER:
++        # The same switch that gates the sampler's FlashInfer path. Without this the
++        # switch is only half a kill-switch: the drafter's candidate top-k still enters
++        # FlashInfer, and on a box whose nvcc predates --compress-mode the 0.6.18 JIT
++        # fails there and takes the boot with it (syv-ai #106, SPEC=dflash2 only).
++        logger.info_once(
++            "VLLM_USE_FLASHINFER_SAMPLER=0; vocab-parallel top-k uses torch.topk, "
++            "at roughly half the speed."
++        )
++        return None
+     if not has_flashinfer():
+         logger.info_once(
+             "flashinfer is unavailable; vocab-parallel top-k uses torch.topk, "

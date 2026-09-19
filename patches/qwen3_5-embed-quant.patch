@@ -10,13 +10,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
---- exported from cpuchip/vllm 4ef3da407 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm dabae6094 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
-index 28c6a1189..29ca73751 100644
+index f991f05d7..fe960984b 100644
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -244,6 +244,8 @@
+@@ -245,6 +245,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,
@@ -26,10 +26,10 @@ index 28c6a1189..29ca73751 100644
  
          def get_layer(prefix: str):
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 67f06f4f5..744bf38fc 100644
+index 4c064bead..384142f56 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
-@@ -82,6 +82,8 @@
+@@ -84,6 +84,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,

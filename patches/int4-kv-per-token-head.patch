@@ -53,7 +53,13 @@ carries in hybrid-sw-block-promote.patch (dropped here), plus a mamba
 GCD-hash change whose branch is unreachable under the launchers'
 `--mamba-cache-mode align` (dropped; details in the PR thread).
 
---- exported from cpuchip/vllm 8056ea9ae (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
+Retired on the 0.29 port: mechanism 1 (the padded-page view in v1/worker/gpu/attn_utils.py). vLLM 0.29 builds
+every layer view from placement metadata (KVCacheTensor layer_stride/block_stride, compute_layout_strides with a
+padded_page_size, upstream #51718), so a padded page no longer needs a narrowing view; the flat .view() that
+failed on 0.28 is gone. Mechanisms 2 and 3 below still apply. To be proven by booting the int4 profile
+(single-user/alternative.sh dflash2) on the 0.29 image.
+
+--- exported from cpuchip/vllm a608a6d74 (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
 index 322d32bb8..6e8de7295 100644
@@ -138,34 +144,4 @@ index ce4a85cfe..f4d9ba95f 100644
 +            per_seq_causal_ptr=per_seq_causal_ptr,
          )
          return
- 
-diff --git a/v1/worker/gpu/attn_utils.py b/v1/worker/gpu/attn_utils.py
-index 77d56ad88..9a6352150 100644
---- a/v1/worker/gpu/attn_utils.py
-+++ b/v1/worker/gpu/attn_utils.py
-@@ -338,7 +338,24 @@
-         )
-     else:
-         # No padding — safe to use a contiguous view.
--        kv_cache = kv_raw_tensor.view(dtype).view(permuted_kv_cache_shape)
-+        needed = prod(permuted_kv_cache_shape)
-+        if (
-+            kv_cache_spec.kv_quant_mode.is_per_token_head
-+            and kv_raw_tensor.numel() > needed
-+            and kv_raw_tensor.numel() % permuted_kv_cache_shape[0] == 0
-+            and needed % permuted_kv_cache_shape[0] == 0
-+        ):
-+            nb = permuted_kv_cache_shape[0]
-+            raw_per_blk = kv_raw_tensor.numel() // nb
-+            want_per_blk = needed // nb
-+            kv_cache = (
-+                kv_raw_tensor.view(nb, raw_per_blk)
-+                .narrow(1, 0, want_per_blk)
-+                .reshape(permuted_kv_cache_shape)
-+                .view(dtype)
-+            )
-+        else:
-+            kv_cache = kv_raw_tensor.view(dtype).view(permuted_kv_cache_shape)
- 
-     return kv_cache.permute(*inv_order)
  

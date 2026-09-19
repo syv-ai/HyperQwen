@@ -1,9 +1,9 @@
+CPU offload tier device pointers on WSL2
 
-
---- exported from cpuchip/vllm 052f99d2c (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 72d54cce0 (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/kv_offload/cpu/gpu_worker.py b/v1/kv_offload/cpu/gpu_worker.py
-index d2625c237..aabbb2039 100644
+index bcaf21ff7..6f433f4a7 100644
 --- a/v1/kv_offload/cpu/gpu_worker.py
 +++ b/v1/kv_offload/cpu/gpu_worker.py
 @@ -102,7 +102,9 @@
@@ -87,7 +87,7 @@ index d2625c237..aabbb2039 100644
  
  
  def _new_descriptor_buffers(
-@@ -785,6 +850,9 @@
+@@ -787,6 +852,9 @@
                  )
              elif mmap_region is not None:
                  cpu_tensor = mmap_region.create_next_worker_view(cpu_page_size_bytes)

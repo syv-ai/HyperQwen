@@ -63,10 +63,10 @@ int4_per_token_head.py are untouched. Pool logic: bench/mq3d_scratch_pool_test.p
 (CPU tensors, runs inside the image). Measurements and the reading:
 docs/spec-decode-scratch-token-units.md, "Follow-up".
 
---- exported from cpuchip/vllm 289bd88c5 (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 6a3149dbf (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 6d534c38f..0c24c7a39 100644
+index 70a6e6cc4..22b5db0a0 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -9,7 +9,7 @@
@@ -78,7 +78,7 @@ index 6d534c38f..0c24c7a39 100644
  from vllm.config.cache import CacheDType
  from vllm.logger import init_logger
  from vllm.model_executor.layers.quantization.utils.quant_utils import (
-@@ -65,6 +65,175 @@
+@@ -63,6 +63,175 @@
  MAX_QUERY_LEN_3D = 16
  
  
@@ -254,7 +254,7 @@ index 6d534c38f..0c24c7a39 100644
  @dataclass
  class TritonAttentionMetadata:
      # NOTE(sang): Definition of context_len, query_len, and seq_len.
-@@ -143,30 +312,7 @@
+@@ -141,30 +310,7 @@
              )
          )
  
@@ -285,7 +285,7 @@ index 6d534c38f..0c24c7a39 100644
          # ---- UNIT SPLIT ------------------------------------------------------------
          # These three quantities were one variable, in three different units. The
          # scratch buffers are indexed by QUERY TOKEN, but were sized by
-@@ -187,57 +333,29 @@
+@@ -185,57 +331,29 @@
          # requires num_seqs <= seq_threshold_3D, and no batch can carry more query
          # tokens than the scheduler will place in one, so this is the smallest
          # capacity that can hold every policy-eligible batch.
@@ -360,7 +360,7 @@ index 6d534c38f..0c24c7a39 100644
          ), "int4 3D scratch buffers disagree with the declared token capacity"
          self.rswa_window = model_config.rswa_window
          self.persistent_rswa_prefix_lens: torch.Tensor | None = None
-@@ -662,6 +780,20 @@
+@@ -604,6 +722,20 @@
          else:
              self.use_td = td_override
  

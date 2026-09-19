@@ -14,13 +14,10 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): (none; read moved to the registry)
-
---- exported from cpuchip/vllm a049f223e (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm ccd16216d (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index ed62659cf..e7074a52e 100755
+index 786864b91..b25601bac 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -184,6 +184,8 @@
@@ -32,7 +29,7 @@ index ed62659cf..e7074a52e 100755
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
-@@ -1514,6 +1516,14 @@
+@@ -1502,6 +1504,14 @@
      "VLLM_MARLIN_INPUT_DTYPE": env_with_choices(
          "VLLM_MARLIN_INPUT_DTYPE", None, ["int8", "fp8"]
      ),

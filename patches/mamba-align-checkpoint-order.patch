@@ -76,36 +76,10 @@ Apply from the installed vllm package directory:
 
 Written against vLLM 0.27.1.
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS
+--- exported from cpuchip/vllm 4caa21ded (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
 
---- exported from cpuchip/vllm e80c6bd60 (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
-
-diff --git a/envs.py b/envs.py
-index 2e269abd2..aad233014 100755
---- a/envs.py
-+++ b/envs.py
-@@ -206,6 +206,9 @@
-     VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
-     VLLM_MARLIN_INT8_INCLUDE_RE: str = ""
-     VLLM_MARLIN_INT8_EXCLUDE_RE: str = "lm_head|mtp"
-+    # syv patch (mamba-align-checkpoint-order): hold each running request's reachable align-mode state
-+    # snapshots until it finishes (fork #52)
-+    VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
-     # syv patch (prefill-attn-int8): "int8" / "fp16" selects the Triton prefill kernel on the hybrid model
-     VLLM_PREFILL_ATTN: str = ""
-     # syv patch (marlin-repack-staged-sm80): "1"/"0" override of the staging buffer, unset = on for sm80 only
-@@ -1585,6 +1588,8 @@
-     "VLLM_MARLIN_INT8_EXCLUDE_RE": lambda: os.environ.get(
-         "VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp"
-     ),
-+    # syv patch (mamba-align-checkpoint-order)
-+    "VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS": lambda: os.environ.get("VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS") == "1",
-     # syv patch (prefill-attn-int8)
-     "VLLM_PREFILL_ATTN": lambda: os.environ.get("VLLM_PREFILL_ATTN", ""),
-     # syv patch (marlin-repack-staged-sm80)
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 75acb7f49..0fdf2b415 100644
+index 443017012..d544bfd3b 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
 @@ -1,7 +1,17 @@
@@ -126,9 +100,9 @@ index 75acb7f49..0fdf2b415 100644
  from collections import defaultdict
  from collections.abc import Sequence
  from typing import ClassVar
-@@ -1290,6 +1300,13 @@
+@@ -1388,6 +1398,13 @@
              # into a private cow_block; we record that block for connector
-             # offload (see _pending_partial_tail_offloads).
+             # offload (see _pending_boundary_state_offloads).
              self._producer_partial_tail_reqs: dict[str, int] = {}
 +            # Cached state blocks at the last prompt-region boundaries, held
 +            # until request end instead of being freed mid-decode. They are the
@@ -140,7 +114,7 @@ index 75acb7f49..0fdf2b415 100644
  
      @classmethod
      def find_longest_cache_hit(
-@@ -1454,8 +1471,37 @@
+@@ -1552,8 +1569,37 @@
                  < cdiv(processed_computed_tokens, self.block_size) - 1
              ):
                  blocks = self.req_to_blocks[request_id]
@@ -180,7 +154,7 @@ index 75acb7f49..0fdf2b415 100644
                      blocks[last_state_block_idx] = self._null_block
  
      def get_num_common_prefix_blocks(self, running_request_id: str) -> int:
-@@ -1657,9 +1703,41 @@
+@@ -1769,9 +1815,41 @@
                              # The moved entry is only filled by this step's
                              # copy, so defer same-step hits on it.
                              self.cached_blocks_this_step.add(cow_block.block_hash)
@@ -222,8 +196,8 @@ index 75acb7f49..0fdf2b415 100644
                  req_blocks.extend(new_blocks)
                  self._allocated_block_reqs.add(request_id)
                  self._partial_hit_reqs.pop(request_id, None)
-@@ -1678,6 +1756,13 @@
-                 for entry in self._pending_partial_tail_offloads
+@@ -1805,6 +1883,13 @@
+                 for entry in self._pending_boundary_state_offloads
                  if entry[0] != request_id
              ]
 +            deferred = self._deferred_state_blocks.pop(request_id, None)

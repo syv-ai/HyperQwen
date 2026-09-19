@@ -19,36 +19,8 @@ model's default sampling (temperature 1.0, top-p 0.95, top-k 20):
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/sampler-small-topk-fast-softmax.patch
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_DRAFT_TOPK_TOPP VLLM_DRAFT_TEMP_SCALE
+--- exported from cpuchip/vllm bf16863df (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
 
---- exported from cpuchip/vllm 2015b89ba (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
-
-diff --git a/envs.py b/envs.py
-index e7074a52e..29762694d 100755
---- a/envs.py
-+++ b/envs.py
-@@ -186,6 +186,10 @@
-     VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
-     VLLM_MARLIN_INT8_INCLUDE_RE: str = ""
-     VLLM_MARLIN_INT8_EXCLUDE_RE: str = "lm_head|mtp"
-+    # syv patch (sampler-small-topk-fast-softmax): draft-side top-k/top-p truncation and temperature scale,
-+    # read once at import; registered so they take part in the torch.compile cache key
-+    VLLM_DRAFT_TOPK_TOPP: bool = True
-+    VLLM_DRAFT_TEMP_SCALE: float = 1.0
-     VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
-     VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
-     VLLM_HUMMING_USE_F16_ACCUM: bool = False
-@@ -1524,6 +1528,9 @@
-     "VLLM_MARLIN_INT8_EXCLUDE_RE": lambda: os.environ.get(
-         "VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp"
-     ),
-+    # syv patch (sampler-small-topk-fast-softmax)
-+    "VLLM_DRAFT_TOPK_TOPP": lambda: os.environ.get("VLLM_DRAFT_TOPK_TOPP", "1") == "1",
-+    "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
-     # The online quantization dtype for humming kernel
-     "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
-         os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
 diff --git a/v1/sample/metadata.py b/v1/sample/metadata.py
 index fa4ceac8e..1560b83f9 100644
 --- a/v1/sample/metadata.py
@@ -141,7 +113,7 @@ index 000000000..f8272f480
 +        return row_softmax_fp32(x)
 +    return x.softmax(dim=-1, dtype=torch.float32)
 diff --git a/v1/sample/ops/topk_topp_sampler.py b/v1/sample/ops/topk_topp_sampler.py
-index c83ac7c4b..b84a74336 100644
+index 03716cb3c..858f311ce 100644
 --- a/v1/sample/ops/topk_topp_sampler.py
 +++ b/v1/sample/ops/topk_topp_sampler.py
 @@ -128,25 +128,38 @@
@@ -279,7 +251,7 @@ index 3efaf33d9..2c7487edf 100644
  
          if greedy_sampled is None:
 diff --git a/v1/spec_decode/llm_base_proposer.py b/v1/spec_decode/llm_base_proposer.py
-index 29a95caa8..d5513ed53 100644
+index 0eaba0129..93c19a4f8 100644
 --- a/v1/spec_decode/llm_base_proposer.py
 +++ b/v1/spec_decode/llm_base_proposer.py
 @@ -8,6 +8,7 @@
@@ -290,7 +262,7 @@ index 29a95caa8..d5513ed53 100644
  from vllm.compilation.breakable_cudagraph import BreakableCUDAGraphWrapper
  from vllm.config import (
      CUDAGraphMode,
-@@ -1851,6 +1852,10 @@
+@@ -1859,6 +1860,10 @@
  # Refer to https://github.com/vllm-project/vllm/pull/16899 for the details.
  # FIXME(woosuk): The logic here is duplicated with the main sampling code.
  # We should refactor this to reuse the same sampling implementation.
@@ -301,7 +273,7 @@ index 29a95caa8..d5513ed53 100644
  def compute_probs_and_sample_next_token(
      logits: torch.Tensor,
      sampling_metadata: SamplingMetadata,
-@@ -1873,7 +1878,29 @@
+@@ -1881,7 +1886,29 @@
          is_greedy = temperature < _SAMPLING_EPS
          temperature = torch.where(is_greedy, 1.0, temperature)
      logits.div_(temperature.view(-1, 1))
@@ -333,10 +305,10 @@ index 29a95caa8..d5513ed53 100644
      # NOTE(woosuk): Currently, we ignore most of the sampling parameters in
      # generating the draft tokens. We only use the temperature. While this
 diff --git a/v1/worker/gpu_input_batch.py b/v1/worker/gpu_input_batch.py
-index 0b805fca7..824b3b6b6 100644
+index 7585f4d89..37722aaa3 100644
 --- a/v1/worker/gpu_input_batch.py
 +++ b/v1/worker/gpu_input_batch.py
-@@ -946,6 +946,7 @@
+@@ -944,6 +944,7 @@
              all_random=self.all_random,
              top_p=None if self.no_top_p else self.top_p[:num_reqs],
              top_k=None if self.no_top_k else self.top_k[:num_reqs],

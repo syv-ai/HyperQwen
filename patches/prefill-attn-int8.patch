@@ -42,40 +42,15 @@ the sort order; the series file replaced it and the name came back).
 
 Written against vLLM 0.27.1.
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_PREFILL_ATTN
+--- exported from cpuchip/vllm 1caa43d11 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
 
---- exported from cpuchip/vllm 0f0373568 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
-
-diff --git a/envs.py b/envs.py
-index c5cef9161..2e269abd2 100755
---- a/envs.py
-+++ b/envs.py
-@@ -206,6 +206,8 @@
-     VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
-     VLLM_MARLIN_INT8_INCLUDE_RE: str = ""
-     VLLM_MARLIN_INT8_EXCLUDE_RE: str = "lm_head|mtp"
-+    # syv patch (prefill-attn-int8): "int8" / "fp16" selects the Triton prefill kernel on the hybrid model
-+    VLLM_PREFILL_ATTN: str = ""
-     # syv patch (marlin-repack-staged-sm80): "1"/"0" override of the staging buffer, unset = on for sm80 only
-     VLLM_MARLIN_REPACK_STAGED: str | None = None
-     # syv patch (hybrid-kv-groups-v2-cudagraph): MiB reserved for V2 CUDA graphs before the KV cache is sized
-@@ -1583,6 +1585,8 @@
-     "VLLM_MARLIN_INT8_EXCLUDE_RE": lambda: os.environ.get(
-         "VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp"
-     ),
-+    # syv patch (prefill-attn-int8)
-+    "VLLM_PREFILL_ATTN": lambda: os.environ.get("VLLM_PREFILL_ATTN", ""),
-     # syv patch (marlin-repack-staged-sm80)
-     "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
-     # syv patch (hybrid-kv-groups-v2-cudagraph)
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 680d44068..791f7af75 100755
+index 61fabdebb..829866b72 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1118,6 +1118,50 @@
-                     )
-                     causal = not has_window
+@@ -1159,6 +1159,50 @@
+                     block_table = block_table[:, :num_pages]
+                     num_splits = 1
  
 +                # syv patch: int8-QK Triton prefill attention for head_dim 256
 +                # (SageAttention-style; ~1.3-1.35x FA2 at 16-51k context on

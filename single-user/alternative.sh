@@ -99,7 +99,16 @@ ASYNC_ARGS=(--no-async-scheduling)
 # Array, not $( [ ] && echo ): the command substitution exits 1 when the test
 # is false, which under `set -e` killed this script silently (#59).
 METRICS_ARGS=()
-[ "${REQ_METRICS:-0}" = 1 ] && METRICS_ARGS=(--enable-per-request-metrics --enable-force-include-usage)
+if [ "${REQ_METRICS:-0}" = 1 ]; then
+  # vLLM 0.29.0: per-request speculative-decoding acceptance metrics ride in the response under
+  # metrics.speculative_decoding (n == 1 only; the field is experimental, shape as of v0.29.0). summary
+  # is mean acceptance length, draft acceptance rate and the step histogram; REQ_METRICS_DETAILED=1
+  # adds the ordered per-step accepted/proposed arrays, which upstream says is not free, so it is a
+  # separate opt-in and off in every profile anyone benchmarks (#66, #75, gotcha 53).
+  SPEC_METRICS=summary; [ "${REQ_METRICS_DETAILED:-0}" = 1 ] && SPEC_METRICS=detailed
+  METRICS_ARGS=(--enable-per-request-metrics --enable-force-include-usage
+                --per-request-spec-decode-metrics "$SPEC_METRICS")
+fi
 
 exec vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \

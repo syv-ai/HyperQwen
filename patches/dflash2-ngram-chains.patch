@@ -1,38 +1,11 @@
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_DFLASH2_CHAIN VLLM_DFLASH2_CHAIN_MINMATCH VLLM_DFLASH2_CHAIN_LOG_SEC VLLM_DFLASH2_CHAIN_GREEDY_ONLY
+Ported to 0.29: the propose() override takes dp_sync (DPSyncState) instead of num_tokens_across_dp, matching the
+runner call and the DFlashSpeculator base (upstream changed the signature in 0.29); the inner draft path still receives
+num_tokens_across_dp from the base.
 
---- exported from cpuchip/vllm 9a709a2a5 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 1361d3716 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
-diff --git a/envs.py b/envs.py
-index 10cb33a26..c5cef9161 100755
---- a/envs.py
-+++ b/envs.py
-@@ -177,6 +177,11 @@
-     VLLM_USE_BREAKABLE_CUDAGRAPH: bool = False
-     VLLM_DP_MASTER_IP: str = ""
-     VLLM_DP_MASTER_PORT: int = 0
-+    # syv patch (dflash2-ngram-chains): drafter-free candidate chains; same cache-key reason
-+    VLLM_DFLASH2_CHAIN: bool = False
-+    VLLM_DFLASH2_CHAIN_MINMATCH: int = 8
-+    VLLM_DFLASH2_CHAIN_LOG_SEC: float = 30.0
-+    VLLM_DFLASH2_CHAIN_GREEDY_ONLY: bool = True
-     # syv patch (dflash2-lookup-drafting): lookup-augmented drafting for DFlash2; registered so they take
-     # part in the torch.compile cache key
-     VLLM_DFLASH2_LOOKUP: bool = False
-@@ -1496,6 +1501,11 @@
-     "VLLM_DP_MASTER_IP": lambda: os.getenv("VLLM_DP_MASTER_IP", "127.0.0.1"),
-     # Port of the master node in the data parallel setting
-     "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
-+    # syv patch (dflash2-ngram-chains)
-+    "VLLM_DFLASH2_CHAIN": lambda: os.environ.get("VLLM_DFLASH2_CHAIN", "0") == "1",
-+    "VLLM_DFLASH2_CHAIN_MINMATCH": lambda: int(os.environ.get("VLLM_DFLASH2_CHAIN_MINMATCH", "8")),
-+    "VLLM_DFLASH2_CHAIN_LOG_SEC": lambda: float(os.environ.get("VLLM_DFLASH2_CHAIN_LOG_SEC", "30")),
-+    "VLLM_DFLASH2_CHAIN_GREEDY_ONLY": lambda: os.environ.get("VLLM_DFLASH2_CHAIN_GREEDY_ONLY", "1") == "1",
-     # syv patch (dflash2-lookup-drafting)
-     "VLLM_DFLASH2_LOOKUP": lambda: os.environ.get("VLLM_DFLASH2_LOOKUP", "0") == "1",
-     "VLLM_DFLASH2_GRAPH_BOTH": lambda: os.environ.get("VLLM_DFLASH2_GRAPH_BOTH", "1") == "1",
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 775a0cd8c..1572ac717 100644
+index 07438a148..af532c9a9 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -56,7 +29,7 @@ index 775a0cd8c..1572ac717 100644
  
  logger = init_logger(__name__)
  from vllm.v1.worker.gpu.spec_decode.dflash2.lookup import (
-@@ -256,6 +259,48 @@
+@@ -259,6 +262,48 @@
          self._lookup_sticky = envs.VLLM_DFLASH2_LOOKUP_STICKY
          self._sticky = 0
  
@@ -105,7 +78,7 @@ index 775a0cd8c..1572ac717 100644
          if self._lookup:
              logger.info(
                  "DFlash2 lookup-augmented drafting on (k=%d nmin=%d nmax=%d nstrong=%d "
-@@ -278,6 +323,11 @@
+@@ -281,6 +326,11 @@
          unanimity across the batch. Below CHEAP_CTX tokens of context an extra verify
          position is nearly free (+6% per step at 1.5k against +27% at 25k), so there the
          flag alone is enough."""
@@ -117,7 +90,7 @@ index 775a0cd8c..1572ac717 100644
          if not self._adaptive:
              return None
          emitted = getattr(self, "last_num_emitted", None)
-@@ -315,6 +365,251 @@
+@@ -318,6 +368,251 @@
          self._prev_want = want
          return self.num_speculative_steps if long_block else self.draft_block
  
@@ -134,7 +107,7 @@ index 775a0cd8c..1572ac717 100644
 +        next_prefill_tokens,
 +        temperature,
 +        seeds,
-+        num_tokens_across_dp=None,
++        dp_sync=None,
 +        dummy_run=False,
 +        skip_attn_for_dummy_run=False,
 +        mm_inputs=None,
@@ -211,7 +184,7 @@ index 775a0cd8c..1572ac717 100644
 +            next_prefill_tokens,
 +            temperature,
 +            seeds,
-+            num_tokens_across_dp=num_tokens_across_dp,
++            dp_sync=dp_sync,
 +            dummy_run=dummy_run,
 +            skip_attn_for_dummy_run=skip_attn_for_dummy_run,
 +            mm_inputs=mm_inputs,
@@ -369,7 +342,7 @@ index 775a0cd8c..1572ac717 100644
      def set_req_states(self, req_states) -> None:
          """The token history the lookup matches against (set by the model runner)."""
          self._req_states = req_states
-@@ -327,6 +622,10 @@
+@@ -330,6 +625,10 @@
      def set_sampling_states(self, sampling_states) -> None:
          self._req_top_p = sampling_states.top_p.gpu
          self._req_top_k = sampling_states.top_k.gpu
@@ -380,7 +353,7 @@ index 775a0cd8c..1572ac717 100644
  
      def _sample_path(
          self,
-@@ -480,3 +779,16 @@
+@@ -483,3 +782,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )

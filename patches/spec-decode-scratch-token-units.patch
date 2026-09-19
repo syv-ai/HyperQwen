@@ -92,13 +92,13 @@ VERIFICATION
 
 ---
 
---- exported from cpuchip/vllm 6046544dd (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 88076b41b (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index fd5469386..6d534c38f 100644
+index ee4d10906..70a6e6cc4 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
-@@ -59,6 +59,10 @@
+@@ -57,6 +57,10 @@
  # constants
  MIN_LAUNCH_GRID_SIZE_2D = 128  # Minimum launch grid size of 2D kernel
  NUM_PAR_SOFTMAX_SEGMENTS = 16  # Number of parallel tiled softmax segments
@@ -109,7 +109,7 @@ index fd5469386..6d534c38f 100644
  
  
  @dataclass
-@@ -79,7 +83,9 @@
+@@ -77,7 +81,9 @@
      block_table: torch.Tensor
      slot_mapping: torch.Tensor
  
@@ -120,7 +120,7 @@ index fd5469386..6d534c38f 100644
      num_par_softmax_segments: int
      softmax_segm_output: torch.Tensor
      softmax_segm_max: torch.Tensor
-@@ -160,9 +166,53 @@
+@@ -158,9 +164,53 @@
  
          self.num_par_softmax_segments = NUM_PAR_SOFTMAX_SEGMENTS
          headdim_padded = next_power_of_2(self.headdim)
@@ -175,7 +175,7 @@ index fd5469386..6d534c38f 100644
                  self.num_heads_q,
                  self.num_par_softmax_segments,
                  headdim_padded,
-@@ -171,15 +221,24 @@
+@@ -169,15 +219,24 @@
              device=device,
          )
          self.softmax_segm_max = torch.empty(
@@ -202,7 +202,7 @@ index fd5469386..6d534c38f 100644
          self.rswa_window = model_config.rswa_window
          self.persistent_rswa_prefix_lens: torch.Tensor | None = None
          if self.rswa_window is not None:
-@@ -248,6 +307,8 @@
+@@ -246,6 +305,8 @@
              suffix_kv_lens=suffix_kv_lens,
              prefix_scheduler_metadata=prefix_scheduler_metadata,
              seq_threshold_3D=self.seq_threshold_3D,
@@ -211,7 +211,7 @@ index fd5469386..6d534c38f 100644
              num_par_softmax_segments=self.num_par_softmax_segments,
              softmax_segm_output=self.softmax_segm_output,
              softmax_segm_max=self.softmax_segm_max,
-@@ -705,6 +766,8 @@
+@@ -647,6 +708,8 @@
          block_table = attn_metadata.block_table
  
          seq_threshold_3D = attn_metadata.seq_threshold_3D
@@ -220,7 +220,7 @@ index fd5469386..6d534c38f 100644
          num_par_softmax_segments = attn_metadata.num_par_softmax_segments
          softmax_segm_output = attn_metadata.softmax_segm_output
          softmax_segm_max = attn_metadata.softmax_segm_max
-@@ -770,6 +833,8 @@
+@@ -712,6 +775,8 @@
              k_descale=k_descale,
              v_descale=v_descale,
              seq_threshold_3D=seq_threshold_3D,
@@ -230,14 +230,15 @@ index fd5469386..6d534c38f 100644
              softmax_segm_output=softmax_segm_output,
              softmax_segm_max=softmax_segm_max,
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
-index 0dd51124c..560119971 100644
+index 58b73d569..ece955e6e 100644
 --- a/v1/attention/ops/int4_per_token_head.py
 +++ b/v1/attention/ops/int4_per_token_head.py
-@@ -13,6 +13,29 @@
+@@ -12,7 +12,30 @@
+ 
  from __future__ import annotations
  
- import os
 +
+ import vllm.envs as envs
 +from vllm.logger import init_logger
 +
 +logger = init_logger(__name__)

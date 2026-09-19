@@ -40,10 +40,10 @@ stream and one 44,820-token / 28.5 s chunked prefill -- i.e. no false positive
 on the arm that fires the log-scraper. No wedge was induced, so the patch's
 true-positive path is unexercised here; it is the same clock the draft used.
 
---- exported from cpuchip/vllm 30182446e (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm ff2217aad (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index aad233014..e6d9f8615 100755
+index 6bd0fa019..61df61c0f 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -25,6 +25,7 @@
@@ -54,7 +54,7 @@ index aad233014..e6d9f8615 100755
      VLLM_API_KEY: str | None = None
      VLLM_DEBUG_LOG_API_SERVER_RESPONSE: bool = False
      S3_ACCESS_KEY_ID: str | None = None
-@@ -842,6 +843,11 @@
+@@ -846,6 +847,11 @@
      "VLLM_ENGINE_ITERATION_TIMEOUT_S": lambda: int(
          os.environ.get("VLLM_ENGINE_ITERATION_TIMEOUT_S", "60")
      ),
@@ -67,10 +67,10 @@ index aad233014..e6d9f8615 100755
      # during startup. Default is 600 seconds (10 minutes).
      "VLLM_ENGINE_READY_TIMEOUT_S": lambda: int(
 diff --git a/v1/engine/core.py b/v1/engine/core.py
-index 295c66b36..e0980384b 100644
+index c734e6722..8294380b8 100644
 --- a/v1/engine/core.py
 +++ b/v1/engine/core.py
-@@ -101,6 +101,68 @@
+@@ -102,6 +102,68 @@
  _R = TypeVar("_R")  # Return type for collective_rpc
  
  
@@ -139,7 +139,7 @@ index 295c66b36..e0980384b 100644
  class EngineCore:
      """Inner loop of vLLM's Engine."""
  
-@@ -1078,6 +1140,24 @@
+@@ -1098,6 +1160,24 @@
                  internal_dp_balancing,
              )
  
@@ -164,7 +164,7 @@ index 295c66b36..e0980384b 100644
              # Initialize fault tolerance settings.
              self.enable_fault_tolerance = (
                  vllm_config.parallel_config.enable_fault_tolerance
-@@ -1439,6 +1519,8 @@
+@@ -1475,6 +1555,8 @@
              self.output_queue.put_nowait(output)
          # Post-step hook.
          self.post_step(model_executed)

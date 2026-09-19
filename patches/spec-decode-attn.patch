@@ -29,46 +29,40 @@ block - leaves the captured decode graph reading freed memory.
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/spec-decode-attn.patch
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_SPEC_DECODE_ATTN VLLM_SPEC_DECODE_ATTN_QMAX VLLM_SPEC_ATTN_BLOCK_M
-
---- exported from cpuchip/vllm 8b0ba929c (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 711f8ac83 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 29762694d..ea63c8ff7 100755
+index b25601bac..39e14e5fc 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -186,6 +186,12 @@
-     VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
-     VLLM_MARLIN_INT8_INCLUDE_RE: str = ""
-     VLLM_MARLIN_INT8_EXCLUDE_RE: str = "lm_head|mtp"
-+    # syv patch (spec-decode-attn): split-KV verify kernel switch, query-token cap for its partial buffers
-+    # (0 = 1 + num_speculative_tokens) and a forced query-row tile (0 = pick by row count); registered so
-+    # they take part in the torch.compile cache key (both change the kernel launch)
+@@ -177,6 +177,10 @@
+     VLLM_USE_BREAKABLE_CUDAGRAPH: bool = False
+     VLLM_DP_MASTER_IP: str = ""
+     VLLM_DP_MASTER_PORT: int = 0
++    # syv patch: split-KV verify attention, registered by the patch that reads it (#114)
 +    VLLM_SPEC_DECODE_ATTN: bool = False
 +    VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
 +    VLLM_SPEC_ATTN_BLOCK_M: int = 0
-     # syv patch (sampler-small-topk-fast-softmax): draft-side top-k/top-p truncation and temperature scale,
-     # read once at import; registered so they take part in the torch.compile cache key
-     VLLM_DRAFT_TOPK_TOPP: bool = True
-@@ -1528,6 +1534,10 @@
-     "VLLM_MARLIN_INT8_EXCLUDE_RE": lambda: os.environ.get(
-         "VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp"
-     ),
-+    # syv patch (spec-decode-attn)
+     VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
+     VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
+     VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
+@@ -1449,6 +1453,9 @@
+     "VLLM_DP_MASTER_IP": lambda: os.getenv("VLLM_DP_MASTER_IP", "127.0.0.1"),
+     # Port of the master node in the data parallel setting
+     "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
 +    "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
-+    "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX") or 0),
-+    "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M") or 0),
-     # syv patch (sampler-small-topk-fast-softmax)
-     "VLLM_DRAFT_TOPK_TOPP": lambda: os.environ.get("VLLM_DRAFT_TOPK_TOPP", "1") == "1",
-     "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
++    "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
++    "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),
+     # Randomize inputs during dummy runs when using Data Parallel
+     "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
+         os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index aa89e3010..700553011 100755
+index 9a6c66f5e..b1deb5e33 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1118,6 +1118,37 @@
-                     )
-                     causal = not has_window
+@@ -1159,6 +1159,37 @@
+                     block_table = block_table[:, :num_pages]
+                     num_splits = 1
  
 +                # syv patch: split-KV Triton attention for speculative-decode
 +                # batches (1 < queries/request <= 10). FA2 does not split the KV
@@ -104,7 +98,7 @@ index aa89e3010..700553011 100755
                  flash_attn_varlen_func(
                      q=query[:num_actual_tokens],
                      k=key_cache,
-@@ -1790,3 +1821,57 @@
+@@ -1832,3 +1863,59 @@
  
      # Merge prefix and suffix outputs, and store the result in output.
      merge_attn_states(output, prefix_output, prefix_lse, suffix_output, suffix_lse)
@@ -128,6 +122,8 @@ index aa89e3010..700553011 100755
 +    # and a captured CUDA graph holds their addresses.
 +    global _SPEC_ATTN_QMAX
 +    if _SPEC_ATTN_QMAX is None:
++        import os
++
 +        from vllm.config import get_current_vllm_config
 +        from vllm.v1.attention.ops.spec_decode_attn import BLOCK_M, QMAX_TOKENS
 +
@@ -164,7 +160,7 @@ index aa89e3010..700553011 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q)
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
 new file mode 100644
-index 000000000..ed6e4f8ab
+index 000000000..494f9acce
 --- /dev/null
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -0,0 +1,205 @@
@@ -196,10 +192,10 @@ index 000000000..ed6e4f8ab
 +"""
 +
 +import torch
-+import triton
-+import triton.language as tl
 +
 +import vllm.envs as envs
++import triton
++import triton.language as tl
 +
 +NUM_SEGMENTS = 16
 +BLOCK_M = 64       # query rows (q_len * G) per program at the default register budget

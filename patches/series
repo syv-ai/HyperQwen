@@ -25,7 +25,6 @@ hybrid-kv-groups-v2-cudagraph.patch
 dflash2-lookup-drafting.patch
 hybrid-sw-block-promote.patch
 spec-decode-int8-kv.patch
-xgrammar-spec-terminated.patch
 vision-tower-cpu-offload.patch
 int4-kv-per-token-head.patch
 marlin-repack-staged-sm80.patch
@@ -43,11 +42,11 @@ mamba-chunked-prefill-align.patch
 spec-decode-scratch-within-budget.patch
 dflash2-z-adaptive-emitted.patch
 dspark-draft-quant-config.patch
-vllm-pr54282-draft-gumbel-salt.patch
 mamba-align-retire-null-gaps.patch
 offload-mtp-serve.patch
 engine-completion-log.patch
 engine-stall-sentinel.patch
-sse-keep-alive.patch
-int4-mq3d-envs.patch
 triton-spec-attn-fp8-kv.patch
+topk-honour-flashinfer-sampler-switch.patch
+memory-profile-after-warmup.patch
+cudagraph-memory-from-allocator.patch

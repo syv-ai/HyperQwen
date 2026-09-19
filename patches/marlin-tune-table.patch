@@ -28,16 +28,13 @@ Apply from the installed vllm package directory:
 
 Written against vLLM 0.27.1.
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): (none; read moved to the registry)
-
---- exported from cpuchip/vllm 9317f506c (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 878a52b31 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/_custom_ops.py b/_custom_ops.py
-index 5d63ffa0d..ed4f4b4a7 100644
+index 78a4c4315..b5ecb1d40 100644
 --- a/_custom_ops.py
 +++ b/_custom_ops.py
-@@ -1197,6 +1197,51 @@
+@@ -1265,6 +1265,51 @@
      return torch.ops._C.marlin_int4_fp8_preprocess(qweight, qzeros_or_none, inplace)
  
  
@@ -89,7 +86,7 @@ index 5d63ffa0d..ed4f4b4a7 100644
  def marlin_gemm(
      a: torch.Tensor,
      c: torch.Tensor | None,
-@@ -1218,6 +1263,11 @@
+@@ -1286,6 +1331,11 @@
      use_fp32_reduce: bool = False,
      is_zp_float: bool = False,
  ) -> torch.Tensor:

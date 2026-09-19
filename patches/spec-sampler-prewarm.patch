@@ -20,21 +20,21 @@ compiles too. No-op without a speculator or on the v1 model runner.
 
 Apply with the patches/ set.
 
---- exported from cpuchip/vllm 633a438bc (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm ea9182802 (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/warmup/kernel_warmup.py b/model_executor/warmup/kernel_warmup.py
-index cd16c63b5..35d91b912 100644
+index f4dc08844..e1c240943 100644
 --- a/model_executor/warmup/kernel_warmup.py
 +++ b/model_executor/warmup/kernel_warmup.py
-@@ -8,6 +8,7 @@
- 
+@@ -10,6 +10,7 @@
+ import time
  from typing import TYPE_CHECKING
  
 +import numpy as np
  import torch
  
  import vllm.envs as envs
-@@ -97,6 +98,63 @@
+@@ -96,6 +97,63 @@
      )
  
  
@@ -95,10 +95,10 @@ index cd16c63b5..35d91b912 100644
 +    )
 +
 +
- def kernel_warmup(worker: "Worker", *, process_local_only: bool = False):
-     from vllm.model_executor.warmup.minimax_m3_msa_warmup import (
-         minimax_m3_msa_warmup,
-@@ -117,6 +175,10 @@
+ def _warmup_kimi_k3_gemm_rs_ar() -> None:
+     # Kimi-K3 model construction imports this module only when GEMM-RS/AR is
+     # enabled and initializes its singleton before kernel_warmup runs. Avoid
+@@ -141,6 +199,10 @@
      compilation_config = worker.vllm_config.compilation_config
      cudagraph_capture_sizes = list(compilation_config.cudagraph_capture_sizes or [])
  

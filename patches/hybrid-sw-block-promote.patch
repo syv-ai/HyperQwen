@@ -64,13 +64,20 @@ Apply from the repo root, after hybrid-kv-groups-v2-cudagraph.patch:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
---- exported from cpuchip/vllm dd7698f00 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+Ported to 0.29: AttentionSpec no longer carries indexes_kv_by_block_stride (the KVCacheLayout refactor moved block
+strides onto KVCacheTensor placement, and upstream's own pad branch in unify_kv_cache_spec_page_size now pads any
+non-MLA attention layer). The "can this layer pad" check mirrors that: not isinstance(spec, MLAAttentionSpec).
+(Struck, first port attempt: reading the removed flag with getattr defaulted it to False, which refused the
+promotion on every target layer; on 0.28 attn_utils set the flag from the backend for every attention spec, so the
+branch was taken there. The int4 profile then padded the five drafter layers at block 16 and could not fit 120k.)
+
+--- exported from cpuchip/vllm 583eb7523 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index e9a2bf6ae..a46c38df5 100644
+index 69353c052..2e6e1c43a 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1033,6 +1033,135 @@
+@@ -1132,6 +1132,135 @@
      return [KVCacheGroupSpec(list(spec.kv_cache_specs.keys()), spec)]
  
  
@@ -178,7 +185,7 @@ index e9a2bf6ae..a46c38df5 100644
 +            continue
 +        if new_max % spec.page_size_bytes == 0:
 +            continue
-+        if isinstance(spec, AttentionSpec) and spec.indexes_kv_by_block_stride:
++        if isinstance(spec, AttentionSpec) and not isinstance(spec, MLAAttentionSpec):
 +            continue
 +        logger.info(
 +            "Not promoting draft block sizes: layer %s can neither scale nor pad "
@@ -206,7 +213,7 @@ index e9a2bf6ae..a46c38df5 100644
  def unify_kv_cache_spec_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> dict[str, KVCacheSpec]:
-@@ -1060,6 +1189,12 @@
+@@ -1162,6 +1291,12 @@
          return kv_cache_spec
  
      max_page_size = max(page_sizes)

@@ -26,18 +26,44 @@ git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
 
 python3 -m venv venv
-venv/bin/pip install vllm==0.28.0 huggingface_hub hf_transfer ninja \
-  flashinfer-python flashinfer-cubin==0.6.13 pandas
+venv/bin/pip install vllm==0.29.0 huggingface_hub hf_transfer ninja \
+  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.6.18 pandas
 # pandas is what `vllm[bench]` pulls in for the custom-dataset path: without it
 # bench/prefill_ab.sh's decode guard dies with "Please install vllm[bench] for
 # bench support" after the prefill rows have already run.
-# flashinfer makes the DFlash2 selector ~2x faster than its torch.topk fallback,
-# and vLLM only *uses* it if nvcc is on PATH or flashinfer-cubin is installed --
-# a bare `pip install flashinfer-python` silently falls back with one INFO line
-# (#35). cubin publishes up to 0.6.13, so the version pair needs
-# FLASHINFER_DISABLE_VERSION_CHECK=1, which the launchers export. Do not fix the
-# mismatch by downgrading flashinfer-python: that drags torch back and breaks
-# vLLM's C extension.
+# flashinfer-python is NOT listed above on purpose: the vllm wheel pins it exactly
+# (Requires-Dist: flashinfer-python==0.6.18 on 0.29.0, ==0.6.16.post3 on 0.28.0), so
+# naming it here can only fight that pin. Do not downgrade it to fix a cubin version
+# mismatch: that drags torch back and breaks vLLM's C extension.
+#
+# flashinfer-cubin ships prebuilt kernels so they do not have to JIT. It is NOT on
+# PyPI past 0.6.13 -- upstream's own requirements/cuda.txt says "not on PyPI since
+# 0.6.14" and pins it from https://flashinfer.ai/whl/, which is why the extra index
+# is above and why `pip index versions flashinfer-cubin` alone reports 0.6.13 as the
+# latest. With the versions matched, FLASHINFER_DISABLE_VERSION_CHECK=1 is no longer
+# needed; the launchers still export it, harmlessly.
+# Cost to know before you install it: the 0.6.18 cubin package is ~6.3 GB unpacked
+# (85,496 files). The Docker image deliberately does NOT carry it: the image ships
+# nvcc 13.0.88, which satisfies the equality rule below, and 6.3 GB on a 9.5 GB image
+# is disk the CI runner already has to free to build at all. The venv path installs
+# it because a venv host may have no usable nvcc.
+#
+# It does NOT cover everything. No cubin release carries the vocab-wide top-k, so
+# the DFlash2 candidate selector still JITs on first use, and that JIT needs a
+# working nvcc (see below). SPEC=dflash2 is the only line that reaches it, which is
+# why SPEC=off and SPEC=mtp boot on a box where dflash2 does not.
+#
+# If you have no usable nvcc, set VLLM_USE_FLASHINFER_SAMPLER=0 (the launchers
+# already do): it now covers the selector as well as the sampler and falls back to
+# torch.topk. Measured cost of that fallback on a 3090, dflash2 CTX=fast,
+# teacher-forced against a neutral SPEC=off target: -1.8% tok/step, -3.0% tok/s.
+# Upstream's "roughly half the speed" is the vocab-wide op in isolation, not the step.
+#
+# Any FlashInfer JIT needs nvcc, and needs its version to EQUAL the CUDA headers'
+# CUDART_VERSION -- a newer nvcc fails too, with "CUDA compiler and CUDA toolkit
+# headers are incompatible". 0.6.18's JIT also emits --compress-mode=size, which
+# nvcc older than 13.0 rejects outright ("nvcc fatal : Unknown option"); 0.6.16.post3
+# does not emit it, which is why the 0.28 line is unaffected.
 #
 # On the venv path you also want the CUDA curand *headers*. vLLM's DFlash2
 # sampling path JIT-compiles a FlashInfer kernel that includes curand.h; without
@@ -72,7 +98,7 @@ venv/bin/python prepare/fetch_dflash2.py
 venv/bin/python prepare/fetch_thirdparty.py
 venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A16
 
-# patch vllm (all compatible patches are written against 0.28.0; reapply after upgrades)
+# patch vllm (all compatible patches are written against 0.29.0; reapply after upgrades)
 # Order is patches/series, one basename per line: a few patches carry hunk context
 # that an earlier patch adds, so the glob order of the directory is wrong. A new
 # independent patch goes on the last line; one that must apply before an existing
@@ -80,7 +106,7 @@ venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A1
 sed -e 's/#.*//' -e 's/^[[:space:]]*//;s/[[:space:]]*$//' -e '/^$/d' patches/series |
 while IFS= read -r name; do
   case "$name" in
-    dflash2-backport.patch) echo "skip $name (DFlash2 is native in vLLM 0.28.0)"; continue ;;
+    dflash2-backport.patch) echo "skip $name (DFlash2 is native since vLLM 0.28.0)"; continue ;;
   esac
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < "patches/$name"
 done

@@ -32,38 +32,17 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
-Env knobs this patch reads go through vllm.envs and are registered there (2026-09-15, the 0.28 hygiene pass; the
-registry mirrors the raw defaults, and registration puts them in the torch.compile cache key): VLLM_V2_CUDAGRAPH_MEM_MIB
+Retired on the 0.29 port: the VLLM_V2_CUDAGRAPH_MEM_MIB reserve hunk in v1/worker/gpu/model_runner.py.
+vLLM 0.29 profiles CUDA graph memory natively (cudagraph_utils.profile_cudagraph_memory, upstream #53306), so the
+reserve knob is a no-op there; only the kv_cache_utils hunks remain.
 
---- exported from cpuchip/vllm 2519eea5a (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 9defd7f87 (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
 
-diff --git a/envs.py b/envs.py
-index 13229228e..cb4ec36b6 100755
---- a/envs.py
-+++ b/envs.py
-@@ -186,6 +186,8 @@
-     VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
-     VLLM_MARLIN_INT8_INCLUDE_RE: str = ""
-     VLLM_MARLIN_INT8_EXCLUDE_RE: str = "lm_head|mtp"
-+    # syv patch (hybrid-kv-groups-v2-cudagraph): MiB reserved for V2 CUDA graphs before the KV cache is sized
-+    VLLM_V2_CUDAGRAPH_MEM_MIB: float = 0.0
-     # syv patch (spec-decode-attn): split-KV verify kernel switch, query-token cap for its partial buffers
-     # (0 = 1 + num_speculative_tokens) and a forced query-row tile (0 = pick by row count); registered so
-     # they take part in the torch.compile cache key (both change the kernel launch)
-@@ -1538,6 +1540,8 @@
-     "VLLM_MARLIN_INT8_EXCLUDE_RE": lambda: os.environ.get(
-         "VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp"
-     ),
-+    # syv patch (hybrid-kv-groups-v2-cudagraph)
-+    "VLLM_V2_CUDAGRAPH_MEM_MIB": lambda: float(os.environ.get("VLLM_V2_CUDAGRAPH_MEM_MIB", "0") or 0),
-     # syv patch (spec-decode-attn)
-     "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
-     "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX") or 0),
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index ad51e4b2b..e9a2bf6ae 100644
+index 7572aac8f..69353c052 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1103,6 +1103,51 @@
+@@ -1202,6 +1202,51 @@
      return not kv_cache_spec
  
  
@@ -115,7 +94,7 @@ index ad51e4b2b..e9a2bf6ae 100644
  def _get_kv_cache_groups_uniform_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> list[KVCacheGroupSpec]:
-@@ -1220,6 +1265,10 @@
+@@ -1319,6 +1364,10 @@
          # layers while accommodating speculative decoding drafters that add
          # extra layers to one attention type.
          group_size = max_num_layers
@@ -126,27 +105,3 @@ index ad51e4b2b..e9a2bf6ae 100644
      grouped_layers = []
      for layers in layer_buckets:
          num_padding_layers = group_size - len(layers) % group_size
-diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index d68666cf4..dd23a68c0 100644
---- a/v1/worker/gpu/model_runner.py
-+++ b/v1/worker/gpu/model_runner.py
-@@ -842,6 +842,19 @@
- 
-     def profile_cudagraph_memory(self) -> int:
-         # NOTE(woosuk): It is TBD whether we keep this API or not.
-+        # (syv) Until V2 profiles its graphs like V1 does, reserve an explicit,
-+        # measured amount so gpu_memory_utilization covers them instead of the
-+        # graphs landing on top of the KV cache. Read the figure from the
-+        # "... GiB for CUDAGraph memory" line of a previous start.
-+        reserve_mib = envs.VLLM_V2_CUDAGRAPH_MEM_MIB
-+        if reserve_mib > 0 and self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
-+            reserve = int(reserve_mib * 1024 * 1024)
-+            logger.info(
-+                "Reserving %.2f GiB for CUDA graphs before sizing the KV cache "
-+                "(VLLM_V2_CUDAGRAPH_MEM_MIB)",
-+                reserve / 2**30,
-+            )
-+            return reserve
-         return 0
- 
-     @torch.inference_mode()

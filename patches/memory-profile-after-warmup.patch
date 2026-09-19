@@ -1,0 +1,29 @@
+Run the profiling forward pass once before the measured one and release the allocator's cached blocks between them, so a cold compile cache does not land torch.compile and Triton JIT scratch inside the memory-profiling window.
+
+Measured on 0.29.0: on a fresh cache volume the profiled transient peak read 0.95 GiB above the warm boot's (WSL2 RTX 4090 and native RTX 3090, GPU_UTIL 0.90), and the KV-memory check refused the default 65,536-token profile (4.73 GiB available against 4.76 needed on the 4090, 4.42 on the 3090) and the KVarN profile (available read as -1.86 GiB on the 4090); the same boot on a warm cache passed. With this pass warmed, the default profile measures exactly its warm figure on both cards (5.37 GiB on the 3090, 5.68 on the 4090, cold and warm), and the KVarN profile passes cold on the 3090; on the WSL2 4090 it still refuses (-0.97 GiB) because the CUDA-graph memory estimate that follows the profile reads 5.44 GiB there on a cold-compiled process against 0.37 GiB warm (the driver's free-memory reading collapsing during the first compile; see cudagraph-memory-from-allocator). 0.28.0 is a different case: at GPU_UTIL 0.90 its default profile does not boot on the native 3090 at all, cold or warm (4.63 GiB available against 4.76 needed in both cache states), while it passes on the 4090; 0.29.0's profiling change introduced a cache-state dependence 0.28.0 never had, and this pass removes it and clears a requirement 0.28.0 does not clear on that card in any state. The pinned-pool path (kv_cache_memory_bytes) already runs one uncounted profile_run and is unchanged.
+
+--- exported from cpuchip/vllm c06f8ef11 (memory-profile-after-warmup); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
+index 65ea862ed..585666f36 100644
+--- a/v1/worker/gpu_worker.py
++++ b/v1/worker/gpu_worker.py
+@@ -548,6 +548,18 @@
+                 getattr(self.parallel_config, "_api_process_count", 1),
+             )
+ 
++        # Let compilation settle before the measured pass. On a cold compile
++        # cache the first profile_run carries torch.compile and Triton JIT
++        # scratch inside the measured window, so transient_peak_headroom reads
++        # the compiler's peak, not the model's: on a 24 GiB card at
++        # gpu_memory_utilization 0.90 that read 0.95 GiB high on a cold boot
++        # and refused the KV cache the warm boot then granted. Run the dummy
++        # pass once uncounted, release the allocator's cached blocks, and
++        # measure the second pass, which is the one every later request sees.
++        self.model_runner.profile_run()
++        torch.cuda.synchronize()
++        torch.cuda.empty_cache()
++
+         # Execute a forward pass with dummy inputs to profile the memory usage
+         # of the model.
+         with memory_profiling(
