@@ -77,3 +77,38 @@ than pinned, so it absorbs the extra gigabyte by shrinking the pool for you. It 
 mode to reach for first on this checkpoint. The pool it lands on will not hold
 `CTX=long`'s stock 150k, though, which is what the `MAX_LEN=100000` above is — the
 figure this checkpoint has been run at.
+
+**A fully-built fast variant of a finetune:**
+[liamwh/Swift-Qwen3.8-27B-W4A16-syv-fast](https://huggingface.co/liamwh/Swift-Qwen3.8-27B-W4A16-syv-fast)
+is [ukisai/Swift-Qwen3.8-27b](https://huggingface.co/ukisai/Swift-Qwen3.8-27b)
+(the "reduced reasoning" finetune) in the single-user fast-variant layout —
+so it serves with no preparation at all, and it is also a worked example of
+building that layout for a checkpoint the prebuilt fast variant does not
+cover. The AWQ body is
+[TheUnderscore's](https://huggingface.co/TheUnderscore/Swift-Qwen3.8-27b-W4A16-AWQ)
+carried through unmodified; the lm_head and MTP are int4-GPTQ calibrated on
+the finetune's OWN hidden states (lm_head KL 0.00234 against the shipped
+fast variant's 0.0029), and the draft vocab is counted over 4.23M tokens of
+its own outputs on a coding-agent-weighted corpus. That last step found
+something worth knowing for any finetune: Swift emits only ~25.9k distinct
+tokens (base Qwen: ~54k), so its draft head is 25,879 rows rather than
+40,960 — smaller and slightly faster, at 99.8% held-out coverage (the base
+model's id list covers 96.7% of Swift's output).
+
+Measured on a 3090 at 350 W, `SPEC=mtp CTX=long MAX_LEN=114688`: 98.4 tok/s
+at 0.660 MTP acceptance — parity with the shipped fast variant (98.2,
+0.634) on a body one AWQ-zero-point heavier. With `SPEC=dflash2` and the
+generic drafter the acceptance deficit people worry about with finetunes
+did not materialise once the heads and vocab were rebuilt: 0.385 against
+the base's 0.387.
+
+Two things the build taught, for anyone rebuilding this layout for another
+export. The upstream AWQ ships lm_head and embed_tokens in *different*
+shards — the case the streaming requant was just generalised to handle —
+and, if you assemble the fast dir with hardlinks the way `drafter/`'s
+scripts do, strip the superseded int8 MTP tensors from any shard you keep:
+vLLM loads every key in an opened file, so a stale `mtp.fc.weight_packed`
+sitting next to the bf16 norms collides with the int4 one in
+`model_extra_tensors.safetensors` and the load dies on a shape assert. The
+model card documents the full recipe and both licences the Swift Open
+License requires a derivative to carry.
