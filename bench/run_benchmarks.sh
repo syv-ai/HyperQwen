@@ -27,7 +27,15 @@ OUT=${OUT:-$HERE/results}; mkdir -p "$OUT"
 
 curl -sf -o /dev/null http://$HOST:$PORT/health || { echo "no server on $HOST:$PORT"; exit 1; }
 metrics() { curl -s http://$HOST:$PORT/metrics -H "Authorization: Bearer $OPENAI_API_KEY"; }
-spec() { metrics | grep -E "^vllm:spec_decode_num_(drafts|accepted_tokens)_total" | awk '{print $2}' | tr "\n" " "; }
+# tok/step needs the spec-decode counters, which vLLM registers only when
+# speculation is configured. Batch mode has no speculative decoding
+# (speculative_config=None), so the counters are absent, grep exits 1, and under
+# `set -e` + `pipefail` the assignment `S0=$(spec)` aborted the whole run at the
+# first cohort - silently, with no FAIL/INVALID line and no cohort log. tokstep()
+# already renders missing values as '-', so treat absence as an empty sample.
+# $NF, not $2: the series carry labels, so field 2 is `{engine="0",...}` and only
+# the last field is the sample.
+spec() { metrics | grep -E "^vllm:spec_decode_num_(drafts|accepted_tokens)_total" | awk '{print $NF}' | tr "\n" " "; return 0; }
 num() { awk "/$1/ {print \$$2}" "$3"; }
 row() { # label logfile conc
   local L=$1 F=$2 C=$3
