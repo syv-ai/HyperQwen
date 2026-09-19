@@ -114,6 +114,19 @@ def ok(m): print("  PASS ", m)
 def fail(m):
     global F
     print("  FAIL ", m); F += 1
+# The packed tensors prepare/ writes are symmetric (no zero point), but a foreign
+# export can declare asymmetric groups over the same pack-quantized layout —
+# vLLM then looks for weight_zero_point tensors that were never written and dies
+# far from the cause (the failure mode prepare/quant_heads_stream.py exists to
+# normalize away, and the PR #139 field report). Every packed group must say so.
+asym = [(name, g.get("targets")) for name, g in groups.items()
+        if g.get("format") == "pack-quantized" and g.get("weights") is not None
+        and g["weights"].get("symmetric") is not True]
+if asym:
+    for name, tgt in asym:
+        fail(f"quant group {name} ({tgt}) declares asymmetric weights (zero-point): vLLM will look for weight_zero_point tensors prepare/ never wrote. Requantize with prepare/quant_heads_stream.py")
+else:
+    ok(f"all {len(groups)} quant groups symmetric (no zero-points declared)")
 # lm_head requantized to int8 (prepare/quant_lm_head.py), or int4-GPTQ as the
 # drafter/ pipeline writes it (the shipped ...-AutoRound-fast layout). The width
 # is whatever config declares; what must hold is the packed geometry it implies,
