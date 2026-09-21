@@ -17,3 +17,9 @@ ninja==1.13.0
 # members are for HF-hosted --dataset-name values and the plotting subcommands,
 # and this repo's scripts use only `random` and `custom`.
 pandas==3.0.5
+# bench/quality_battery.py -- the second half of the field-test protocol -- reads
+# its wikitext/fineweb-2/gsm8k parquet with `import pyarrow.parquet`, and nothing
+# above pulls pyarrow in: pandas 3.0 declares it only under the `parquet`/`all`
+# extras, and vLLM not at all. Without this line every Docker run of the quality
+# battery dies on ModuleNotFoundError before the first request (#159).
+pyarrow==20.0.0

@@ -163,6 +163,7 @@ docker compose exec single bash bench/run_benchmarks.sh single   # keep this one
 
 docker compose exec single venv/bin/hf download openai/gsm8k --repo-type dataset \
   --include "main/test-*" --local-dir bench/quality-data/gsm8k
+docker compose exec single venv/bin/pip install pyarrow   # only on images published before 2026-09-21
 docker compose exec single venv/bin/python bench/quality_battery.py mycard --gsm-only
 ```
 

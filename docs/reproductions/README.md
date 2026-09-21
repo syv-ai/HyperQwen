@@ -33,6 +33,8 @@ noise.
 |---|---|---|---|---|
 | RTX 3090 (reference) | 250 W | 133 tok/s | pool 57,669 tok, ppl 8.09 | [main README](../../README.md) |
 | RTX 4090 | 450 W | **135.5 tok/s** | pool 57,669 and ppl 8.0921 reproduce exactly; no-spec control 60.3 (DFlash2 worth 2.31x); +1.9% from ~8% more bandwidth — batch-1 decode is bandwidth-bound, the extra compute has nothing to bite on | [#32](https://github.com/syv-ai/HyperQwen/issues/32) |
+| 2x RTX 3090 NVLink (TP=2) | 250 W | 172.7 tok/s | setup B, greedy, GSM8K 0.965 over 200; TP=2 needed `--disable-custom-all-reduce` (CUDA-graph capture aborted with `custom_all_reduce.cuh:164 'invalid argument'`), NCCL then carried the collectives | [#159](https://github.com/syv-ai/HyperQwen/issues/159) |
+| RTX 4080 Super 32 GB (sm89), WSL2 | 250 W | 115.2 tok/s | setup B, greedy, GSM8K 0.960 over 200; a 32 GB card under that name is a board mod rather than a stock SKU, so the card line is as reported | [#149](https://github.com/syv-ai/HyperQwen/issues/149) |
 
 Measured with their own clients rather than the harness — comparable to each
 other only loosely, and not rows for the table above:
