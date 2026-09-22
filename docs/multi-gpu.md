@@ -149,8 +149,28 @@ Also reported working: **2× RTX 5060 Ti 16 GB**
 ([#22](https://github.com/syv-ai/HyperQwen/issues/22)) — the "would
 not fit on one card" case — and **4× RTX 5060 Ti 16 GB** (TP4, sm120, PCIe 4.0
 x8, 180 W, community-patched P2P driver,
-[#105](https://github.com/syv-ai/HyperQwen/issues/105)). The tok/s
-numbers in #105 are not quoted here: its two arms moved drafter, KV dtype and
-prefix cache together, so the ratio is a profile delta rather than a drafter
-delta. The graph budget and `MAX_SEQS` defaults are still single-card
-calibrations; more A/Bs like #40's are the most useful numbers you can send.
+[#105](https://github.com/syv-ai/HyperQwen/issues/105)). The graph budget
+and `MAX_SEQS` defaults are still single-card calibrations; more A/Bs like
+#40's are the most useful numbers you can send.
+
+**With `SPEC=mtp` at TP>1, try int8 KV on `TRITON_ATTN` before fp8 on
+FlashInfer.** #105's re-run separated what its first round had moved together,
+one variable per arm, on 5060 Ti (sm120) at 180 W per card. MTP k=3, C1
+greedy decode:
+
+| | fp8 / FlashInfer | int8_per_token_head / `TRITON_ATTN` | gap |
+|---|---|---|---|
+| TP2 | 71.4 | 102.0 | 1.43x |
+| TP4 | 72.8 | 137.6 | 1.89x |
+
+`tok/step` is ~2.7 in all four cells, so this is step time, not acceptance —
+and the fp8/FlashInfer path does not scale with TP at all while the int8 path
+does. The KV pool costs ~5-9% for it. This inverts the single-card picture,
+where int8 on `TRITON_ATTN` is a long-context capacity trade that costs ~25% of
+decode at depth (`docs/gotchas.md` 40), so it is not a launcher default: it is
+one box, one card generation, and nobody has run the arm on Ampere at TP>1.
+If you have a dual-3090 box, that is the most useful A/B left in this file:
+
+```
+SPEC=mtp CTX=long EXTRA_ARGS="--tensor-parallel-size 2 --attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head"
+```

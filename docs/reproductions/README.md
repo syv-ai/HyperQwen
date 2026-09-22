@@ -47,7 +47,7 @@ will not have in production.
 | RTX 4090 | 450 W | **135.5 tok/s** | pool 57,669 and ppl 8.0921 reproduce exactly; no-spec control 60.3 (DFlash2 worth 2.31x); +1.9% from ~8% more bandwidth — batch-1 decode is bandwidth-bound, the extra compute has nothing to bite on | [#32](https://github.com/syv-ai/HyperQwen/issues/32) |
 | 2x RTX 3090 NVLink (TP=2) | 250 W | **182.8 tok/s** | setup B, greedy, GSM8K 0.965 over 200. Two arms, one variable: 171.8 with `--disable-custom-all-reduce` (NCCL carrying the collectives), 182.8 with custom all-reduce working, which on this box needs `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` -- the CUDA-graph capture crash at `custom_all_reduce.cuh:164 'invalid argument'` is gotcha 3, not NVLink. 3.32 tok/step in both arms | [#159](https://github.com/syv-ai/HyperQwen/issues/159), [#163](https://github.com/syv-ai/HyperQwen/issues/163) |
 | RTX 3090, Windows 11 / WSL2 | 250 W | 110.7 tok/s | setup B, greedy, `tok/step` 3.28 — the reference profile's own acceptance, so this is the WSL2 tax on step *time*, not on the drafter. 125.9 at the card's stock 370 W cap, which is a burst effect: see the power note below | [#156](https://github.com/syv-ai/HyperQwen/issues/156) |
-| RTX 4080 Super 32 GB (sm89), WSL2 | 250 W | 115.2 tok/s | setup B, greedy, GSM8K 0.960 over 200; a 32 GB card under that name is a board mod rather than a stock SKU, so the card line is as reported | [#149](https://github.com/syv-ai/HyperQwen/issues/149) |
+| RTX 4080 Super 32 GB (sm89), WSL2 | 250 W | 115.2 tok/s | setup B, greedy, GSM8K 0.960 over 200; a clamshell memory-modded board (the stock SKU is 16 GB, which this stack does not fit), confirmed by the reporter with `nvidia-smi` and the startup log | [#149](https://github.com/syv-ai/HyperQwen/issues/149) |
 
 Batch profile (setup A), `bench/run_benchmarks.sh batch`, 64 concurrent on
 128 in / 512 out, aggregate decode:
@@ -94,7 +94,12 @@ other only loosely, and not rows for either table above:
   drafter**, and the drafter's advantage is gone by C4. `DFLASH_TOKENS=15` at
   TP4 is a clear loss (154.3 -> 89.4 at C1, TTFT 3.3x at C8), which is the TP4
   half the launcher's keep-it-at-7 warning was missing. Also the source of the
-  `curand` headers gotcha and the `NCCL_P2P_LEVEL=SYS` note ---
+  `curand` headers gotcha and the `NCCL_P2P_LEVEL=SYS` note. A TP2 follow-up
+  on two of the same cards (one variable moved, TP 4 -> 2) puts the KV-path
+  gap at **1.43x** at C1 greedy (71.4 -> 102.0) against TP4's 1.89x, and shows
+  where it comes from: the fp8/FlashInfer arm does not care about TP at all
+  (72.8 at TP4, 71.4 at TP2), while the int8/`TRITON_ATTN` arm gains 35% going
+  from two cards to four, at ~2.7 tok/step in all four cells ---
   [#105](https://github.com/syv-ai/HyperQwen/issues/105).
 - **2x RTX 3060 12 GB**: 24 GB of VRAM in two 12 GB cards, which forces a
   tensor-parallel split the single-card path never takes. Two independent boxes
