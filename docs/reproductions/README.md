@@ -29,11 +29,24 @@ about the same third at 200 W. So a quiet home box capped at 200 W is measuring
 its power cap rather than this stack, and nothing above 250 W is worth the
 noise.
 
+**"Nothing above 250 W" is a sustained-load statement, and a harness cohort is
+not sustained load.** The 280 W cell above is flat because 14 minutes of it
+reaches 90 °C and throttles back. A WSL2 3090 running the harness at its stock
+370 W cap measured C1 greedy decode at 125.9 tok/s against 110.7 at a hard
+250 W (+14%), drawing 312-354 W in short bursts that never get hot enough to
+throttle ([#156](https://github.com/syv-ai/HyperQwen/issues/156)). Both
+readings are correct and they do not contradict each other: a benchmark cohort
+is minutes of burst, a served box is hours of sustained decode. Every number in
+this repo is at 250 W because that is what a box in service can hold; if you
+compare against one of them, cap yours too, or you are measuring headroom you
+will not have in production.
+
 | card | power | C1 decode | notes | source |
 |---|---|---|---|---|
 | RTX 3090 (reference) | 250 W | 133 tok/s | pool 57,669 tok, ppl 8.09 | [main README](../../README.md) |
 | RTX 4090 | 450 W | **135.5 tok/s** | pool 57,669 and ppl 8.0921 reproduce exactly; no-spec control 60.3 (DFlash2 worth 2.31x); +1.9% from ~8% more bandwidth — batch-1 decode is bandwidth-bound, the extra compute has nothing to bite on | [#32](https://github.com/syv-ai/HyperQwen/issues/32) |
 | 2x RTX 3090 NVLink (TP=2) | 250 W | **182.8 tok/s** | setup B, greedy, GSM8K 0.965 over 200. Two arms, one variable: 171.8 with `--disable-custom-all-reduce` (NCCL carrying the collectives), 182.8 with custom all-reduce working, which on this box needs `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` -- the CUDA-graph capture crash at `custom_all_reduce.cuh:164 'invalid argument'` is gotcha 3, not NVLink. 3.32 tok/step in both arms | [#159](https://github.com/syv-ai/HyperQwen/issues/159), [#163](https://github.com/syv-ai/HyperQwen/issues/163) |
+| RTX 3090, Windows 11 / WSL2 | 250 W | 110.7 tok/s | setup B, greedy, `tok/step` 3.28 — the reference profile's own acceptance, so this is the WSL2 tax on step *time*, not on the drafter. 125.9 at the card's stock 370 W cap, which is a burst effect: see the power note below | [#156](https://github.com/syv-ai/HyperQwen/issues/156) |
 | RTX 4080 Super 32 GB (sm89), WSL2 | 250 W | 115.2 tok/s | setup B, greedy, GSM8K 0.960 over 200; a 32 GB card under that name is a board mod rather than a stock SKU, so the card line is as reported | [#149](https://github.com/syv-ai/HyperQwen/issues/149) |
 
 Batch profile (setup A), `bench/run_benchmarks.sh batch`, 64 concurrent on
