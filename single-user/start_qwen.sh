@@ -517,6 +517,31 @@ if [ "${PREFIX_CACHE:-0}" = "1" ]; then
   # KVarN runs --block-size 128; match the prefix hash unit to its tile so cache
   # hits land on tile boundaries (a non-multiple of 128 corrupts the pool).
   [ "$CTX" = "huge" ] && EXTRA_ARGS="--prefix-match-unit 128 ${EXTRA_ARGS}"
+  # CTX=huge + DFlash2: retain one Mamba state snapshot in six rather than one per
+  # block (#174). vLLM's default is dense, and at dense the snapshots of two long
+  # conversations advanced in turn do not fit beside each other: on the reference
+  # 3090 two ~32.6K chats alternating reused 0% and re-prefilled for 31.8 s on every
+  # turn; with one in six they reuse 93-99.5% at 0.4-2.6 s. One ~103K chat on its own
+  # keeps 98.7-99.8%, and a passcode inside the reused prefix comes back right 3/3,
+  # so the sparser restore path returns the right state.
+  # The interval is in tokens and vLLM refuses one that is not a multiple of the
+  # attention block, and that block moves with the draft count (the Mamba page holds
+  # the speculative state slots): 2176 at 7 drafts, 2432 at 15, both measured. Other
+  # draft counts stay dense and say how to set it by hand. PREFIX_RETENTION= (empty)
+  # forces dense; an exported VLLM_PREFIX_CACHE_RETENTION_INTERVAL always wins.
+  if [ "$CTX" = "huge" ] && [ "$SPEC" = "dflash2" ] \
+     && [ -z "${VLLM_PREFIX_CACHE_RETENTION_INTERVAL+x}" ]; then
+    case $DRAFT_TOKENS in 7) RETENTION=13056 ;; 15) RETENTION=14592 ;; *) RETENTION= ;; esac
+    RETENTION=${PREFIX_RETENTION-$RETENTION}
+    if [ -n "$RETENTION" ]; then
+      export VLLM_PREFIX_CACHE_RETENTION_INTERVAL=$RETENTION
+    elif [ -z "${PREFIX_RETENTION+x}" ]; then
+      echo "[start_qwen] CTX=huge DFLASH_TOKENS=$DRAFT_TOKENS: no measured block size, so" \
+           "prefix retention stays dense and two long conversations advanced in turn will" \
+           "evict each other (#174). Set PREFIX_RETENTION to 6x the 'attention block size'" \
+           "line this boot prints." >&2
+    fi
+  fi
   # DFlash2 only: prefix caching and a CAPTURED (FULL) verify step do not mix on
   # that path. It is the capture, not the drafter: eager is clean, and so is
   # PIECEWISE, which keeps the compiled graphs and leaves only the multi-query
