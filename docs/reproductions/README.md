@@ -33,11 +33,19 @@ noise.
 |---|---|---|---|---|
 | RTX 3090 (reference) | 250 W | 133 tok/s | pool 57,669 tok, ppl 8.09 | [main README](../../README.md) |
 | RTX 4090 | 450 W | **135.5 tok/s** | pool 57,669 and ppl 8.0921 reproduce exactly; no-spec control 60.3 (DFlash2 worth 2.31x); +1.9% from ~8% more bandwidth — batch-1 decode is bandwidth-bound, the extra compute has nothing to bite on | [#32](https://github.com/syv-ai/HyperQwen/issues/32) |
-| 2x RTX 3090 NVLink (TP=2) | 250 W | 172.7 tok/s | setup B, greedy, GSM8K 0.965 over 200; TP=2 needed `--disable-custom-all-reduce` (CUDA-graph capture aborted with `custom_all_reduce.cuh:164 'invalid argument'`), NCCL then carried the collectives | [#159](https://github.com/syv-ai/HyperQwen/issues/159) |
+| 2x RTX 3090 NVLink (TP=2) | 250 W | **182.8 tok/s** | setup B, greedy, GSM8K 0.965 over 200. Two arms, one variable: 171.8 with `--disable-custom-all-reduce` (NCCL carrying the collectives), 182.8 with custom all-reduce working, which on this box needs `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` -- the CUDA-graph capture crash at `custom_all_reduce.cuh:164 'invalid argument'` is gotcha 3, not NVLink. 3.32 tok/step in both arms | [#159](https://github.com/syv-ai/HyperQwen/issues/159), [#163](https://github.com/syv-ai/HyperQwen/issues/163) |
 | RTX 4080 Super 32 GB (sm89), WSL2 | 250 W | 115.2 tok/s | setup B, greedy, GSM8K 0.960 over 200; a 32 GB card under that name is a board mod rather than a stock SKU, so the card line is as reported | [#149](https://github.com/syv-ai/HyperQwen/issues/149) |
 
+Batch profile (setup A), `bench/run_benchmarks.sh batch`, 64 concurrent on
+128 in / 512 out, aggregate decode:
+
+| cards | power | C64 decode | notes | source |
+|---|---|---|---|---|
+| 1x RTX 3090 (reference) | 250 W | ~1,035 tok/s | 948 e2e; ~1,222 with every layer int8 | [main README](../../README.md) |
+| 2x RTX 3090 NVLink (TP=2) | 250 W/card | **1,439 tok/s** | 1,344 e2e, median of three measured runs within 1%; documented batch defaults plus TP=2, KV pool 872,938 tokens, GSM8K 0.965 over 200; NCCL arm, so not the +6.4% custom-all-reduce path above | [#164](https://github.com/syv-ai/HyperQwen/issues/164) |
+
 Measured with their own clients rather than the harness — comparable to each
-other only loosely, and not rows for the table above:
+other only loosely, and not rows for either table above:
 
 - **CMP 170HX 40 GB (GA100, sm80)**: 133.7 tok/s median (3x900 tok, greedy) on
   the shipped fast target — the first sm80 datapoint, level with the 3090 —

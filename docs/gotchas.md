@@ -37,6 +37,26 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
    not unconditional, which this entry used to imply: expandable segments need
    CUDA VMM, which WSL2's paravirt driver rejects during capture, so both start
    scripts set `expandable_segments:False` when they detect WSL2.
+   **And `False` on bare-metal Linux as well, once TP>1 uses custom
+   all-reduce.** Same root, a different consumer: with
+   `--tensor-parallel-size 2` and CUDA graphs enabled, graph capture aborts
+   with `Cuda error /workspace/csrc/custom_all_reduce.cuh:164 'invalid
+   argument'` and the worker dies before the server comes up. Line 164 is the
+   `cudaIpcGetMemHandle` in `get_graph_buffer_ipc_meta()`, and an expandable
+   (VMM) segment has no IPC handle to export. Reported on 2x RTX 3090 NVLink,
+   driver 595.91.07, CUDA 13.2, vLLM 0.28.0
+   ([#163](https://github.com/syv-ai/HyperQwen/issues/163)), with the matrix
+   that isolates it: `NCCL_P2P_LEVEL=SYS` does not help, `--enforce-eager`
+   does (no graphs, no capture), and `expandable_segments:False` does while
+   keeping the graphs. The two workarounds that get a server up —
+   `--disable-custom-all-reduce` (NCCL carries the collectives) and
+   `expandable_segments:False` (custom all-reduce works) — are not equivalent:
+   in a controlled A/B on that box, C1 greedy decode is 171.8 tok/s on NCCL
+   against 182.8 on custom all-reduce, +6.4%, at an identical 3.32 tokens per
+   step, with every concurrency up to C8 improving. So on a multi-card box,
+   turn the allocator off before you turn custom all-reduce off. Not yet
+   soaked for fragmentation on long contexts, which is the thing
+   `expandable_segments:True` was turned on for in the first place.
 4. **With MTP enabled, even that isn't enough — single-user mode runs
    `gpu-memory-utilization 0.93`.** The speculative decode path's DeltaNet
    workspace grows beyond what vLLM's startup memory profiling measures, and
