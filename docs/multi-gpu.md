@@ -120,7 +120,10 @@ warmup and three measured repeats).
   first came up only with `--disable-custom-all-reduce`; the crash behind that
   is the expandable-segments/IPC interaction in `docs/gotchas.md` 3, and
   clearing it properly is worth +6.4% at C1 (171.8 -> 182.8 tok/s greedy,
-  3.32 tok/step in both arms) and ~9% at C4. That 182.8 is the single-user
+  3.32 tok/step in both arms) and ~9% at C4. Both launchers now default
+  `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False` when `EXTRA_ARGS` asks
+  for TP>1 without `--disable-custom-all-reduce` or `--enforce-eager`, and say
+  so at boot; set the variable yourself to override either way. That 182.8 is the single-user
   row in [docs/reproductions](reproductions/README.md), and it is the fastest
   C1 decode reported on Ampere here.
 - **Batch, setup A, is where the second card pays.** `GPU_COUNT=2` with

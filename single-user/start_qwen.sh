@@ -730,6 +730,26 @@ case " ${EXTRA_ARGS:-} " in
     [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
     ALLOC_DEFAULT=expandable_segments:False ;;
 esac
+# vLLM's custom all-reduce exports its graph buffers over CUDA IPC
+# (`cudaIpcGetMemHandle`, csrc/custom_all_reduce.cuh:164) and an expandable
+# (VMM) segment has no handle to export, so at TP>1 with CUDA graphs capture
+# aborts with "Cuda error ... 'invalid argument'" and the worker dies before
+# the server is up (#163, 2x3090 NVLink). --disable-custom-all-reduce also
+# clears it by handing the collectives to NCCL, but that arm measured 6.4%
+# slower at C1 on the reporting box, so default the allocator off and keep
+# custom all-reduce. Skipped when the run already disables it or runs eager:
+# neither captures a graph buffer to export.
+case " ${EXTRA_ARGS:-} " in
+  *"--disable-custom-all-reduce"*|*"--enforce-eager"*) ;;
+  *"--tensor-parallel-size"*|*" -tp "*)
+    ALLOC_TP=$(printf %s " ${EXTRA_ARGS:-}" | sed -En "s/.* (--tensor-parallel-size[= ]|-tp )([0-9]+).*/\2/p")
+    if [ "${ALLOC_TP:-1}" -gt 1 ] 2>/dev/null; then
+      if [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ]; then
+        echo "tensor-parallel-size $ALLOC_TP: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (custom all-reduce cannot export a VMM graph buffer over CUDA IPC, #163; set it explicitly to override)"
+      fi
+      ALLOC_DEFAULT=expandable_segments:False
+    fi ;;
+esac
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-$ALLOC_DEFAULT}
 export VLLM_USE_FLASHINFER_SAMPLER=0
 
