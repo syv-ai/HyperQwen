@@ -42,9 +42,18 @@ it through this repo's own quantization pipeline end to end:
    `in_proj_b`, the vision tower, and the MTP draft head kept BF16, everything
    else quantized to W4A16 g128 symmetric.
 2. **This repo's `prepare/` scripts** on top — GPTQ-recalibrated int4 requant
-   of `lm_head`, `embed_tokens` and the MTP module (the first upload shipped
-   these at int8), and a 40,960-token draft vocabulary build for speculative
-   decoding.
+   of `lm_head` and the MTP module (the first upload shipped both at int8),
+   with `embed_tokens` kept int8, which is what the pipeline does:
+   `prepare/quant_embed.py` has `BITS = 8` and `quant_heads_stream.py` has
+   `HEAD_BITS = 8`, and the artifact's `config.json` agrees (`group_2`,
+   `num_bits: 8`, a `[248320, 1280]` I32 pack — int4 would be 640 columns).
+   The `mtp_draft_vocab_ids.pt` it ships is this repo's own 40,960-id list
+   (`prepare/draft_vocab_ids.json`), not one counted over this checkpoint's
+   own outputs. Rebuilding it from the finetune's own outputs is the stronger
+   option and is measurable — a Swift build in
+   [#139](https://github.com/syv-ai/HyperQwen/pull/139) found Swift emits only
+   ~25.9k distinct tokens against base Qwen's ~54k, so its draft head shrinks
+   to 25,879 rows at 99.8% coverage and the acceptance deficit disappears.
 
 **Validation.** Boots and serves correctly at `CTX=fast`, `CTX=long` and
 `CTX=huge`, with `SPEC=dflash2` and with `SPEC=mtp`. The 148 tok/s
@@ -60,10 +69,18 @@ useful.
 Quality battery (`bench/quality_battery.py`, `SPEC=dflash2`,
 `PREFIX_CACHE=1` -- unaffected by gotcha 46, which is specific to
 `SPEC=mtp`) on `CTX=huge`: perplexity en 11.22 / da 11.49 / code 3.50,
-GSM8K 200q 95.5% acc, 362 mean tokens. In line with this repo's other
-checkpoints in `bench/quality-data/` (GSM8K 93-97.5% across variants); no
-regression from the MTP tensor fix, which does not touch the tensors these
-numbers exercise.
+GSM8K 200q 95.5% acc, 362 mean tokens. In line with this repo's own numbers
+([docs/benchmarks.md](benchmarks.md), GSM8K 96.5%;
+[docs/long-context.md](long-context.md), 95.0-97.0%); no regression from the
+MTP tensor fix, which does not touch the tensors these numbers exercise.
+
+Both the tensor fix and the boot were checked independently in the thread, on
+the live files rather than on a local copy: 2,022 index entries against 2,022
+keys with nothing duplicated or orphaned, and `bash verify.sh --no-server
+MODEL=<dir>` passing 7/7 model checks — including the cross-shard duplicate
+check that exists for exactly this failure. Since the entry's claim is that it
+serves with no preparation, run that command against your download before you
+serve it.
 
 **`SPEC=mtp`.** An earlier upload of this checkpoint left the superseded int8
 `mtp.*` tensors in `model-00004-of-00004.safetensors` next to the int4
