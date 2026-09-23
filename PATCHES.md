@@ -57,6 +57,7 @@ build by name instead of landing by guess. Regenerate a file with `bash scripts/
 | triton-spec-attn-fp8-kv | feature | split-KV verify attention on the per-tensor fp8 KV cache (TRITON_ATTN, sm89+); registers `VLLM_SPEC_ATTN_DEBUG` | none | 0.29.0, re-cut for the port | upstreamed |
 | spec-decode-int4-kv-mq3d | feature | multi-query 3D int4 verify path | none | 0.29.0 | rides with int4-kv-per-token-head |
 | spec-decode-int8-kv | feature | split-KV verify attention over an int8 per-token-head cache | none | 0.29.0 | rides with spec-decode-attn |
+| spec-attn-smem-fit | fix | the split-KV verify attention sizes its KV tile to the device's shared memory: halve the KV tile when Triton reports OutOfResources, so it launches on Turing (sm75, 64 KB per block) | none | 0.29.0 | upstream with spec-decode-attn |
 | spec-decode-scratch-token-units | own | mq3d scratch sized in tokens, not sequences (fork #46, #57) | none | 0.29.0 | rides with mq3d |
 | spec-decode-scratch-within-budget | own | mq3d scratch allocated inside the memory budget (fork #57) | none | 0.29.0 | rides with mq3d |
 | spec-sampler-prewarm | fix | compile the rejection sampler's Triton kernels at boot (fork #48) | none yet | 0.29.0 | upstream PR |
