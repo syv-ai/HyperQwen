@@ -169,6 +169,11 @@ does. The KV pool costs ~5-9% for it. This inverts the single-card picture,
 where int8 on `TRITON_ATTN` is a long-context capacity trade that costs ~25% of
 decode at depth (`docs/gotchas.md` 40), so it is not a launcher default: it is
 one box, one card generation, and nobody has run the arm on Ampere at TP>1.
+It is at least not a correctness trap on Ampere: at TP1 on the reference 3090
+(vLLM 0.29, async scheduling on) it passes the concurrent-garbage check from
+[#121](https://github.com/syv-ai/HyperQwen/issues/121) — three concurrent
+~48K prompts three times over, then three alone, 9/9 and 3/3 valid, same as
+the fp8/FlashInfer control.
 If you have a dual-3090 box, that is the most useful A/B left in this file:
 
 ```
