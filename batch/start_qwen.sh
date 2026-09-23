@@ -43,6 +43,23 @@ if [ "${VLLM_OFFLOAD_KEEP_SHM:-0}" != 1 ]; then
 fi
 REPO="$(dirname "$DIR")"
 cd "$REPO"
+# vLLM 0.29 ships FlashInfer 0.6.18, whose JIT passes nvcc flags CUDA 12 does not know
+# (--compress-mode=size): on a native install whose system nvcc is older than 13, the first
+# boot that compiles a FlashInfer kernel (SPEC=mtp CTX=long's fp8 prefill, for one) dies
+# with "nvcc fatal: Unknown option". FlashInfer takes CUDA_HOME before `which nvcc`, and pip
+# already put a CUDA 13 toolchain in the venv, so point CUDA_HOME at it. Only when unset and
+# the nvcc on PATH is older than 13 (or missing): the Docker image carries CUDA 13 and is
+# untouched, and an explicit CUDA_HOME always wins.
+if [ -z "${CUDA_HOME:-}" ]; then
+  NVCC_MAJOR=$(nvcc --version 2>/dev/null | sed -nE 's/.*release ([0-9]+)\..*/\1/p')
+  for CU13 in "$REPO"/venv/lib/python3*/site-packages/nvidia/cu13; do
+    if [ -x "$CU13/bin/nvcc" ] && [ "${NVCC_MAJOR:-0}" -lt 13 ]; then
+      export CUDA_HOME=$CU13
+      echo "[start_qwen] nvcc on PATH is ${NVCC_MAJOR:-missing}, older than the CUDA 13 FlashInfer JIT needs: CUDA_HOME=$CUDA_HOME (set CUDA_HOME to override)"
+    fi
+    break
+  done
+fi
 
 # Backlog 6 / F13: one validated resolver — refuses unknown KV, warns on
 # ignored (CTX/SPEC) and EXTRA_ARGS-shadowed controls, prints the redacted
