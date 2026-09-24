@@ -103,12 +103,16 @@ venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A1
 # that an earlier patch adds, so the glob order of the directory is wrong. A new
 # independent patch goes on the last line; one that must apply before an existing
 # patch is listed before it.
+# the venv's own vllm directory: python3 -m venv names it after the interpreter (python3.12,
+# python3.14, ...), so ask the interpreter rather than spelling the path (verify.sh and
+# kvarn/install.sh find it the same way; tail -n1 because importing vllm can log to stdout)
+SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm.__file__))' 2>/dev/null | tail -n1)
 sed -e 's/#.*//' -e 's/^[[:space:]]*//;s/[[:space:]]*$//' -e '/^$/d' patches/series |
 while IFS= read -r name; do
   case "$name" in
     dflash2-backport.patch) echo "skip $name (DFlash2 is native since vLLM 0.28.0)"; continue ;;
   esac
-  patch -p1 -d venv/lib/python3.12/site-packages/vllm < "patches/$name"
+  patch -p1 -d "$SP" < "patches/$name"
 done
 # optional: the KVarN 4/2-bit KV cache for 262k context (docs/long-context.md)
 bash kvarn/install.sh

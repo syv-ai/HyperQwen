@@ -18,7 +18,7 @@ What's in it:
   layer, and the hybrid-model page alignment branch).
 - `kvarn-v2-runner-0.29.0.patch` — the V2 runner, sliding-cache, and DFlash2
   correctness fixes layered on top of the base port.
-- `install.sh` — copies the modules into `venv/lib/python3.12/site-packages/vllm`
+- `install.sh` — copies the modules into the venv's `site-packages/vllm` (found by asking the venv's python, so any Python version)
   and applies both patches at `--fuzz 0` (safe to re-run; a rejected hunk stops it).
   Both patch files are exported from their commits on the fork branch (`cpuchip/vllm`
   `qwen38/0.29`), which sit after the whole `patches/` series, so they are never edited by hand.
