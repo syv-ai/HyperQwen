@@ -27,6 +27,8 @@ Usage:
 import os
 import sys
 
+from atomic_publish import write_text
+
 OLD = r"""                {%- if tool_call.arguments is defined and tool_call.arguments != '' %}
                     {%- for args_name, args_value in tool_call.arguments|items %}
                         {{- '<parameter=' + args_name + '>\n' }}
@@ -63,8 +65,9 @@ def harden(path: str) -> str:
         return "unchanged"
     if OLD not in src:
         return "unknown"  # template differs; leave it alone, do not guess
-    with open(path, "w") as f:
-        f.write(src.replace(OLD, NEW))
+    # Atomic (a temp file and a rename): a truncated template that kept MARKER would
+    # stay "unchanged" on every later run (#195).
+    write_text(path, src.replace(OLD, NEW))
     return "hardened"
 
 
