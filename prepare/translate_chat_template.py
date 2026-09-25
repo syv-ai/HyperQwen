@@ -27,11 +27,17 @@ whose effort block matches no known shape is left alone with a warning: this
 runs under `set -e` after the download and requantisation, so it must never
 fail prepare over a ready model directory.
 
+The marker makes a re-run skip the file, so a truncated template that kept the marker
+would stay broken. The rewrite is therefore atomic (a temp file and a rename, see
+prepare/atomic_publish.py): a kill during the write leaves the old template (#195).
+
 Usage: python prepare/translate_chat_template.py MODEL_DIR [MODEL_DIR ...]
 """
 
 import sys
 from pathlib import Path
+
+from atomic_publish import write_text
 
 MARKER_V2 = "{#- effort-translation v2: managed by prepare/translate_chat_template.py"
 MARKER_V1 = "{#- effort-translation v1: managed by prepare/translate_chat_template.py"
@@ -90,7 +96,7 @@ def translate(path: Path) -> str:
         if not all(frag in block for frag in V1_FRAGMENTS):
             return "foreign"
         lines[start:end + 1] = [REPLACEMENT + "\n"]
-        path.write_text("".join(lines), encoding="utf-8")
+        write_text(path, "".join(lines))
         return "upgraded"
 
     # pristine -> v2: the shipped block, located structurally.
@@ -103,7 +109,7 @@ def translate(path: Path) -> str:
     if not all(shape in span[i] for i, shape in enumerate(SHAPES)):
         return "foreign"
     lines[idx : idx + 1 + len(SHAPES)] = [REPLACEMENT + "\n"]
-    path.write_text("".join(lines), encoding="utf-8")
+    write_text(path, "".join(lines))
     return "translated"
 
 

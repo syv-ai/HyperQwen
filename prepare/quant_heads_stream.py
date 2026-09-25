@@ -22,9 +22,16 @@ Usage: venv/bin/python prepare/quant_heads_stream.py /path/to/model [--mtp-bits 
 This is what the uncensored checkpoint needs (prepare/fetch_uncensored.py); the base
 model is 7 shards and symmetric, so quant_lm_head/quant_embed/quant_mtp serve it fine.
 
-The rewritten shards replace the originals; the pre-quant files are kept as
-<shard>.bak-orig (renamed, not copied). config.json and the safetensors index
-are backed up as .bak-quant.
+The rewritten shards replace the originals; the first pre-quant copy of each stays
+next to it as <shard>.bak-orig (a hardlink to the original file, as the old rename kept
+it: no copy of an 18.6 GB shard, never overwritten, so it keeps holding the bf16 lm_head
+that drafter/gptq_lm_head.py reads), and config.json and the safetensors index are
+backed up as .bak-quant.
+
+Every file goes through prepare/atomic_publish.py (a temp file and a rename), and the
+index is written last: docker/prepare.sh's state() reads only the index, so a killed run
+leaves the step pending, and the next run completes it, reusing a shard that already
+holds the packed tensors (#195).
 """
 
 import copy
@@ -35,14 +42,16 @@ import sys
 
 import torch
 from safetensors import safe_open
-from safetensors.torch import save_file
 from compressed_tensors.compressors.pack_quantized.base import pack_to_int32
+
+from atomic_publish import backup_once, publish, save_tensors, write_json
 
 GROUP = 128
 HEAD_BITS = 8
 MTP_BITS = int(sys.argv[sys.argv.index("--mtp-bits") + 1]) if "--mtp-bits" in sys.argv else 8
 KEEP_FC = "--keep-fc" in sys.argv
 ROWS = 16384  # quantize this many rows at a time, to bound peak RSS
+SUFFIXES = ("weight_packed", "weight_scale", "weight_shape")
 
 MTP_LINEARS = ([] if KEEP_FC else ["mtp.fc"]) + [
     "mtp.layers.0.mlp.down_proj",
@@ -136,53 +145,84 @@ def stream_rewrite(src, dst, drop, add):
     return off
 
 
+def keep_original(shard):
+    """Keep the pre-quant shard as <shard>.bak-orig, once. A hardlink, not a copy: the
+    shard can be 18.6 GB, and publish() gives the live path a new inode, so the link
+    keeps the original bytes. The first link is never replaced."""
+    if not os.path.exists(shard + ".bak-orig"):
+        os.link(shard, shard + ".bak-orig")
+
+
 idx_path = d + "model.safetensors.index.json"
-_orig_index = open(idx_path, "rb").read()
-open(idx_path + ".bak-quant", "wb").write(_orig_index)
-idx = json.loads(_orig_index)
+idx = json.load(open(idx_path))
 wm = idx["weight_map"]
 
+
+def weight_name(entry):
+    """The `<base>.weight` spelling of an index entry: the index is written last, so a
+    run that got as far as the index leaves only the packed entries behind."""
+    return entry[: -len("weight_packed")] + "weight" if entry.endswith("weight_packed") else entry
+
+
+# Where each weight lives, read before writing anything, so an interrupted run still
+# resolves the shard of a key whose packed entry is already in the index.
+shards = {weight_name(k): v for k, v in wm.items()}
+
 lm_key = "lm_head.weight"
-emb_key = next(k for k in wm if k.endswith("embed_tokens.weight"))
+emb_key = next(k for k in shards if k.endswith("embed_tokens.weight"))
 
 # ---- lm_head + embed_tokens: one streaming pass per shard that holds them.
 # Single-shard exports (the original case) land in one group; multi-shard
 # exports with the two heads in different shards get one pass per shard ----
 groups = {}
 for key, scale_dtype in ((lm_key, torch.float16), (emb_key, torch.bfloat16)):
-    groups.setdefault(wm[key], []).append((key, scale_dtype))
+    groups.setdefault(shards[key], []).append((key, scale_dtype))
 
 for big, keys in groups.items():
-    add = {}
-    with safe_open(d + big, framework="pt") as f:
-        for key, scale_dtype in keys:
-            w = f.get_tensor(key)
-            out_f, in_f = w.shape
-            packed, scale, err = quantize(w, HEAD_BITS)
-            print(f"  {key}: {(out_f, in_f)} int{HEAD_BITS} g{GROUP}, round-trip rel error {err:.4f}")
-            assert err < 0.01, f"quantization error too high for {key}, aborting"
-            base = key[:-len(".weight")]
-            add[base + ".weight_packed"] = packed
-            # linears take fp16 scales; the embedding path creates them in params_dtype
-            add[base + ".weight_scale"] = scale.to(scale_dtype)
-            add[base + ".weight_shape"] = torch.tensor([out_f, in_f], dtype=torch.int64)
-            del w, packed, scale
+    hdr, _ = read_header(d + big)
+    todo = []
+    for key, scale_dtype in keys:
+        base = key[:-len(".weight")]
+        packed_names = [f"{base}.{s}" for s in SUFFIXES]
+        if key not in hdr:
+            # A killed run published the shard but not the index: finish that run.
+            if not all(k in hdr for k in packed_names):
+                sys.exit(f"{big} holds neither {key} nor its packed form; "
+                         f"restore it from {big}.bak-orig")
+            print(f"  {key}: already packed in {big} (completing an interrupted run)")
+            continue
+        todo.append((key, scale_dtype, base))
 
-    print(f"rewriting {big} (streaming)")
-    tmp = d + big + ".tmp"
-    stream_rewrite(d + big, tmp, drop={k for k, _ in keys}, add=add)
-    os.replace(d + big, d + big + ".bak-orig")
-    os.replace(tmp, d + big)
-    del add
+    if todo:
+        add = {}
+        with safe_open(d + big, framework="pt") as f:
+            for key, scale_dtype, base in todo:
+                w = f.get_tensor(key)
+                out_f, in_f = w.shape
+                packed, scale, err = quantize(w, HEAD_BITS)
+                print(f"  {key}: {(out_f, in_f)} int{HEAD_BITS} g{GROUP}, round-trip rel error {err:.4f}")
+                assert err < 0.01, f"quantization error too high for {key}, aborting"
+                add[base + ".weight_packed"] = packed
+                # linears take fp16 scales; the embedding path creates them in params_dtype
+                add[base + ".weight_scale"] = scale.to(scale_dtype)
+                add[base + ".weight_shape"] = torch.tensor([out_f, in_f], dtype=torch.int64)
+                del w, packed, scale
+
+        print(f"rewriting {big} (streaming)")
+        keep_original(d + big)
+        tmp = d + big + ".tmp"
+        stream_rewrite(d + big, tmp, drop={k for k, _ in keys}, add=add)
+        publish(tmp, d + big)
+        del add
 
     for key, _ in keys:
         base = key[:-len(".weight")]
-        del wm[key]
-        for s in ("weight_packed", "weight_scale", "weight_shape"):
+        wm.pop(key, None)  # already gone when the index of a finished run is re-read
+        for s in SUFFIXES:
             wm[f"{base}.{s}"] = big
 
 # ---- MTP module (small shard, fits in RAM) ----
-mtp_shards = {wm[m + ".weight"] for m in MTP_LINEARS}
+mtp_shards = {shards[m + ".weight"] for m in MTP_LINEARS}
 assert len(mtp_shards) == 1, f"mtp weights span several shards: {mtp_shards}"
 mtp_shard = mtp_shards.pop()
 print(f"mtp linears live in {mtp_shard}, quantizing to int{MTP_BITS} g{GROUP}")
@@ -192,7 +232,16 @@ with safe_open(d + mtp_shard, framework="pt") as f:
     mtp_meta = f.metadata()
     for k in f.keys():
         tensors[k] = f.get_tensor(k)
+changed = False
 for m in MTP_LINEARS:
+    packed_names = [f"{m}.{s}" for s in SUFFIXES]
+    if m + ".weight" not in tensors:
+        # A killed run published the shard but not the index: finish that run.
+        if not all(k in tensors for k in packed_names):
+            sys.exit(f"{mtp_shard} holds neither {m}.weight nor its packed form; "
+                     f"restore it from {mtp_shard}.bak-orig")
+        print(f"  {m}: already packed in {mtp_shard} (completing an interrupted run)")
+        continue
     w = tensors.pop(m + ".weight")
     out_f, in_f = w.shape
     packed, scale, err = quantize(w, MTP_BITS)
@@ -200,19 +249,25 @@ for m in MTP_LINEARS:
     tensors[m + ".weight_packed"] = packed
     tensors[m + ".weight_scale"] = scale.to(torch.float16)
     tensors[m + ".weight_shape"] = torch.tensor([out_f, in_f], dtype=torch.int64)
-    del wm[m + ".weight"]
-    for s in ("weight_packed", "weight_scale", "weight_shape"):
-        wm[f"{m}.{s}"] = mtp_shard
-os.replace(d + mtp_shard, d + mtp_shard + ".bak-orig")
-save_file(tensors, d + mtp_shard, metadata=mtp_meta or {"format": "pt"})
+    del w, packed, scale
+    changed = True
+
+if changed:
+    # The head pass may have kept this shard already (single-shard exports): the first
+    # .bak-orig is the pristine one and stays that way.
+    keep_original(d + mtp_shard)
+    save_tensors(tensors, d + mtp_shard, mtp_meta or {"format": "pt"})
 del tensors
 
-json.dump(idx, open(idx_path, "w"), indent=2)
+for m in MTP_LINEARS:
+    wm.pop(m + ".weight", None)  # already gone when the index of a finished run is re-read
+    for s in SUFFIXES:
+        wm[f"{m}.{s}"] = mtp_shard
 
 # ---- config.json ----
 cfg_path = d + "config.json"
 c = json.load(open(cfg_path))
-json.dump(c, open(cfg_path + ".bak-quant", "w"), indent=2)
+backup_once(cfg_path, ".bak-quant")
 qc = c["quantization_config"]
 
 
@@ -237,5 +292,9 @@ qc["config_groups"]["group_2"] = group(HEAD_BITS, ["re:.*embed_tokens$"])
 qc["config_groups"]["group_3"] = group(
     MTP_BITS, ["re:^mtp\\.layers\\..*"] if KEEP_FC else ["re:^mtp\\..*"]
 )
-json.dump(c, open(cfg_path, "w"), indent=2)
+write_json(cfg_path, c)
+
+# The index is the commit point, so it goes last.
+backup_once(idx_path, ".bak-quant")
+write_json(idx_path, idx)
 print("done")
