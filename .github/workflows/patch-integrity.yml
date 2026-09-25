@@ -19,6 +19,8 @@ jobs:
           python-version: '3.12'
       - name: Check model verification and selection without a GPU
         run: python bench/test_model_verification.py
+      - name: Check state detection crash resilience without a GPU
+        run: python bench/test_prepare_state.py
 
   git-apply:
     runs-on: ubuntu-latest

@@ -25,7 +25,7 @@ flock -w "${PREPARE_LOCK_WAIT:-600}" 9 || { echo "prepare: another preparation s
 
 state() {  # prints the steps still to do
 python - "$BASE" <<'EOF'
-import json, os, sys
+import json, os, struct, sys
 d = sys.argv[1].rstrip("/") + "/"
 todo = []
 # tokenizer.json belongs in this list: without it transformers builds an empty
@@ -34,8 +34,30 @@ todo = []
 if not all(os.path.exists(d + f) for f in
            ("config.json", "model.safetensors.index.json", "tokenizer.json", "tokenizer_config.json")):
     print("download"); sys.exit()
-idx = json.load(open(d + "model.safetensors.index.json"))["weight_map"]
-if any(not os.path.exists(d + f) for f in set(idx.values())):
+# A kill during an in-place write by an older prepare can leave a truncated
+# config.json, index or shard (#195). Treat each as a download: a crash here
+# stops every later start under `set -e`, while `hf download` re-hashes each
+# file changed since it was fetched and fetches it again when it differs.
+def intact(shard):
+    """The shard holds every byte its safetensors header declares."""
+    try:
+        size = os.path.getsize(shard)
+        with open(shard, "rb") as f:
+            n = struct.unpack("<Q", f.read(8))[0]
+            if 8 + n > size:
+                return False
+            header = json.loads(f.read(n))
+        end = max((v["data_offsets"][1] for k, v in header.items() if k != "__metadata__"), default=0)
+        return 8 + n + end <= size
+    except (OSError, ValueError, KeyError, TypeError, IndexError, AttributeError, struct.error):
+        return False
+try:
+    json.load(open(d + "config.json"))
+    idx = json.load(open(d + "model.safetensors.index.json"))["weight_map"]
+    shards = {str(f) for f in idx.values()}
+except (ValueError, KeyError, TypeError, AttributeError):
+    print("download"); sys.exit()
+if not all(intact(d + f) for f in shards):
     print("download"); sys.exit()
 if "lm_head.weight_packed" not in idx: todo.append("lm_head")
 if not any(k.endswith("embed_tokens.weight_packed") for k in idx): todo.append("embed")
