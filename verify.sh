@@ -39,10 +39,15 @@ for t in triton compressed_tensors; do $PY -c "import $t" 2>/dev/null && ok "pyt
 # a bare `import flashinfer` passes while vLLM still falls back to torch.topk:
 # has_flashinfer() additionally wants nvcc on PATH or the flashinfer-cubin
 # package (#35). Test what the server will actually use.
-export FLASHINFER_DISABLE_VERSION_CHECK=1  # cubin publishes 0.6.13 vs python 0.6.16.post3; the launchers export this too
+export FLASHINFER_DISABLE_VERSION_CHECK=1  # the launchers export this too (docs/install.md: harmless when the versions match)
+# The fix names the cubin for the installed flashinfer-python, from flashinfer.ai:
+# PyPI stops at 0.6.13, and the vllm wheel pins flashinfer-python exactly. This
+# line used to say flashinfer-cubin==0.6.13, a mismatch on the 0.29.0 pin (0.6.18)
+# that the check export above then hides.
 $PY -c "from vllm.utils.flashinfer import has_flashinfer; assert has_flashinfer()" 2>/dev/null \
   && ok "flashinfer usable by vLLM (nvcc or flashinfer-cubin present)" \
-  || fail "flashinfer unusable: DFlash2 selector will run torch.topk at ~half speed. pip install flashinfer-python flashinfer-cubin==0.6.13 (#35)" 
+  || { FIV=$($PY -c "from importlib.metadata import version; print(version('flashinfer-python'))" 2>/dev/null | tail -n1)
+       fail "flashinfer unusable: DFlash2 selector will run torch.topk at ~half speed. Put nvcc on PATH, or pip install --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==${FIV:-<installed flashinfer-python version>} (#35)"; }
 
 echo "== vLLM patches (order: patches/series)"
 # A later patch can rewrite the region an earlier one added -- both still apply, in

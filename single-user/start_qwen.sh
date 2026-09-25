@@ -54,8 +54,10 @@
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# flashinfer-cubin (the no-nvcc route, README Setup) publishes 0.6.13 against
-# flashinfer-python 0.6.16.post3; without this the import refuses the pair (#35).
+# flashinfer-cubin (the no-nvcc route, docs/install.md) must match flashinfer-python.
+# This used to cover a pair PyPI could not match (cubin 0.6.13 against python
+# 0.6.16.post3, #35); install.md now takes the cubin from flashinfer.ai at the
+# same version, so the export is kept only for venvs built the old way.
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 
 # A dead engine leaves its OffloadingConnector region behind as
