@@ -42,8 +42,6 @@ mamba-chunked-prefill-align.patch
 spec-decode-scratch-within-budget.patch
 dflash2-z-adaptive-emitted.patch
 dspark-draft-quant-config.patch
-mamba-align-retire-null-gaps.patch
-offload-mtp-serve.patch
 engine-completion-log.patch
 engine-stall-sentinel.patch
 triton-spec-attn-fp8-kv.patch

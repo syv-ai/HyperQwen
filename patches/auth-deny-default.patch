@@ -26,13 +26,15 @@ app and answers any method, so a bare OPTIONS /metrics returned the full
 exposition without the key. Without Origin, CORSMiddleware sends the
 request through to the app, so both headers are necessary.
 
---- exported from cpuchip/vllm 9e44ba3f5 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+On v0.30.0: authenticate.py is unchanged from v0.29.0 and the patch applies to it as cut; cli_args.py's help-text hunk lands 7 lines lower (#50195, #53353, #55176 moved it). The routes 0.30 adds (/v1/responses/render, the --enable-scale-out endpoints) fall under the deny-by-default rule with no allowlist change.
+
+--- exported from cpuchip/vllm f79bedd0a2 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/cli_args.py b/entrypoints/launchers/cli_args.py
-index 615c65d7f..6e55c7cfd 100644
+index 89af22cdc8..d21c7e6ed5 100644
 --- a/entrypoints/launchers/cli_args.py
 +++ b/entrypoints/launchers/cli_args.py
-@@ -291,13 +291,13 @@
+@@ -298,13 +298,13 @@
      """If provided, the server will require one of these keys to be presented in
      the header.
  
@@ -53,7 +55,7 @@ index 615c65d7f..6e55c7cfd 100644
      """The file path to the SSL key file."""
      ssl_certfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index e8a61b21e..5f3c2af30 100644
+index e8a61b21ee..5f3c2af30d 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
 @@ -8,7 +8,29 @@

@@ -55,13 +55,13 @@ Re-cut for 0.29: the envs.py anchors moved, and this tree already carries
 0.28 patch is a no-op here. VLLM_SPEC_ATTN_DEBUG is registered beside VLLM_SPEC_ATTN_BLOCK_M
 rather than at the 0.28 line numbers.
 
---- exported from cpuchip/vllm 5be02595e (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 8ec0fbb40 (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index b20c2da6a..15e96bd7d 100755
+index ba36d50ff..9083fbd60 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -182,6 +182,8 @@
+@@ -183,6 +183,8 @@
      VLLM_SPEC_DECODE_ATTN: bool = False
      VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
      VLLM_SPEC_ATTN_BLOCK_M: int = 0
@@ -70,7 +70,7 @@ index b20c2da6a..15e96bd7d 100755
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
      VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
      VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
-@@ -1512,6 +1514,8 @@
+@@ -1508,6 +1510,8 @@
      "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
      "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
      "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),
@@ -80,10 +80,10 @@ index b20c2da6a..15e96bd7d 100755
      "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
          os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 829866b72..d4486fbb9 100755
+index 8b8888af5..67c515cf9 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1964,3 +1964,31 @@
+@@ -2186,3 +2186,31 @@
      att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
              cu_seqlens_q.shape[0] - 1, max_seqlen_q,
              k_scale_cache=k_scale_cache, v_scale_cache=v_scale_cache)
@@ -116,7 +116,7 @@ index 829866b72..d4486fbb9 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q,
 +            k_descale=k_descale, v_descale=v_descale, q_descale=q_descale)
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 22b5db0a0..667de4ab1 100644
+index 085ab0067..eca3a5980 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -44,6 +44,7 @@
@@ -127,7 +127,7 @@ index 22b5db0a0..667de4ab1 100644
  )
  from vllm.v1.kv_cache_interface import (
      AttentionSpec,
-@@ -857,10 +858,31 @@
+@@ -861,10 +862,31 @@
          # int8 per-token-head only: the kernel folds the per-(token, head) scales in after
          # each dot, which is exact because they are constant along the head dim. The
          # drafter's own sliding-window layers are excluded by the window test below.
@@ -161,7 +161,7 @@ index 22b5db0a0..667de4ab1 100644
              and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
              and attn_metadata.causal
              and (self.sliding_window is None or self.sliding_window == (-1, -1))
-@@ -872,6 +894,25 @@
+@@ -876,6 +898,25 @@
              and attn_metadata.rswa_prefix_lens is None
              and output_scale is None
          ):
@@ -188,10 +188,10 @@ index 22b5db0a0..667de4ab1 100644
                  self,
                  query[:num_actual_tokens],
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
-index 8694bc6c9..9e1901c5f 100644
+index fca60b84d..06fa37fa4 100644
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
-@@ -57,7 +57,7 @@
+@@ -56,7 +56,7 @@
  def _spec_attn_partial(
      q_ptr, k_ptr, v_ptr, bt_ptr, seqused_ptr, cu_q_ptr,
      part_o_ptr, part_m_ptr, part_l_ptr,
@@ -200,7 +200,7 @@ index 8694bc6c9..9e1901c5f 100644
      scale,
      stride_qt, stride_qh,
      stride_kb, stride_ks, stride_kh,
-@@ -67,7 +67,7 @@
+@@ -66,7 +66,7 @@
      stride_vsb, stride_vss, stride_vsh,
      G: tl.constexpr, Hq: tl.constexpr, QMAX: tl.constexpr, D: tl.constexpr, BLOCK_SIZE: tl.constexpr,
      BLOCK_M: tl.constexpr, TILE: tl.constexpr, NSEG: tl.constexpr, QT: tl.constexpr,
@@ -209,7 +209,7 @@ index 8694bc6c9..9e1901c5f 100644
  ):
      pid = tl.program_id(0)
      req = pid // NTILE
-@@ -88,6 +88,9 @@
+@@ -87,6 +87,9 @@
      d = tl.arange(0, D)
      q_ptrs = q_ptr + (q_start + ri)[:, None] * stride_qt + (kvh * G + rg)[:, None] * stride_qh + d[None, :]
      q = tl.load(q_ptrs, mask=row_ok[:, None], other=0.0)
@@ -219,7 +219,7 @@ index 8694bc6c9..9e1901c5f 100644
  
      # this segment's key range
      tiles_total = (kv_len + TILE - 1) // TILE
-@@ -99,6 +102,12 @@
+@@ -98,6 +101,12 @@
      l_i = tl.zeros([BLOCK_M], tl.float32)
      acc = tl.zeros([BLOCK_M, D], tl.float32)
      qs = (q * scale).to(tl.bfloat16)
@@ -232,7 +232,7 @@ index 8694bc6c9..9e1901c5f 100644
  
      for t in range(t0, t1):
          pos = t * TILE + tl.arange(0, TILE)
-@@ -121,6 +130,10 @@
+@@ -120,6 +129,10 @@
              v_sc = tl.load(vs_ptr + blk * stride_vsb + slot * stride_vss + kvh * stride_vsh,
                             mask=k_ok, other=0.0)
              s = tl.dot(qs, tl.trans(k)).to(tl.float32) * k_sc[None, :]
@@ -243,7 +243,7 @@ index 8694bc6c9..9e1901c5f 100644
          else:
              s = tl.dot(qs, tl.trans(k)).to(tl.float32)            # [BLOCK_M, TILE]
          allowed = k_ok[None, :] & (pos[None, :] <= q_pos[:, None]) & row_ok[:, None]
-@@ -132,6 +145,8 @@
+@@ -131,6 +144,8 @@
          l_i = l_i * alpha + tl.sum(p, 1)
          if QUANT:
              acc = acc * alpha[:, None] + tl.dot((p * v_sc[None, :]).to(tl.bfloat16), v).to(tl.float32)
@@ -252,7 +252,7 @@ index 8694bc6c9..9e1901c5f 100644
          else:
              acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v).to(tl.float32)
          m_i = m_new
-@@ -208,23 +223,43 @@
+@@ -207,23 +222,43 @@
          return block_m, qt, triton.cdiv(q_len, qt), 8 if block_m >= 128 else 4
  
      def run(self, q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, scale,
@@ -299,7 +299,7 @@ index 8694bc6c9..9e1901c5f 100644
              scale,
              q.stride(0), q.stride(1),
              key_cache.stride(0), key_cache.stride(1), key_cache.stride(2),
-@@ -233,7 +268,7 @@
+@@ -232,7 +267,7 @@
              *(k_scale_cache.stride() if quant else (0, 0, 0)),
              *(v_scale_cache.stride() if quant else (0, 0, 0)),
              G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
@@ -308,7 +308,7 @@ index 8694bc6c9..9e1901c5f 100644
              num_warps=warps, num_stages=1,
          )
          _spec_attn_combine[(num_reqs, Hq, max_query_len)](
-@@ -241,4 +276,8 @@
+@@ -240,4 +275,8 @@
              out.stride(0), out.stride(1),
              Hq=Hq, QMAX=self.qmax, D=D, NSEG=self.nseg, num_warps=4,
          )

@@ -19,7 +19,7 @@ model's default sampling (temperature 1.0, top-p 0.95, top-k 20):
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/sampler-small-topk-fast-softmax.patch
 
---- exported from cpuchip/vllm bf16863df (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 9b58aeee3 (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/sample/metadata.py b/v1/sample/metadata.py
 index fa4ceac8e..1560b83f9 100644
@@ -113,12 +113,12 @@ index 000000000..f8272f480
 +        return row_softmax_fp32(x)
 +    return x.softmax(dim=-1, dtype=torch.float32)
 diff --git a/v1/sample/ops/topk_topp_sampler.py b/v1/sample/ops/topk_topp_sampler.py
-index 03716cb3c..858f311ce 100644
+index aeb82dec4..bbb1c03cd 100644
 --- a/v1/sample/ops/topk_topp_sampler.py
 +++ b/v1/sample/ops/topk_topp_sampler.py
-@@ -128,25 +128,38 @@
-         else:
-             self.forward = self.forward_native
+@@ -147,25 +147,38 @@
+         # Every accelerator backend can fall back to native sampling at runtime.
+         register_top_k_top_p_warmups()
  
 +    def __call__(self, logits, generators, k, p, k_max=None):
 +        # syv patch: forward variants that don't know k_max just ignore it
@@ -157,7 +157,7 @@ index 03716cb3c..858f311ce 100644
          return (
              random_sample(probs, generators, self.use_fp64_gumbel),
              logits_to_return,
-@@ -346,12 +359,55 @@
+@@ -365,12 +378,55 @@
      return probs.div(q).argmax(dim=-1).view(-1)
  
  
@@ -211,14 +211,14 @@ index 03716cb3c..858f311ce 100644
 +    ):
 +        return apply_top_k_top_p_small_k(logits, k, p, k_max)
 +
-     if current_platform.is_cpu():
-         if HAS_TRITON:
-             return apply_top_k_top_p_triton(logits, k, p)
+     if HAS_TRITON:
+         return apply_top_k_top_p_triton(logits, k, p)
+ 
 diff --git a/v1/sample/rejection_sampler.py b/v1/sample/rejection_sampler.py
-index a1baf0a80..f445eb9f3 100644
+index 85b623bd8..765243597 100644
 --- a/v1/sample/rejection_sampler.py
 +++ b/v1/sample/rejection_sampler.py
-@@ -469,7 +469,9 @@
+@@ -481,7 +481,9 @@
              return output_token_ids
  
      # Compute probability distribution from target logits.
@@ -229,7 +229,7 @@ index a1baf0a80..f445eb9f3 100644
      assert target_probs.is_contiguous()
  
      # Sample recovered tokens for each position.
-@@ -562,7 +564,7 @@
+@@ -571,7 +573,7 @@
  
      # NOTE(woosuk): `apply_top_k_top_p` uses sorting to calculate the mask,
      # which is slow for large vocab sizes. This may cause performance issues.
@@ -251,21 +251,14 @@ index 3efaf33d9..2c7487edf 100644
  
          if greedy_sampled is None:
 diff --git a/v1/spec_decode/llm_base_proposer.py b/v1/spec_decode/llm_base_proposer.py
-index 0eaba0129..93c19a4f8 100644
+index 1bd1bdc45..044855c5b 100644
 --- a/v1/spec_decode/llm_base_proposer.py
 +++ b/v1/spec_decode/llm_base_proposer.py
-@@ -8,6 +8,7 @@
- import torch
- import torch.nn as nn
- 
-+import vllm.envs as envs
- from vllm.compilation.breakable_cudagraph import BreakableCUDAGraphWrapper
- from vllm.config import (
-     CUDAGraphMode,
-@@ -1859,6 +1860,10 @@
+@@ -1845,6 +1845,11 @@
  # Refer to https://github.com/vllm-project/vllm/pull/16899 for the details.
  # FIXME(woosuk): The logic here is duplicated with the main sampling code.
  # We should refactor this to reuse the same sampling implementation.
++import vllm.envs as envs
 +_DRAFT_TOPK_TOPP = envs.VLLM_DRAFT_TOPK_TOPP
 +_DRAFT_TEMP_SCALE = envs.VLLM_DRAFT_TEMP_SCALE
 +
@@ -273,7 +266,7 @@ index 0eaba0129..93c19a4f8 100644
  def compute_probs_and_sample_next_token(
      logits: torch.Tensor,
      sampling_metadata: SamplingMetadata,
-@@ -1881,7 +1886,29 @@
+@@ -1867,7 +1872,29 @@
          is_greedy = temperature < _SAMPLING_EPS
          temperature = torch.where(is_greedy, 1.0, temperature)
      logits.div_(temperature.view(-1, 1))
@@ -305,10 +298,10 @@ index 0eaba0129..93c19a4f8 100644
      # NOTE(woosuk): Currently, we ignore most of the sampling parameters in
      # generating the draft tokens. We only use the temperature. While this
 diff --git a/v1/worker/gpu_input_batch.py b/v1/worker/gpu_input_batch.py
-index 7585f4d89..37722aaa3 100644
+index 01b6b5b0c..77ceec79a 100644
 --- a/v1/worker/gpu_input_batch.py
 +++ b/v1/worker/gpu_input_batch.py
-@@ -944,6 +944,7 @@
+@@ -942,6 +942,7 @@
              all_random=self.all_random,
              top_p=None if self.no_top_p else self.top_p[:num_reqs],
              top_k=None if self.no_top_k else self.top_k[:num_reqs],

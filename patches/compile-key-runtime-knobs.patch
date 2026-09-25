@@ -12,11 +12,13 @@ CacheConfig.compute_hash, which already leaves that field out.
 
 Cut by hand against 0.29.0 with the series applied (not an export from the fork).
 
+--- exported from cpuchip/vllm e6cbe3891 (compile-key-runtime-knobs); regenerate with scripts/export-patch.sh, do not edit ---
+
 diff --git a/envs.py b/envs.py
-index 2dc6a5c..c465e34 100755
+index 9083fbd60..02c5d9817 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -2359,6 +2359,16 @@ def compile_factors() -> dict[str, object]:
+@@ -2401,6 +2401,16 @@
          "VLLM_CACHE_ROOT",
          # Runtime memory-plan persistence; does not affect compiled graphs.
          "VLLM_ENABLE_STARTUP_PLAN",

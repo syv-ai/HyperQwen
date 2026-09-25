@@ -71,16 +71,16 @@ non-MLA attention layer). The "can this layer pad" check mirrors that: not isins
 promotion on every target layer; on 0.28 attn_utils set the flag from the backend for every attention spec, so the
 branch was taken there. The int4 profile then padded the five drafter layers at block 16 and could not fit 120k.)
 
---- exported from cpuchip/vllm e4b924b80 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 00ce09670 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index 69353c052..10c412b07 100644
+index 4f720299b..d3e4606d4 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1132,6 +1132,148 @@
-     return [KVCacheGroupSpec(list(spec.kv_cache_specs.keys()), spec)]
- 
- 
+@@ -1360,6 +1360,146 @@
+         tail_names,
+         tail_page,
+     )
 +def _promote_indivisible_block_sizes(
 +    kv_cache_spec: dict[str, KVCacheSpec], max_page_size: int
 +) -> tuple[dict[str, KVCacheSpec], int]:
@@ -221,12 +221,10 @@ index 69353c052..10c412b07 100644
 +        )
 +        updated[name] = spec
 +    return updated, new_max
-+
-+
+ 
+ 
  def unify_kv_cache_spec_page_size(
-     kv_cache_spec: dict[str, KVCacheSpec],
- ) -> dict[str, KVCacheSpec]:
-@@ -1162,6 +1304,12 @@
+@@ -1392,6 +1532,12 @@
          return kv_cache_spec
  
      max_page_size = max(page_sizes)

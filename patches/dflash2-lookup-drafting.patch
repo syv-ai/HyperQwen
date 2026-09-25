@@ -1,12 +1,12 @@
 lookup-augmented drafting for DFlash2 (n-gram search over the context)
 
---- exported from cpuchip/vllm 5dd3b146e (dflash2-lookup-drafting); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm c2547a7e7 (dflash2-lookup-drafting); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index 0a481b382..d38adfc88 100644
+index 5504304c7..d77132b67 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -355,6 +355,37 @@
+@@ -356,6 +356,37 @@
          return hidden_states, residual
  
  
@@ -44,7 +44,7 @@ index 0a481b382..d38adfc88 100644
  @support_torch_compile
  class DFlashQwen3Model(nn.Module):
      decoder_layer_cls = DFlashQwen3DecoderLayer
-@@ -469,7 +500,7 @@
+@@ -470,7 +501,7 @@
          self._hidden_norm_weight = self.hidden_norm.weight.data
  
          # KV projection weights: [num_layers * 2 * kv_size, hidden_size]
@@ -76,18 +76,18 @@ index cb027293f..9aec93037 100644
          )
          self.attention_conv = DFlashGroupedConv(
 diff --git a/v1/worker/gpu/cudagraph_utils.py b/v1/worker/gpu/cudagraph_utils.py
-index f6564dadc..7abb953e7 100644
+index 9657c28fe..962f1f908 100644
 --- a/v1/worker/gpu/cudagraph_utils.py
 +++ b/v1/worker/gpu/cudagraph_utils.py
-@@ -41,6 +41,7 @@
- from vllm.v1.worker.gpu.input_batch import InputBatch, InputBuffers
+@@ -45,6 +45,7 @@
  from vllm.v1.worker.gpu.model_states.interface import ModelState
+ from vllm.v1.worker.ubatch_utils import check_ubatch_thresholds, get_num_ubatches
  from vllm.v1.worker.utils import AttentionGroup, clear_layer_kv_caches
 +import vllm.envs as envs
  
  if TYPE_CHECKING:
      from vllm.v1.worker.gpu.model_runner import GPUModelRunner
-@@ -229,6 +230,31 @@
+@@ -289,6 +290,31 @@
              )
          else:
              decode_query_lens = [self.decode_query_len]
@@ -120,10 +120,10 @@ index f6564dadc..7abb953e7 100644
          capture_varlen_decode = (
              separate_decode_routine and bool(decode_mode) and self.varlen_decode
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 0ee05328c..3ce6998ef 100644
+index b66d552cb..a614760fd 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -306,6 +306,9 @@
+@@ -319,6 +319,9 @@
              num_prefill_lookahead=num_prefill_lookahead,
          )
          self.adaptive_verification: AdaptiveVerificationManager | None = None
@@ -133,9 +133,9 @@ index 0ee05328c..3ce6998ef 100644
          self.input_buffers = InputBuffers(
              max_num_reqs=self.max_num_reqs,
              max_num_tokens=self.max_num_tokens,
-@@ -456,6 +459,9 @@
-                     self.speculative_config,
-                     self.device,
+@@ -499,6 +502,9 @@
+                         self.vllm_config.watermark_config
+                     ),
                  )
 +            if self.speculator is not None and hasattr(self.speculator, "set_sampling_states"):
 +                # DFlash2 truncates its proposal to the request's top-k/top-p.
@@ -143,7 +143,7 @@ index 0ee05328c..3ce6998ef 100644
              self.prompt_logprobs_worker = PromptLogprobsWorker(
                  self.max_num_reqs,
                  logprobs_mode=self.model_config.logprobs_mode,
-@@ -1961,9 +1967,18 @@
+@@ -2164,9 +2170,18 @@
          if self.num_speculative_steps > 0:
              # Spec-decode and diffusion LLMs both use draft tokens but the latter does
              # not have a speculator (i.e. self.speculator is None)
@@ -160,13 +160,13 @@ index 0ee05328c..3ce6998ef 100644
                  self.req_states.draft_tokens[input_batch.idx_mapping],
 +                num_draft=num_draft,
              )
- 
-         # Post-step KV connector related operations.
+             if self.pp_handler is not None:
+                 self.pp_handler.broadcast_drafts(
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
-index dd1bfdd5e..94d207ec6 100644
+index a5710829e..d6055d026 100644
 --- a/v1/worker/gpu/spec_decode/dflash/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
-@@ -8,6 +8,7 @@
+@@ -6,6 +6,7 @@
  import torch
  import torch.nn as nn
  
@@ -174,7 +174,7 @@ index dd1bfdd5e..94d207ec6 100644
  from vllm.config import VllmConfig, replace
  from vllm.config.compilation import CUDAGraphMode
  from vllm.forward_context import BatchDescriptor, set_forward_context
-@@ -44,8 +45,36 @@
+@@ -52,8 +53,36 @@
          # Multimodal inputs not currently supported.
          self.supports_mm_inputs = False
  
@@ -212,7 +212,7 @@ index dd1bfdd5e..94d207ec6 100644
  
          self.parallel_drafting_token_id = get_parallel_drafting_token_id(
              self.draft_model_config.hf_config
-@@ -79,7 +108,7 @@
+@@ -87,7 +116,7 @@
          )
  
          # Per-mask-token sampling buffers. Flattened from (num_reqs, num_spec_tokens).
@@ -221,7 +221,7 @@ index dd1bfdd5e..94d207ec6 100644
          self.sample_indices = torch.zeros(
              max_num_sampled_tokens, dtype=torch.int64, device=device
          )
-@@ -95,7 +124,7 @@
+@@ -103,7 +132,7 @@
          # [0, 1, ..., N-1, 0, 1, ..., N-1, ...] -> the per-token column index into
          # draft_logits[req, step, :].
          self.sample_col = torch.arange(
@@ -230,7 +230,7 @@ index dd1bfdd5e..94d207ec6 100644
          ).repeat(self.max_num_reqs)
  
          self.query_cudagraph_manager: DFlashCudaGraphManager | None = None
-@@ -259,7 +288,7 @@
+@@ -280,7 +309,7 @@
              num_tokens_across_dp,
              cudagraph_runtime_mode,
          )
@@ -239,7 +239,7 @@ index dd1bfdd5e..94d207ec6 100644
          sample_hidden_states = last_hidden_states[self.sample_indices[:num_sample]]
          # sample_pos is the predicted token's position P. Sampling keys a draw
          # by the position before the sampled token, P-1.
-@@ -272,8 +301,8 @@
+@@ -293,8 +322,8 @@
              self.sample_col[:num_sample],
              self.draft_logits,
          )
@@ -249,8 +249,8 @@ index dd1bfdd5e..94d207ec6 100644
 +            num_reqs, self.draft_block
          )
  
-     def _build_draft_attn_metadata(
-@@ -332,6 +361,11 @@
+     @torch.inference_mode()
+@@ -326,6 +355,11 @@
          is_profile: bool = False,
      ) -> torch.Tensor:
          num_reqs = input_batch.num_reqs
@@ -262,7 +262,7 @@ index dd1bfdd5e..94d207ec6 100644
          num_target_tokens = input_batch.num_tokens
          num_query_tokens = num_reqs * self.num_query_per_req
          max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
-@@ -403,7 +437,7 @@
+@@ -400,7 +434,7 @@
                  self.block_tables.cp_interleave,
                  self.parallel_drafting_token_id,
                  self.num_query_per_req,
@@ -608,7 +608,7 @@ index 000000000..0315b6ecb
 +        num_warps=1,
 +    )
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 1cd19acda..07438a148 100644
+index 7db528449..b6e04d4a0 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,16 +1,26 @@
@@ -760,7 +760,7 @@ index 1cd19acda..07438a148 100644
 +            (self.max_num_reqs, self.num_speculative_steps, self.selector_top_k),
 +            dtype=torch.int64,
 +            device=device,
-         )
++        )
 +        # Request top_p/top_k buffers ([max_num_reqs], indexed by request state), handed
 +        # over by the model runner; VLLM_DFLASH2_DRAFT_TOPK_TOPP=0 disables the truncation.
 +        self._req_top_p: torch.Tensor | None = None
@@ -796,7 +796,7 @@ index 1cd19acda..07438a148 100644
 +        self._req_states = None
 +        self._lookup_tokens = torch.zeros(
 +            (self.max_num_reqs, self.num_speculative_steps), dtype=torch.int32, device=device
-+        )
+         )
 +        self._lookup_len = torch.zeros(self.max_num_reqs, dtype=torch.int32, device=device)
 +        self._lookup_valid = torch.zeros(self.max_num_reqs, dtype=torch.int32, device=device)
 +        # Which draft positions came from the lookup, per request: what the point-mass
@@ -990,8 +990,8 @@ index 1cd19acda..07438a148 100644
          )
          unary_logits = unary_logits.view_as(candidate_ids)
          anchor_token_ids = self.input_buffers.input_ids[self._anchor_indices[:num_reqs]]
-@@ -215,3 +418,68 @@
-         self._sample_path(candidate_ids, scores, num_reqs)
+@@ -221,3 +424,68 @@
+             )
          if self.draft_logits is not None:
              self._cache_draft_logits(candidate_ids, num_sample)
 +        self.draft_tokens[:num_reqs, : self.draft_block].copy_(
@@ -1060,10 +1060,10 @@ index 1cd19acda..07438a148 100644
 +            num_warps=1,
 +        )
 diff --git a/v1/worker/gpu/spec_decode/utils.py b/v1/worker/gpu/spec_decode/utils.py
-index e25672e95..1f712a07d 100644
+index f73acb2bd..f451f7ecb 100644
 --- a/v1/worker/gpu/spec_decode/utils.py
 +++ b/v1/worker/gpu/spec_decode/utils.py
-@@ -20,10 +20,16 @@
+@@ -38,10 +38,16 @@
          self.num_draft_tokens: int = 0
  
      def set_draft_tokens(

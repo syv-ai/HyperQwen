@@ -39,13 +39,13 @@ Apply from the repo root, after spec-decode-attn.patch:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
---- exported from cpuchip/vllm 12c66f4c4 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 1bb6f44e4 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index b1deb5e33..61fabdebb 100755
+index 2754d357d..10b94c1e0 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1899,7 +1899,7 @@
+@@ -2121,7 +2121,7 @@
      return _SPEC_ATTN_QMAX
  
  
@@ -54,7 +54,7 @@ index b1deb5e33..61fabdebb 100755
      from vllm.v1.attention.ops.spec_decode_attn import SpecDecodeAttention
  
      key = (impl.num_heads, impl.head_size, q.device)
-@@ -1918,4 +1918,5 @@
+@@ -2140,4 +2140,5 @@
          )
          _SPEC_ATTN[key] = att
      att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
@@ -62,7 +62,7 @@ index b1deb5e33..61fabdebb 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q,
 +            k_scale_cache=k_scale_cache, v_scale_cache=v_scale_cache)
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 48dd30d66..ee4d10906 100644
+index b7e2a41d0..98356fd7d 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -40,6 +40,11 @@
@@ -77,7 +77,7 @@ index 48dd30d66..ee4d10906 100644
  from vllm.v1.kv_cache_interface import (
      AttentionSpec,
      KVQuantMode,
-@@ -649,6 +654,44 @@
+@@ -653,6 +658,44 @@
  
          mm_prefix_range_tensor = attn_metadata.mm_prefix_range_tensor
  
@@ -123,7 +123,7 @@ index 48dd30d66..ee4d10906 100644
              q=query[:num_actual_tokens],
              k=key_cache,
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
-index 494f9acce..8694bc6c9 100644
+index 54e6e11c9..fca60b84d 100644
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -21,6 +21,22 @@
@@ -149,7 +149,7 @@ index 494f9acce..8694bc6c9 100644
  Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
  window / softcap / alibi.
  """
-@@ -41,14 +57,17 @@
+@@ -40,14 +56,17 @@
  def _spec_attn_partial(
      q_ptr, k_ptr, v_ptr, bt_ptr, seqused_ptr, cu_q_ptr,
      part_o_ptr, part_m_ptr, part_l_ptr,
@@ -168,7 +168,7 @@ index 494f9acce..8694bc6c9 100644
  ):
      pid = tl.program_id(0)
      req = pid // NTILE
-@@ -93,7 +112,17 @@
+@@ -92,7 +111,17 @@
          v_ptrs = v_ptr + blk[:, None] * stride_vb + slot[:, None] * stride_vs + kvh * stride_vh + d[None, :]
          k = tl.load(k_ptrs, mask=k_ok[:, None], other=0.0)
          v = tl.load(v_ptrs, mask=k_ok[:, None], other=0.0)
@@ -187,7 +187,7 @@ index 494f9acce..8694bc6c9 100644
          allowed = k_ok[None, :] & (pos[None, :] <= q_pos[:, None]) & row_ok[:, None]
          s = tl.where(allowed, s, float("-inf"))
          m_new = tl.maximum(m_i, tl.max(s, 1))
-@@ -101,7 +130,10 @@
+@@ -100,7 +129,10 @@
          p = tl.exp(s - m_safe[:, None])
          alpha = tl.exp(tl.where(m_i == float("-inf"), float("-inf"), m_i - m_safe))
          l_i = l_i * alpha + tl.sum(p, 1)
@@ -199,7 +199,7 @@ index 494f9acce..8694bc6c9 100644
          m_i = m_new
  
      # store partials at flat index ((req*Hq + head)*QMAX + i)*NSEG + seg
-@@ -175,10 +207,14 @@
+@@ -174,10 +206,14 @@
          qt = max(1, block_m // G)
          return block_m, qt, triton.cdiv(q_len, qt), 8 if block_m >= 128 else 4
  
@@ -215,7 +215,7 @@ index 494f9acce..8694bc6c9 100644
          assert max_query_len <= self.qmax, "too many query tokens per request for this kernel"
          assert num_reqs <= self.max_num_reqs
          # shared memory on sm86 is 99 KB: q tile + one K and one V tile + scores must fit
-@@ -188,13 +224,16 @@
+@@ -187,13 +223,16 @@
          _spec_attn_partial[grid](
              q, key_cache, value_cache, block_table, seqused_k, cu_seqlens_q,
              self.part_o, self.part_m, self.part_l,

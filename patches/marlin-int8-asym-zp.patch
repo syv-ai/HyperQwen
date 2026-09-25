@@ -21,11 +21,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0; the same two hunks apply to 0.29.0 at an offset.
 
---- cut by hand against pristine v0.28.0 with patches/series applied, line numbers exact (not a cpuchip/vllm topic commit yet; import it there and re-export) ---
+--- exported from cpuchip/vllm fb8fdb59e (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
 
+diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
+index 8c3537505..e85d0ca49 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
-@@ -143,7 +143,10 @@
+@@ -129,7 +129,10 @@
          is_a_8bit = c.act_type is not None and c.act_type.itemsize == 1
  
          if is_a_8bit:
@@ -37,9 +39,11 @@ Validated against vLLM 0.28.0; the same two hunks apply to 0.29.0 at an offset.
                  "W8A8 is not supported by marlin kernel."
              )
  
+diff --git a/model_executor/layers/quantization/utils/marlin_utils.py b/model_executor/layers/quantization/utils/marlin_utils.py
+index d3fcf3fea..4a5f8858c 100644
 --- a/model_executor/layers/quantization/utils/marlin_utils.py
 +++ b/model_executor/layers/quantization/utils/marlin_utils.py
-@@ -738,7 +738,9 @@
+@@ -722,7 +722,9 @@
  
      a_scales = None
      if input_dtype == torch.int8:

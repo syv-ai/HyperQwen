@@ -11,42 +11,60 @@ block 128 with their page padded to the primary page, so both trees compute the 
 (2176) and hash unit (128); the hunks changed nothing for this geometry, and the coordinator hunks below
 still exempt a sliding-window block that does not divide the scheduler block.
 
---- exported from cpuchip/vllm e23d277a2 (kvarn-v2-runner-0.29.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm bcb7667ab (kvarn-v2-runner-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index 246d99893..a16e731a5 100644
+index 47a1299c8..bc35fecea 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
-@@ -110,8 +110,25 @@
+@@ -100,6 +100,7 @@
+     per_token_bytes: int,
+     page_budget: int,
+     fallback: int,
++    divisor_of: int | None = None,
+ ) -> int:
+     """Largest supported kernel block size whose page fits in ``page_budget``.
  
+@@ -114,11 +115,31 @@
      sizes = attn_backend.get_supported_kernel_block_sizes()
+     max_block_size = page_budget // per_token_bytes
      candidates = [s for s in sizes if isinstance(s, int)]
-+    mults = [s.base for s in sizes if isinstance(s, MultipleOf)]
-+    if mults and page_budget and per_token_bytes > 0:
-+        base = min(mults)
-+        budget_tokens = page_budget // per_token_bytes
-+        scaled = budget_tokens // base * base
-+        if fallback and fallback > 0:
-+            for step in (128, base):
-+                found = 0
-+                for d in range(budget_tokens, step - 1, -1):
-+                    if fallback % d == 0 and d % step == 0:
-+                        found = d
-+                        break
-+                if found:
-+                    scaled = found
+-    candidates.extend(
+-        max(s.base, max_block_size // s.base * s.base)
+-        for s in sizes
+-        if isinstance(s, MultipleOf)
+-    )
++    for s in sizes:
++        if not isinstance(s, MultipleOf):
++            continue
++        scaled = max(s.base, max_block_size // s.base * s.base)
++        # (kvarn-v2) A padded SW drafter page next to a hybrid primary block: take the
++        # largest fitting block that also DIVIDES the primary block (a multiple of 128
++        # first, then of the base), so the group stays a divisor of the scheduler block
++        # and of prefix_match_unit. The largest aligned block alone lands on 432 against
++        # a 2176 primary at DFLASH_TOKENS=7, and CTX=huge + prefix caching (#179) is then
++        # refused: "prefix-cacheable KV cache group block sizes must be divisible by
++        # prefix_match_unit" (128). 0.29 picked 128 here.
++        if divisor_of:
++            for step in (128, s.base):
++                d = next(
++                    (
++                        d
++                        for d in range(max_block_size, step - 1, -1)
++                        if divisor_of % d == 0 and d % step == 0
++                    ),
++                    0,
++                )
++                if d:
++                    scaled = d
 +                    break
-+        if scaled >= base:
-+            candidates.append(scaled)
-     if not candidates:
--        candidates = [s.base for s in sizes if isinstance(s, MultipleOf)]
-+        candidates = mults
++        candidates.append(scaled)
      if not candidates:
          return fallback
      smallest = min(candidates)
-@@ -619,6 +636,13 @@
-             # bytes per block. Otherwise (page_size_padded is None) the smallest
-             # block is fine — ``unify`` scales it up by an integer ratio.
+@@ -633,6 +654,13 @@
+             # cannot run the primary block start from their smallest block and
+             # ``unify`` scales it up by an integer ratio.
              shared_page = vllm_config.cache_config.skip_page_size_padded
 +            # port(kvarn-v2): hybrid without skip layers: pad the drafter's
 +            # SW pages to the mamba/primary page instead of wasting 16-token
@@ -58,11 +76,24 @@ index 246d99893..a16e731a5 100644
              # The backend owns its packing
              sw_per_token = self.attn_backend.customize_spec(
                  SlidingWindowSpec(
+@@ -647,7 +675,11 @@
+             ).real_page_size_bytes
+             page_budget = shared_page or sw_per_token * block_size
+             sw_block_size = _largest_kernel_block_within(
+-                self.attn_backend, sw_per_token, page_budget, block_size
++                self.attn_backend,
++                sw_per_token,
++                page_budget,
++                block_size,
++                divisor_of=block_size if shared_page else None,
+             )
+             return SlidingWindowSpec(
+                 block_size=sw_block_size,
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index d38adfc88..cbcf78c39 100644
+index d77132b67..eb155de8c 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -224,6 +224,15 @@
+@@ -225,6 +225,15 @@
          )
  
          self.sliding_window = sliding_window
@@ -79,10 +110,10 @@ index d38adfc88..cbcf78c39 100644
              self.num_heads,
              self.head_dim,
 diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
-index b3a9b4c03..5ec0c2f9b 100644
+index afb03ac3e..5dd097388 100644
 --- a/v1/core/kv_cache_coordinator.py
 +++ b/v1/core/kv_cache_coordinator.py
-@@ -90,7 +90,8 @@
+@@ -89,7 +89,8 @@
          # The scheduling granularity (LCM of all group block sizes), must be a multiple
          # of the hash_block_size and the block size of each group.
          assert scheduler_block_size % hash_block_size == 0 and all(
@@ -92,37 +123,11 @@ index b3a9b4c03..5ec0c2f9b 100644
              for g in kv_cache_config.kv_cache_groups
          )
          self.scheduler_block_size = scheduler_block_size
-@@ -607,7 +608,12 @@
-             if group.kv_cache_spec.prefix_cacheable
-         ]
-         assert all(
--            block_size % hash_block_size == 0 for block_size in group_block_sizes
-+            isinstance(g.kv_cache_spec, SlidingWindowSpec)
-+            or block_size % hash_block_size == 0
-+            or hash_block_size % block_size == 0
-+            for g, block_size in zip(
-+                kv_cache_config.kv_cache_groups, group_block_sizes
-+            )
-         ), (
-             "Each KV cache group's real block_size must be divisible by "
-             f"hash_block_size. block_sizes={group_block_sizes}, "
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 92e5fc6e2..60a1c7542 100644
+index 0bc3f7343..ed0c4fe8f 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -936,6 +936,11 @@
-         assert dcp_world_size == 1, "DCP not support sliding window attn now."
-         assert pcp_world_size == 1, "PCP not support sliding window attn now."
-         # Fine-grained partial hits are not supported for sliding window now
-+        if (
-+            kv_cache_spec.block_size % block_pool.hash_block_size != 0
-+            or alignment_tokens % kv_cache_spec.block_size != 0
-+        ):
-+            return tuple([] for _ in kv_cache_group_ids), 0
-         assert alignment_tokens % kv_cache_spec.block_size == 0, (
-             "SlidingWindowManager does not support fine-grained (partial) cache hits"
-         )
-@@ -1124,6 +1129,24 @@
+@@ -1198,6 +1198,31 @@
          """
          return 0
  
@@ -131,6 +136,8 @@ index 92e5fc6e2..60a1c7542 100644
 +        request: Request,
 +        num_tokens: int,
 +        retention_interval: int | None = None,
++        *,
++        replay_boundaries: Sequence[int],
 +    ) -> None:
 +        # Prefix reuse is not meaningful for a rolling window. Skip the write
 +        # path when the SW block and hash unit are not divisible in either
@@ -142,16 +149,21 @@ index 92e5fc6e2..60a1c7542 100644
 +            or self.scheduler_block_size % self.block_size != 0
 +        ):
 +            return
-+        super().cache_blocks(request, num_tokens, retention_interval=retention_interval)
++        super().cache_blocks(
++            request,
++            num_tokens,
++            retention_interval=retention_interval,
++            replay_boundaries=replay_boundaries,
++        )
 +
  
  class CircularBufferManager(FullAttentionManager):
      """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 3ce6998ef..94bffa6e1 100644
+index a614760fd..91dde6a54 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1158,9 +1158,14 @@
+@@ -1269,9 +1269,14 @@
              is_prefilling_np=is_prefilling_np,
              has_prefill=bool(is_prefilling_np.any()),
          )
@@ -168,7 +180,7 @@ index 3ce6998ef..94bffa6e1 100644
      def prepare_inputs(
          self,
 diff --git a/v1/worker/gpu/model_states/mamba_hybrid.py b/v1/worker/gpu/model_states/mamba_hybrid.py
-index 6d07c1588..86c358e0f 100644
+index 0ac3f2f63..c34f9f44e 100644
 --- a/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/v1/worker/gpu/model_states/mamba_hybrid.py
 @@ -118,8 +118,13 @@
@@ -187,7 +199,7 @@ index 6d07c1588..86c358e0f 100644
  
      def _get_mamba_group_info(
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index f41485210..e1ab3565f 100644
+index 9383724ef..6f4354857 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@
@@ -215,5 +227,5 @@ index f41485210..e1ab3565f 100644
          )
 +        scores = torch.nan_to_num(scores, nan=-1e30, posinf=1e30, neginf=-1e30)
          self._sample_path(candidate_ids, scores, num_reqs)
-         if self.draft_logits is not None:
-             self._cache_draft_logits(candidate_ids, num_sample)
+         if self.enable_adaptive_verification:
+             self._maybe_predict_acceptance(

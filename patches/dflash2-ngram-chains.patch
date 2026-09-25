@@ -2,10 +2,10 @@ Ported to 0.29: the propose() override takes dp_sync (DPSyncState) instead of nu
 runner call and the DFlashSpeculator base (upstream changed the signature in 0.29); the inner draft path still receives
 num_tokens_across_dp from the base.
 
---- exported from cpuchip/vllm 1361d3716 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm ebf9bd8c9 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 07438a148..af532c9a9 100644
+index b6e04d4a0..6dcf80eb6 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -353,7 +353,7 @@ index 07438a148..af532c9a9 100644
  
      def _sample_path(
          self,
-@@ -483,3 +782,16 @@
+@@ -489,3 +788,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )

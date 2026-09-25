@@ -14,13 +14,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
---- exported from cpuchip/vllm abf68ff28 (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 3a9508d10 (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
-index 5a4f65297..3975b26c2 100644
+index 387c33c11..bae372347 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
-@@ -96,6 +96,38 @@
+@@ -82,6 +82,37 @@
                  "W8A8 is not supported by marlin kernel."
              )
  
@@ -33,7 +33,6 @@ index 5a4f65297..3975b26c2 100644
 +        if (
 +            c.act_type == torch.int8
 +            and c.group_size != -1
-+            and not c.has_g_idx
 +            and not c.zero_points
 +        ):
 +            _wq = getattr(layer, self.w_q_name)

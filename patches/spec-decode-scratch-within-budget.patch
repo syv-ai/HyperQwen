@@ -63,10 +63,10 @@ int4_per_token_head.py are untouched. Pool logic: bench/mq3d_scratch_pool_test.p
 (CPU tensors, runs inside the image). Measurements and the reading:
 docs/spec-decode-scratch-token-units.md, "Follow-up".
 
---- exported from cpuchip/vllm 6a3149dbf (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm f5da59373 (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 70a6e6cc4..22b5db0a0 100644
+index 2d7b1297c..085ab0067 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -9,7 +9,7 @@
@@ -360,7 +360,7 @@ index 70a6e6cc4..22b5db0a0 100644
          ), "int4 3D scratch buffers disagree with the declared token capacity"
          self.rswa_window = model_config.rswa_window
          self.persistent_rswa_prefix_lens: torch.Tensor | None = None
-@@ -604,6 +722,20 @@
+@@ -608,6 +726,20 @@
          else:
              self.use_td = td_override
  

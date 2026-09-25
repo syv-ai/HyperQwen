@@ -26,13 +26,13 @@ and elapsed_s within 0.02 s of the client's wall time. A 21st request whose
 client was SIGKILLed mid-stream produced the two abort lines and NO finish
 line, which is the discriminator #94 was missing.
 
---- exported from cpuchip/vllm 613d76839 (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm da6bc35f9 (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index 83ed59799..6bd6bc5e2 100644
+index daf2b316d..9005c7929 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
-@@ -2059,6 +2059,20 @@
+@@ -2122,6 +2122,20 @@
                  finished = self._handle_stopped_request(request)
                  if finished:
                      kv_transfer_params, ec_transfer_params = self._free_request(request)

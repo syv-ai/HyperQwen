@@ -8,7 +8,7 @@ all as exact matches: nothing fuzzy, nothing prefix-matched. This removes
 the failure class for every client, including ones the operator does not
 control.
 
---- exported from cpuchip/vllm a27b2e37b (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm b9703204d (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/models/serving.py b/entrypoints/openai/models/serving.py
 index 7378d37c6..fdc6ffa43 100644

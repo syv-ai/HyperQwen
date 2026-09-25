@@ -36,13 +36,13 @@ Retired on the 0.29 port: the VLLM_V2_CUDAGRAPH_MEM_MIB reserve hunk in v1/worke
 vLLM 0.29 profiles CUDA graph memory natively (cudagraph_utils.profile_cudagraph_memory, upstream #53306), so the
 reserve knob is a no-op there; only the kv_cache_utils hunks remain.
 
---- exported from cpuchip/vllm 9defd7f87 (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 1203697ad (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index 7572aac8f..69353c052 100644
+index 28478b69f..4f720299b 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1202,6 +1202,51 @@
+@@ -1432,6 +1432,51 @@
      return not kv_cache_spec
  
  
@@ -94,7 +94,7 @@ index 7572aac8f..69353c052 100644
  def _get_kv_cache_groups_uniform_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> list[KVCacheGroupSpec]:
-@@ -1319,6 +1364,10 @@
+@@ -1549,6 +1594,10 @@
          # layers while accommodating speculative decoding drafters that add
          # extra layers to one attention type.
          group_size = max_num_layers

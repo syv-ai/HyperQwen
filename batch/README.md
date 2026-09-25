@@ -14,7 +14,7 @@ config (fp16 recurrent state, int8 activations on the MLP GEMMs):
 | 128/512, 64 concurrent | **~1,094** | 942 | 62.2 ms | 3.0 s* |
 | 256/256, 64 concurrent | ~1,094 | 673 | 81.4 ms | 3.4 s* |
 
-(Baseline measured on vLLM 0.27.1; re-run after the v0.29.0 upgrade -- these figures now predate two pins. Two passes each were
+(Baseline measured on vLLM 0.27.1; re-run after the v0.30.0 upgrade -- these figures now predate three pins. Two passes each were
 within 0.4% of one another. The 128/512 row read 876 when this repo was first published — the difference is everything that landed
 since. `INT8_LAYERS=.` — int8 activations on every linear, not just the MLP — reaches
 **1,042 tok/s** e2e and ~1,222 steady-state decode, but needs `GPU_UTIL=0.95`: it OOMs inside

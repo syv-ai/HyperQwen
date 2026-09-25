@@ -1,12 +1,12 @@
 # The current vLLM runtime stack. The benchmark tables in the READMEs were
 # measured on the previous v0.27.1 stack and must be re-run after this upgrade.
-# vllm==0.29.0 resolves the compatible torch/cu130, Triton, and FlashInfer set;
+# vllm==0.30.0 resolves the compatible torch/cu130, Triton, and FlashInfer set;
 # the rest is pinned to the reference venv resolution.
-vllm==0.29.0
+vllm==0.30.0
 transformers==5.15.0
 tokenizers==0.22.2
 compressed-tensors==0.17.0
-huggingface_hub==1.28.0
+huggingface_hub==1.32.0
 hf_transfer==0.1.9
 ninja==1.13.0
 # bench/run_benchmarks.sh calls `vllm bench serve`, whose dataset loader imports

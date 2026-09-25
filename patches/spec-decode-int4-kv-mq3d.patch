@@ -1,6 +1,6 @@
 multi-query 3D int4 verify path
 
---- exported from cpuchip/vllm b0bf0762b (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 25429622e (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
 index 6e8de7295..58b73d569 100644
@@ -58,10 +58,10 @@ index 6e8de7295..58b73d569 100644
      # 3D never reads ``output_ptr`` and 2D never reads the segm tensors,
      # but Triton needs a non-null pointer everywhere; reuse ``out`` as
 diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
-index f4d9ba95f..e92cc4ced 100644
+index 43d3588e6..5522bc0b4 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -715,6 +715,27 @@
+@@ -720,6 +720,27 @@
      # sequence len for this particular sequence
      seq_len = tl.load(seq_lens_ptr + seq_idx)
  

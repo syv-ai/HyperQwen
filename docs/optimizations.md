@@ -180,7 +180,9 @@ Things this campaign measured that did NOT pay, so nobody re-walks them:
   drafter demotes the server from the V2 model runner to V1. The drafter's
   own prefill cost on the V2 runner is nil (6 kernel launches in a 4k
   profile); the "~15% TTFT" figure that used to circulate here predates the
-  fused context-KV precompute.
+  fused context-KV precompute. (On 0.30, `SPEC=off` runs the V2 runner too, per its
+  boot log on 2026-09-25, so that cause no longer holds there, and 0.29's batch boots,
+  which have no drafter, run V2 as well; the ~20% gap itself has not been re-measured.)
 - **`PREFIX_CACHE=0` prefills ~20% slower than `PREFIX_CACHE=1`** on this
   stack, align mode ruled out as the cause (PC=0 + `--mamba-cache-mode align`
   measures the same as plain PC=0). Do not turn the cache off "for speed".

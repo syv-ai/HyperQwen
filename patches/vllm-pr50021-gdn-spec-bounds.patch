@@ -1,6 +1,6 @@
 bounds checks in GDN/KDA spec-decode state lookups
 
---- exported from cpuchip/vllm c71c41ee9 (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 19cb432fa (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/mamba/ops/causal_conv1d.py b/model_executor/layers/mamba/ops/causal_conv1d.py
 index 8335c8496..e7387484c 100644

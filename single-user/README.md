@@ -15,8 +15,8 @@ Realistic chat prompts (8 mixed English/Danish/code tasks in
 [bench/prompts_real.jsonl](../bench/prompts_real.jsonl), 1,024-token answers),
 `vllm bench serve --dataset-name custom`, RTX 3090 at 250 W:
 
-> These are vLLM 0.27.1 baseline measurements, now two pins old. Re-benchmark on a
-> GPU after the v0.29.0 upgrade before using the figures for capacity planning.
+> These are vLLM 0.27.1 baseline measurements, now three pins old. Re-benchmark on a
+> GPU after the v0.30.0 upgrade before using the figures for capacity planning.
 
 Quote these against that harness. A client with a different output length is not
 measuring the same thing, and mixing the two is how
@@ -308,7 +308,7 @@ k=4 is the fastest but not the default: on the FlashInfer attention backend
 context fit) the vLLM 0.28.0 FlashInfer path dies with an illegal memory access as soon as one
 request finishes while another is mid-generation with 4 drafts (with or
 without our patches; the vendored PR #50021 bounds fix does not cure it;
-**measured on 0.28.0 and not re-verified on 0.29.0** -- the pin moved under this
+**measured on 0.28.0 and not re-verified on 0.29.0 or 0.30.0** -- the pin moved under this
 paragraph, so treat k=4 on FlashInfer as unproven either way until someone re-runs it;
 club-3090 sees the same "n=4 eventually dies, n=3 stable" on their rigs, and
 vLLM has a family of open MTP illegal-memory-access reports on Qwen3.5/3.6,

@@ -2,10 +2,10 @@ Keep the Qwen3 Vision tower's bulk weights in host RAM on vLLM 0.28.0.
 
 VLLM_VISION_CPU_OFFLOAD_GB is a dedicated tower-only budget. It uses UVAOffloader's bulk-copy path so the language-model offload budget remains independent.
 
---- exported from cpuchip/vllm 4a92c1583 (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 2395144cf (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_vl.py b/model_executor/models/qwen3_vl.py
-index dd08f1cc0..9026b6b33 100644
+index 644fd134a..7289d4b04 100644
 --- a/model_executor/models/qwen3_vl.py
 +++ b/model_executor/models/qwen3_vl.py
 @@ -48,6 +48,7 @@

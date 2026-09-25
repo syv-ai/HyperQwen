@@ -8,7 +8,7 @@
 <a href="https://github.com/syv-ai/HyperQwen/actions/workflows/docker-image.yml"><img alt="docker image" src="https://github.com/syv-ai/HyperQwen/actions/workflows/docker-image.yml/badge.svg"></a>
 <a href="https://github.com/syv-ai/HyperQwen/actions/workflows/patch-integrity.yml"><img alt="patch integrity" src="https://github.com/syv-ai/HyperQwen/actions/workflows/patch-integrity.yml/badge.svg"></a>
 <a href="https://github.com/syv-ai/HyperQwen/pkgs/container/hyperqwen"><img alt="ghcr.io" src="https://img.shields.io/badge/ghcr.io-syv--ai%2Fhyperqwen-2496ED?logo=docker&logoColor=white"></a>
-<a href="https://github.com/vllm-project/vllm"><img alt="vLLM 0.29.0" src="https://img.shields.io/badge/vLLM-0.29.0-5C3EE8"></a>
+<a href="https://github.com/vllm-project/vllm"><img alt="vLLM 0.30.0" src="https://img.shields.io/badge/vLLM-0.30.0-5C3EE8"></a>
 <a href="LICENSE"><img alt="Apache 2.0" src="https://img.shields.io/github/license/syv-ai/HyperQwen"></a>
 <a href="https://github.com/syv-ai/HyperQwen/stargazers"><img alt="stars" src="https://img.shields.io/github/stars/syv-ai/HyperQwen?style=flat"></a>
 <a href="https://ko-fi.com/mhenrichsen"><img alt="support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support%20GPU%20time-FF5E5B?logo=kofi&logoColor=white"></a>
@@ -186,7 +186,7 @@ hardware in it — check before you duplicate, and add to theirs if it matches:
 | **sm80** — A100, A30, CMP 170HX | Two owners are mid-bisect on a speculation fault that only their cards produce ([#98](https://github.com/syv-ai/HyperQwen/issues/98), [#72](https://github.com/syv-ai/HyperQwen/issues/72)). A third sm80 box would separate the card from the build. |
 | **Four Ampere cards** | Four sm120 cards are measured ([#105](https://github.com/syv-ai/HyperQwen/issues/105)); nobody has run four 3090s, and two of them already give *less* aggregate throughput than one ([#135](https://github.com/syv-ai/HyperQwen/issues/135)). |
 | **12 GB cards, on the harness** | Two 3060s do serve this model ([#68](https://github.com/syv-ai/HyperQwen/issues/68)), reported with their owners' own clients — so the numbers cannot be set against the rows above. A harness run on that pair is most of what decides whether smaller Qwen checkpoints are worth preparing. |
-| **vLLM 0.29.0** ([#106](https://github.com/syv-ai/HyperQwen/issues/106), [docs/vllm-0.29.md](docs/vllm-0.29.md)) | The pin this branch carries, measured on a 3090 and a WSL2 4090; the harness on it from any other card is the missing datapoint. |
+| **vLLM 0.30.0** ([docs/vllm-0.30.md](docs/vllm-0.30.md); 0.29.0 in [docs/vllm-0.29.md](docs/vllm-0.29.md)) | The pin this branch carries, measured on a 3090 and a WSL2 4090; the harness on it from any other card is the missing datapoint. |
 
 **What you get:** the run published in
 [docs/reproductions/](docs/reproductions/README.md) with your raw output and

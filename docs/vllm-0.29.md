@@ -138,7 +138,9 @@ is content on both pins). Not understood, WSL2-only, not a regression. The needl
 
 One knob worth knowing: 0.29 defaults `prefix_cache_retention_interval` to dense checkpointing for
 hybrid models with a draft model (the same behaviour 0.28 had). Setting it to 0 on this model halves
-the 47k prefill (1303 vs 2323 tok/s). Leave it at the default.
+the 47k prefill (1303 vs 2323 tok/s) on this card. Leave it at the default. (2026-09-23: the halving is a
+WSL2 4090 reading. On the native reference 3090, 0 and dense prefill within 0.5% of each other on 0.29 and
+on 0.30, and 0.30's default is no longer dense; see [vllm-0.30.md](vllm-0.30.md).)
 
 ## Porting the next pin (the procedure this port settled on)
 

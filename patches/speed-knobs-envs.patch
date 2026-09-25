@@ -9,13 +9,13 @@ this a cached graph from a run without the flag fails with
 "assert_size_stride ... expected size 328==82". Independent of marlin-int8-layer-select.patch (same file, disjoint hunks):
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/speed-knobs-envs.patch
 
---- exported from cpuchip/vllm 323e89b2f (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm fc993a22c (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 39e14e5fc..8e4ad24a4 100755
+index 84b00ff3f..8278e9799 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -193,6 +193,36 @@
+@@ -194,6 +194,36 @@
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
@@ -52,7 +52,7 @@ index 39e14e5fc..8e4ad24a4 100755
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
-@@ -1523,6 +1553,44 @@
+@@ -1519,6 +1549,44 @@
      "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
          os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
      ),

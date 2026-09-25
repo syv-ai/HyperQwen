@@ -29,13 +29,13 @@ block - leaves the captured decode graph reading freed memory.
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/spec-decode-attn.patch
 
---- exported from cpuchip/vllm 711f8ac83 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm c1b817a9b (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index b25601bac..39e14e5fc 100755
+index f4bddb0e7..84b00ff3f 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -177,6 +177,10 @@
+@@ -178,6 +178,10 @@
      VLLM_USE_BREAKABLE_CUDAGRAPH: bool = False
      VLLM_DP_MASTER_IP: str = ""
      VLLM_DP_MASTER_PORT: int = 0
@@ -46,7 +46,7 @@ index b25601bac..39e14e5fc 100755
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
      VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
      VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
-@@ -1449,6 +1453,9 @@
+@@ -1445,6 +1449,9 @@
      "VLLM_DP_MASTER_IP": lambda: os.getenv("VLLM_DP_MASTER_IP", "127.0.0.1"),
      # Port of the master node in the data parallel setting
      "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
@@ -57,10 +57,10 @@ index b25601bac..39e14e5fc 100755
      "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
          os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 9a6c66f5e..b1deb5e33 100755
+index eb2268cc6..2754d357d 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1159,6 +1159,37 @@
+@@ -1378,6 +1378,37 @@
                      block_table = block_table[:, :num_pages]
                      num_splits = 1
  
@@ -95,13 +95,13 @@ index 9a6c66f5e..b1deb5e33 100755
 +                    )
 +                    return output
 +
-                 flash_attn_varlen_func(
+                 _FA4_DENSE_ATTENTION_KERNEL(
                      q=query[:num_actual_tokens],
                      k=key_cache,
-@@ -1832,3 +1863,59 @@
+@@ -2054,3 +2085,59 @@
  
-     # Merge prefix and suffix outputs, and store the result in output.
-     merge_attn_states(output, prefix_output, prefix_lse, suffix_output, suffix_lse)
+ 
+ _FA4_DENSE_ATTENTION_KERNEL = FA4DenseAttentionKernel()
 +
 +
 +# ---- syv patch: split-KV spec-decode attention -------------------------------
@@ -160,10 +160,10 @@ index 9a6c66f5e..b1deb5e33 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q)
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
 new file mode 100644
-index 000000000..494f9acce
+index 000000000..54e6e11c9
 --- /dev/null
 +++ b/v1/attention/ops/spec_decode_attn.py
-@@ -0,0 +1,205 @@
+@@ -0,0 +1,204 @@
 +"""Split-KV paged attention for speculative-decode batches (a few query tokens per
 +request, GQA), Triton.
 +
@@ -190,10 +190,9 @@ index 000000000..494f9acce
 +Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
 +window / softcap / alibi.
 +"""
++import vllm.envs as envs
 +
 +import torch
-+
-+import vllm.envs as envs
 +import triton
 +import triton.language as tl
 +

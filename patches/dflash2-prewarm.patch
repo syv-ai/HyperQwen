@@ -1,12 +1,12 @@
 
 
---- exported from cpuchip/vllm 146b8080c (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm b0a2903d6 (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
-index 94d207ec6..e17cfce51 100644
+index d6055d026..11ae1425b 100644
 --- a/v1/worker/gpu/spec_decode/dflash/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
-@@ -715,6 +715,9 @@
+@@ -716,6 +716,9 @@
                  tl.store(out_query_slot_mapping_ptr + block, PAD_SLOT_ID, mask=mask)
  
  
@@ -16,7 +16,7 @@ index 94d207ec6..e17cfce51 100644
  def prepare_dflash_inputs(
      input_buffers: InputBuffers,
      query_slot_mapping: torch.Tensor,
-@@ -760,41 +763,62 @@
+@@ -761,41 +764,62 @@
      max_tokens_per_req = max_target_query_len + num_query_per_req
      BLOCK_SIZE = min(256, triton.next_power_of_2(max(1, max_tokens_per_req)))
      num_blocks = triton.cdiv(max_tokens_per_req, BLOCK_SIZE)

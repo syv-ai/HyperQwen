@@ -7,7 +7,7 @@ body instead of an incident:
 
     The model `X` does not exist. Served models: qwen3.8-27b.
 
---- exported from cpuchip/vllm fd60d66e9 (serve-404-served-names); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 129799d4b (serve-404-served-names); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/serve/engine/serving.py b/entrypoints/serve/engine/serving.py
 index 23e392720..b65af6117 100644

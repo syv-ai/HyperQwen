@@ -28,13 +28,13 @@ Apply from the installed vllm package directory:
 
 Written against vLLM 0.27.1.
 
---- exported from cpuchip/vllm 878a52b31 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm b84e3edee (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/_custom_ops.py b/_custom_ops.py
-index 78a4c4315..b5ecb1d40 100644
+index 331121501..5a8aab14c 100644
 --- a/_custom_ops.py
 +++ b/_custom_ops.py
-@@ -1265,6 +1265,51 @@
+@@ -1219,6 +1219,51 @@
      return torch.ops._C.marlin_int4_fp8_preprocess(qweight, qzeros_or_none, inplace)
  
  
@@ -86,15 +86,17 @@ index 78a4c4315..b5ecb1d40 100644
  def marlin_gemm(
      a: torch.Tensor,
      c: torch.Tensor | None,
-@@ -1286,6 +1331,11 @@
+@@ -1237,6 +1282,13 @@
      use_fp32_reduce: bool = False,
      is_zp_float: bool = False,
  ) -> torch.Tensor:
 +    if _MARLIN_TUNE_OP is not None:
 +        return _MARLIN_TUNE_OP(
 +            a, c, b_q_weight, b_bias, b_scales, a_scales, global_scale, b_zeros,
-+            g_idx, perm, workspace, b_q_type.id, size_m, size_n, size_k,
-+            is_k_full, use_atomic_add, use_fp32_reduce, is_zp_float)
++            # the standalone build keeps the 0.27.1 schema; vllm #54809 (0.30.0) removed
++            # activation ordering, so g_idx/perm are always absent and K is always full
++            None, None, workspace, b_q_type.id, size_m, size_n, size_k,
++            True, use_atomic_add, use_fp32_reduce, is_zp_float)
      return torch.ops._C.marlin_gemm(
          a,
          c,

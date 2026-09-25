@@ -38,35 +38,16 @@ Verified on this card: boot line shows eagle groups [8]; the warning fires
 for group 8 (128 vs 2,176 tokens, 17x) on KVarN + connector and stays
 silent on configs with uniform chunk sizes.
 
---- exported from cpuchip/vllm 7da1fb0c4 (offload-dflash-eagle-groups); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm b4131ad0c (offload-dflash-eagle-groups); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-index 330f8270b..bf12f4740 100644
+index 2fb3c5bb9..5cfae6d65 100644
 --- a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 +++ b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-@@ -227,6 +227,18 @@
-             vllm_config.speculative_config is not None
-             and vllm_config.speculative_config.use_eagle()
-         )
-+        if use_eagle and not eagle_groups:
-+            # (syv) #33: is_eagle_group is only ever set upstream for DeepSeek
-+            # V4, so this fallback marked EVERY group as draft-attention under
-+            # method=dflash/mtp -- excluding each group's trailing chunk from
-+            # store while decoding for no reason. For dflash the draft model's
-+            # KV is exactly its sliding-window layers; flag those groups only.
-+            if vllm_config.speculative_config.use_dflash():
-+                eagle_groups = {
-+                    idx
-+                    for idx, g in enumerate(kv_cache_config.kv_cache_groups)
-+                    if isinstance(g.kv_cache_spec, SlidingWindowSpec)
-+                }
-         if use_eagle and not eagle_groups:
-             eagle_groups = set(range(len(kv_cache_config.kv_cache_groups)))
- 
-@@ -289,6 +301,36 @@
-             and vllm_config.parallel_config.decode_context_parallel_size == 1
-         )
- 
+@@ -322,6 +322,35 @@
+                         f"({retention_interval}) must be a multiple of "
+                         f"tokens_per_chunk ({config.tokens_per_chunk})."
+                     )
 +        # (syv) #33: the CPU offload pool allocates UNIFORM blocks sized for
 +        # the largest group's chunk. A group with far smaller chunks (KVarN's
 +        # promoted drafter SW group: 128-token chunks against 2176) burns a
@@ -96,7 +77,6 @@ index 330f8270b..bf12f4740 100644
 +                    _tok,
 +                    max(1, _max_chunk // max(1, _tok)),
 +                )
-+
+ 
          return cls(
              num_workers=vllm_config.parallel_config.world_size,
-             kv_group_configs=kv_group_configs,

@@ -14,10 +14,11 @@ way past that is a smaller cache, not a different engine, and
 know of: Hadamard rotation + iterative variance normalization + 4-bit keys /
 2-bit values per 128-token tile, at ~840 B/token/layer here. It ships as a
 fork of vLLM 0.23; [kvarn/](../kvarn/) is our port of its dense backend onto
-the 0.29.0 this repo runs (`bash kvarn/install.sh`, then `KV=kvarn` in batch mode
+the 0.30.0 this repo runs (`bash kvarn/install.sh`, then `KV=kvarn` in batch mode
 or `CTX=huge` in single-user mode). The rows below were measured on 0.28.0; the
 0.29.0 port computes the same cache geometry and matched quality on a WSL2 4090
-(see [vllm-0.29.md](vllm-0.29.md)).
+(see [vllm-0.29.md](vllm-0.29.md)), and the 0.30.0 port the same pools as 0.29 on the reference 3090
+(see [vllm-0.30.md](vllm-0.30.md)).
 
 Measured on the 3090 (`--kv-cache-dtype kvarn_k4v2_g128 --block-size 128`,
 fp16 recurrent state, batch defaults otherwise). **Every row in this table is the
@@ -197,14 +198,14 @@ query tokens, far above the block sizes it is for.
 ## DFlash2 at 240k: `CTX=huge` (KVarN) also combines with `SPEC=dflash2`
 
 ```bash
-bash kvarn/install.sh                # applies the v0.29.0 KVarN + V2-runner ports
+bash kvarn/install.sh                # applies the v0.30.0 KVarN + V2-runner ports
 SPEC=dflash2 CTX=huge PREFIX_CACHE=1 bash single-user/start_qwen.sh
 ```
 
 Where `CTX=long` doubles the DFlash2 pool with int8 KV (138k), the KVarN cache
 takes the same idea further: 268k tokens of pool at 245760 max-model-len, on the
 same pinned budget. No kernel work — the KVarN Triton kernels run unmodified on
-the V2 runner; the seven fixes in `kvarn/kvarn-v2-runner-0.29.0.patch` are allocator and
+the V2 runner; the fixes in `kvarn/kvarn-v2-runner-0.30.0.patch` are allocator and
 geometry logic (the patch header walks through them, including an upstream vLLM
 bug in the mamba align resume path, and a NaN path in the DFlash2 candidate
 selector that KVarN noise exposes on verbatim-reproduction content). Two

@@ -92,10 +92,10 @@ VERIFICATION
 
 ---
 
---- exported from cpuchip/vllm 88076b41b (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm a332a16a2 (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index ee4d10906..70a6e6cc4 100644
+index 98356fd7d..2d7b1297c 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -57,6 +57,10 @@
@@ -211,7 +211,7 @@ index ee4d10906..70a6e6cc4 100644
              num_par_softmax_segments=self.num_par_softmax_segments,
              softmax_segm_output=self.softmax_segm_output,
              softmax_segm_max=self.softmax_segm_max,
-@@ -647,6 +708,8 @@
+@@ -651,6 +712,8 @@
          block_table = attn_metadata.block_table
  
          seq_threshold_3D = attn_metadata.seq_threshold_3D
@@ -220,7 +220,7 @@ index ee4d10906..70a6e6cc4 100644
          num_par_softmax_segments = attn_metadata.num_par_softmax_segments
          softmax_segm_output = attn_metadata.softmax_segm_output
          softmax_segm_max = attn_metadata.softmax_segm_max
-@@ -712,6 +775,8 @@
+@@ -716,6 +779,8 @@
              k_descale=k_descale,
              v_descale=v_descale,
              seq_threshold_3D=seq_threshold_3D,
@@ -406,10 +406,10 @@ index 58b73d569..ece955e6e 100644
          softmax_segm_output=softmax_segm_output,
          softmax_segm_max=softmax_segm_max,
 diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
-index e92cc4ced..4e2fa2d26 100644
+index 5522bc0b4..2b92ad2ef 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -838,6 +838,8 @@
+@@ -843,6 +843,8 @@
      k_descale,
      v_descale,
      seq_threshold_3D=None,
@@ -418,7 +418,7 @@ index e92cc4ced..4e2fa2d26 100644
      num_par_softmax_segments=None,
      softmax_segm_output=None,
      softmax_segm_max=None,
-@@ -905,6 +907,8 @@
+@@ -910,6 +912,8 @@
              k_scale_cache=k_scale_cache,
              v_scale_cache=v_scale_cache,
              seq_threshold_3D=seq_threshold_3D,

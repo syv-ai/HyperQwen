@@ -26,13 +26,13 @@ git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
 
 python3 -m venv venv
-venv/bin/pip install vllm==0.29.0 huggingface_hub hf_transfer ninja \
-  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.6.18 pandas
+venv/bin/pip install vllm==0.30.0 huggingface_hub hf_transfer ninja \
+  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.6.18.post1 pandas
 # pandas is what `vllm[bench]` pulls in for the custom-dataset path: without it
 # bench/prefill_ab.sh's decode guard dies with "Please install vllm[bench] for
 # bench support" after the prefill rows have already run.
 # flashinfer-python is NOT listed above on purpose: the vllm wheel pins it exactly
-# (Requires-Dist: flashinfer-python==0.6.18 on 0.29.0, ==0.6.16.post3 on 0.28.0), so
+# (Requires-Dist: flashinfer-python==0.6.18.post1 on 0.30.0, ==0.6.18 on 0.29.0), so
 # naming it here can only fight that pin. Do not downgrade it to fix a cubin version
 # mismatch: that drags torch back and breaks vLLM's C extension.
 #
@@ -98,7 +98,7 @@ venv/bin/python prepare/fetch_dflash2.py
 venv/bin/python prepare/fetch_thirdparty.py
 venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A16
 
-# patch vllm (all compatible patches are written against 0.29.0; reapply after upgrades)
+# patch vllm (all compatible patches are written against 0.30.0; reapply after upgrades)
 # Order is patches/series, one basename per line: a few patches carry hunk context
 # that an earlier patch adds, so the glob order of the directory is wrong. A new
 # independent patch goes on the last line; one that must apply before an existing

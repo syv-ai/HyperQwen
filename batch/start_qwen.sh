@@ -119,7 +119,13 @@ INT8_LAYERS=${INT8_LAYERS-mlp}
 # for that prefix once and paying for it every time: 64 requests sharing a 5.8k-token system
 # prompt (conc 32) take 222 s without it and 17 s with it. Costs ~14% of the KV pool
 # (223,821 -> 193,298 tokens) and nothing on workloads with no shared prefix (870 vs 876
-# tok/s on the 128/512 row). Hybrid models keep this opt-in upstream.
+# tok/s on the 128/512 row). Hybrid models keep this opt-in upstream. (All measured when this
+# flag was added, 2026-08-19, on vLLM 0.27.1.) From vLLM 0.28 on, generative hybrid models get
+# prefix caching by default (EngineArgs dropped 0.27's `and not model_config.is_hybrid`
+# opt-in), so PREFIX_CACHE=0 no longer turns it off and =1 only adds align mode. On 0.30 (a
+# 4090 under WSL2, GPU_UTIL=0.91, a ~5K-token system prompt shared by 32 concurrent
+# requests) caching read 934 output tok/s against 395 with --no-enable-prefix-caching, align made no difference to that shape, and
+# caching cost 1.5% of the pool (212,041 -> 208,762 tokens).
 if [ "${PREFIX_CACHE:-0}" = "1" ]; then
   EXTRA_ARGS="--enable-prefix-caching --mamba-cache-mode align ${EXTRA_ARGS}"
 fi

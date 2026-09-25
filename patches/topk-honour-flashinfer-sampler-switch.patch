@@ -30,7 +30,7 @@ exits 1 with "nvcc fatal : Unknown option '--compress-mode=size'". Only the swit
 Env knobs this patch reads go through vllm.envs: VLLM_USE_FLASHINFER_SAMPLER (registered
 upstream; this patch registers nothing new).
 
---- exported from cpuchip/vllm 337efb79f (topk-honour-flashinfer-sampler-switch); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm b743559e8 (topk-honour-flashinfer-sampler-switch); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/logits_processor.py b/model_executor/layers/logits_processor.py
 index 694bb6b03..e5277d581 100644

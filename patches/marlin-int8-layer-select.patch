@@ -14,13 +14,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
---- exported from cpuchip/vllm ccd16216d (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 691b39fc3 (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 786864b91..b25601bac 100755
+index 6158f86f8..f4bddb0e7 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -184,6 +184,8 @@
+@@ -185,6 +185,8 @@
      VLLM_RAY_EXTRA_ENV_VARS_TO_COPY: str = ""
      VLLM_MARLIN_USE_ATOMIC_ADD: bool = False
      VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
@@ -29,7 +29,7 @@ index 786864b91..b25601bac 100755
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
-@@ -1502,6 +1504,14 @@
+@@ -1498,6 +1500,14 @@
      "VLLM_MARLIN_INPUT_DTYPE": env_with_choices(
          "VLLM_MARLIN_INPUT_DTYPE", None, ["int8", "fp8"]
      ),
@@ -45,10 +45,10 @@ index 786864b91..b25601bac 100755
      "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
          os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
 diff --git a/model_executor/layers/quantization/utils/marlin_utils.py b/model_executor/layers/quantization/utils/marlin_utils.py
-index 3658761d6..2284750e9 100644
+index 22cf18f4a..d3fcf3fea 100644
 --- a/model_executor/layers/quantization/utils/marlin_utils.py
 +++ b/model_executor/layers/quantization/utils/marlin_utils.py
-@@ -666,7 +666,17 @@
+@@ -653,7 +653,17 @@
  def get_marlin_input_dtype(prefix: str | None = None):
      if envs.VLLM_MARLIN_INPUT_DTYPE is None:
          return

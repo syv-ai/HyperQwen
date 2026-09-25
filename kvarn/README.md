@@ -1,10 +1,10 @@
-# KVarN KV cache, ported to vLLM 0.29.0
+# KVarN KV cache, ported to vLLM 0.30.0
 
 [KVarN](https://github.com/huawei-csl/KVarN) (Huawei CSL, Apache-2.0) is a
 KV-cache compression scheme — Hadamard rotation, iterative variance
 normalization, 4-bit keys / 2-bit values per 128-token tile — shipped as a
 native vLLM attention backend inside a fork of vLLM 0.23.0. This directory is
-that backend ported onto the vLLM 0.29.0 this repo runs, dense (non-MLA) path
+that backend ported onto the vLLM 0.30.0 this repo runs, dense (non-MLA) path
 only, and tuned for the Qwen3.8-27B / RTX 3090 setup here.
 
 What's in it:
@@ -12,18 +12,26 @@ What's in it:
 - `files/vllm/...` — the KVarN modules (backend, Triton kernels, config,
   Sinkhorn reference), copied from KVarN and adapted to the 0.28.0 backend API
   (the original adaptation markers are retained in the source files).
-- `kvarn-0.29.0.patch` — the small hunks upstream vLLM needs to know the
+- `kvarn-0.30.0.patch` — the small hunks upstream vLLM needs to know the
   new `kvarn_*` cache dtypes (cache dtype literals, dtype map, backend registry
   + priority, a `KVQuantMode.KVARN`, the KV-cache spec branch in the attention
   layer, and the hybrid-model page alignment branch).
-- `kvarn-v2-runner-0.29.0.patch` — the V2 runner, sliding-cache, and DFlash2
+- `kvarn-v2-runner-0.30.0.patch` — the V2 runner, sliding-cache, and DFlash2
   correctness fixes layered on top of the base port.
 - `install.sh` — copies the modules into `venv/lib/python3.12/site-packages/vllm`
   and applies both patches at `--fuzz 0` (safe to re-run; a rejected hunk stops it).
   Both patch files are exported from their commits on the fork branch (`cpuchip/vllm`
-  `qwen38/0.29`), which sit after the whole `patches/` series, so they are never edited by hand.
+  `qwen38/0.30`), which sit after the whole `patches/` series, so they are never edited by hand.
 
 Port notes, for whoever bumps vLLM next:
+
+- 0.30.0 (from 0.29.0): `KVQuantMode.KVARN` is value 11, because upstream inserted `NVFP4_DS_MLA` at 10 (every
+  use is by name). #54713 threads `replay_boundaries` through `cache_blocks`, and the v2-runner override forwards
+  it. #53007 rewrote `_largest_kernel_block_within`; the rule that keeps the DFlash2 drafter's padded
+  sliding-window block a divisor of the primary block (128 against 2176) is carried into it as `divisor_of`.
+  Without it, `CTX=huge SPEC=dflash2 PREFIX_CACHE=1` is refused at boot by `prefix_match_unit` (#179), and the
+  pool moves from 268,169 to 298,067. #55353 removed `CommonAttentionMetadata._seq_lens_cpu`; the backend's
+  `getattr` falls back to an exact `seq_lens.tolist()`.
 
 - 0.29.0 (from 0.28.0): vLLM no longer asks a backend for its KV cache shape or stride
   order; every layer's physical layout comes from its spec as `[blocks, heads, states,

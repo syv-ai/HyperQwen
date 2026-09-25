@@ -4,11 +4,11 @@ The container image (same stack, frozen) and an independent WSL2 reproduction wi
 
 [← back to the main README](../README.md)
 
-The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.29.0 pinned
+The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.30.0 pinned
 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in `patches/` applied
 (`dflash2-backport.patch` is retired because DFlash2 is native since v0.28.0), and
-`verify.sh --install` run at build time, KVarN preinstalled (its 0.29 port is
-described in [vllm-0.29.md](vllm-0.29.md)). Host prerequisites:
+`verify.sh --install` run at build time, KVarN preinstalled (its 0.30 port is
+described in [vllm-0.30.md](vllm-0.30.md)). Host prerequisites:
 an NVIDIA driver that speaks CUDA 13 (≥ 580), Docker with the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 configured as a runtime. The 250 W power limit is a host setting

@@ -88,6 +88,15 @@ VISION_ARGS="--language-model-only"
 
 PREFIX_ARGS=""
 [ "$PREFIX_CACHE" = 1 ] && PREFIX_ARGS="--enable-prefix-caching --mamba-cache-mode align"
+# With the drafter on, pass the retention interval explicitly: 0.30's unset default is 0 (the replay
+# boundaries only), where 0.29 resolved it to dense (vllm #55760); start_qwen.sh has the measurement.
+# PREFIX_RETENTION sets it (0 = boundaries only, empty = dense); the flag in EXTRA_ARGS wins.
+if [ "$PREFIX_CACHE" = 1 ] && [ "$SPEC" = dflash2 ]; then
+  case " ${EXTRA_ARGS:-} " in
+    *"--prefix-cache-retention-interval"*) ;;
+    *) R=${PREFIX_RETENTION-}; PREFIX_ARGS="$PREFIX_ARGS --prefix-cache-retention-interval ${R:-None}" ;;
+  esac
+fi
 
 # Array, not $( ... || echo ... ): the fallback makes it errexit-safe, but an
 # unquoted expansion still word-splits; match SPEC_ARGS/METRICS_ARGS.

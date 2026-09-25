@@ -45,10 +45,10 @@ Status: validated on the 170HX (4 boot cycles + a full serving session,
 bit-exact, 0 Xid) and in production there — but as load-time hygiene, not
 as the wedge fix this header originally proposed; see the history above.
 
---- exported from cpuchip/vllm 932293aab (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 024de61d3 (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
-index 3975b26c2..891cd3b3a 100644
+index bae372347..8c3537505 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
 @@ -2,8 +2,10 @@
@@ -62,7 +62,7 @@ index 3975b26c2..891cd3b3a 100644
  from vllm import _custom_ops as ops
  from vllm.model_executor.layers.quantization.utils.marlin_utils import (
      MARLIN_SUPPORTED_GROUP_SIZES,
-@@ -29,6 +31,55 @@
+@@ -25,6 +27,55 @@
  from vllm.platforms import current_platform
  from vllm.scalar_type import scalar_types
  
@@ -118,7 +118,7 @@ index 3975b26c2..891cd3b3a 100644
  from .MPLinearKernel import MPLinearKernel, MPLinearLayerConfig
  
  
-@@ -159,6 +210,23 @@
+@@ -135,6 +186,22 @@
          def transform_w_q(x):
              assert isinstance(x, BasevLLMParameter)
              permute_param_layout_(x, input_dim=0, output_dim=1, packed_dim=0)
@@ -132,7 +132,6 @@ index 3975b26c2..891cd3b3a 100644
 +                x.data = torch.empty(0, dtype=staged.dtype, device=staged.device)
 +                x.data = ops.gptq_marlin_repack(
 +                    staged,
-+                    perm=layer.g_idx_sort_indices,
 +                    size_k=padded_k,
 +                    size_n=padded_n,
 +                    num_bits=c.weight_type.size_bits,
