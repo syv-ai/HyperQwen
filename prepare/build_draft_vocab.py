@@ -21,11 +21,18 @@ Corpus files: .txt/.jsonl (uses "prompt"/"response"/"messages"/"text" fields)/.p
 The shipped draft_vocab_ids.json was counted over Danish web text (fineweb-2),
 English Wikipedia, Python source and the model's own chat outputs (8.8M tokens);
 held-out coverage 95%.
+
+Every output is written through prepare/atomic_publish.py (a temp file and a rename),
+and the index goes last, after the extras shard and mtp_draft_vocab_ids.pt: the index
+is what activates the draft head (docker/prepare.sh's state() reads it), so it must not
+point at a head whose id list is not on disk yet. A killed run is completed by the
+next one (#195).
 """
-import glob, json, os, sys, shutil, collections
+import glob, json, os, sys, collections
 import torch
 from safetensors import safe_open
-from safetensors.torch import save_file
+
+from atomic_publish import backup_once, publish, save_tensors, write_json
 
 d = sys.argv[1].rstrip("/") + "/"
 N = int(sys.argv[sys.argv.index("--n") + 1]) if "--n" in sys.argv else 40960
@@ -85,7 +92,9 @@ if not ids_file:
         s = set(t for t, _ in counts.most_common(n_try)) | special
         c = sum(c for t, c in held.items() if t in s) / max(1, sum(held.values()))
         print(f"  coverage at N={n_try}: {c*100:.2f}%")
-    json.dump(ids, open(d + "draft_vocab_ids.json", "w"))
+    with open(d + "draft_vocab_ids.json.tmp", "w") as f:
+        json.dump(ids, f)
+    publish(d + "draft_vocab_ids.json.tmp", d + "draft_vocab_ids.json")
     print(f"id list written to {d}draft_vocab_ids.json (copy it next to this script to reuse)")
 
 # slice lm_head rows
@@ -114,14 +123,15 @@ if os.path.exists(d + extra):
         meta = f.metadata()
         for k in f.keys():
             tensors[k] = f.get_tensor(k)
-    if not os.path.exists(d + extra + ".bak-draft"):
-        shutil.copy(d + extra, d + extra + ".bak-draft")
+    backup_once(d + extra, ".bak-draft")
 tensors["mtp.draft_lm_head.weight_packed"] = sub_p
 tensors["mtp.draft_lm_head.weight_scale"] = sub_s
 tensors["mtp.draft_lm_head.weight_shape"] = sub_shape
-save_file(tensors, d + extra, metadata=meta or {"format": "pt"})
+save_tensors(tensors, d + extra, meta or {"format": "pt"})
+torch.save(ids_t, d + "mtp_draft_vocab_ids.pt.tmp")
+publish(d + "mtp_draft_vocab_ids.pt.tmp", d + "mtp_draft_vocab_ids.pt")
+# The index is the commit point, so it goes last.
 for s in ("weight_packed", "weight_scale", "weight_shape"):
     wm[f"mtp.draft_lm_head.{s}"] = extra
-json.dump(idx, open(d + "model.safetensors.index.json", "w"), indent=2)
-torch.save(ids_t, d + "mtp_draft_vocab_ids.pt")
+write_json(d + "model.safetensors.index.json", idx)
 print("done")
