@@ -58,3 +58,13 @@ the script to run for whatever is missing. Each in-place script backs up what it
 rewrites next to the original (`.bak*`), so a step can be undone without re-downloading
 19.5 GB. Why each one is worth doing, with measurements:
 [docs/optimizations.md](../docs/optimizations.md).
+
+`docker/prepare.sh` runs on every container start, so a file that a killed run leaves
+half-written stops every later start (#195). `atomic_publish.py` holds the write protocol
+for these scripts: a temp file and a rename, the first backup kept, the safetensors index
+written last. `bench/test_prepare_crash.py` kills the prepare sequence after each write,
+on a small synthetic model, and checks that the next start completes it:
+
+```bash
+venv/bin/python bench/test_prepare_crash.py harden translate   # CPU, Linux
+```
