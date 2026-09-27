@@ -13,6 +13,11 @@ full reproductions; the list below collects the shorter reports from issues.
   batch arm only a headless box can run
 - [../wsl2-4090.md](../wsl2-4090.md) — RTX 4090 under Windows 11 / WSL2, the
   cross-platform half of the same campaign
+- [cmp-170hx-64gb.md](cmp-170hx-64gb.md) — the third sm80 box the README asked for:
+  unlocked CMP 170HX 64 GB, Docker, vLLM 0.27.1 AND 0.29.0. The #72/#98 fault did
+  not reproduce on either image (including a stock positive control and the
+  maintainer's closing protocol past the 24-request boundary on main), plus the two
+  boot-log lines the thread asked for and a 0.29.0 harness row
 
 ## Results from other hardware
 
@@ -53,6 +58,7 @@ will not have in production.
 | RTX 3090, `SPEC=dflash2 CTX=long` | 250 W | 113.4 tok/s | greedy (120.3 at the default temperature), `tok/step` 3.23 / 3.27, GSM8K 0.960 over 200, Docker at 73fd65d (vLLM 0.29). This profile is int8 KV on `TRITON_ATTN` (the launcher's DFlash2 long-context arm), not setup D's fp8 | [#194](https://github.com/syv-ai/HyperQwen/issues/194) |
 | 2x RTX 3060 12 GB (TP=2), setup D, a second box | 170 W | 62.4 tok/s | greedy (56.7 at the default temperature), `tok/step` 2.73 / 2.58, GSM8K 0.955 over 200, vLLM 0.29 at 1cf8665. Peer-to-peer enabled by a community-patched driver (aikitoria's open-gpu-kernel-modules) but custom all-reduce off, `VISION=1`, `MAX_SEQS=4`, `GPU_UTIL=0.89`, `MAX_LEN=131072`: not the same launch as the row above, so read the +7% loosely | [#205](https://github.com/syv-ai/HyperQwen/issues/205) |
 | 4x RTX 3060 Ti 8 GB (TP=4), setup E | 110 W/card | 118.1 tok/s | the only official profile that boots on 4x8 GB: `SPEC=dflash2 CTX=huge` at the launcher's own settings (380,218-token pool), greedy, `tok/step` 3.50 (113.9 / 3.45 at the default temperature), GSM8K 0.955 over 200. C8 lost 3/8 requests at the default temperature and 1/8 greedy. A, B, C and D all ran out of memory at startup; the adapted profiles that booted, and what each needed, are in the issue | [#210](https://github.com/syv-ai/HyperQwen/issues/210) |
+| CMP 170HX 64 GB unlocked (sm80) | 180 W pinned | **164.7 tok/s** | setup D, `SPEC=dflash2 CTX=fast`, greedy (155.3 at the default temperature), `tok/step` 3.38, vLLM 0.29.0 at da8a8e9, Docker. At the pin this is a power-capped number (see the note above), yet still 3090-class. Also the #72/#98 non-repro on this card, the stock-image positive control, and the boot-log lines from the thread: [cmp-170hx-64gb.md](cmp-170hx-64gb.md) | this write-up |
 
 Batch profile (setup A), `bench/run_benchmarks.sh batch`, 64 concurrent on
 128 in / 512 out, aggregate decode:
