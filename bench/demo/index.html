@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HyperQwen Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=block" rel="stylesheet">
+<style>
+  :root { --bg: #06070A; --fg: #EEF0F4; --dim: #8C939F; --accent: #FF9E44; }
+  :root:not([data-theme="light"]) { color-scheme: dark; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg); overflow: hidden;
+               font-family: Inter, system-ui, sans-serif; }
+  #stage { position: fixed; inset: 0; display: grid; place-items: center; }
+  canvas { display: block; background: var(--bg); }
+  #bar { position: fixed; left: 16px; right: 16px; bottom: calc(12px + env(safe-area-inset-bottom, 0px)); height: 28px; display: flex; align-items: center;
+         gap: 12px; opacity: 0; transition: opacity .25s; font-size: 13px; color: var(--dim); }
+  body:hover #bar, body.paused #bar { opacity: 1; }
+  #track { flex: 1; height: 4px; border-radius: 2px; background: rgba(255,255,255,.12); cursor: pointer; position: relative; }
+  #fill { position: absolute; inset: 0 auto 0 0; width: 0; border-radius: 2px; background: var(--accent); }
+  button { all: unset; cursor: pointer; color: var(--fg); font-size: 13px; padding: 4px 8px; border-radius: 6px;
+           background: rgba(255,255,255,.08); }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  #time { font-variant-numeric: tabular-nums; min-width: 92px; text-align: right; }
+  body.render #bar { display: none; }
+  body.render #stage { place-items: start; }
+</style>
+</head>
+<body>
+<div id="stage"><canvas id="c"></canvas></div>
+<div id="bar"><button id="pp">Pause</button><div id="track"><div id="fill"></div></div><span id="time"></span></div>
+<script src="data.js"></script>
+<script src="demo.js"></script>
+<script>
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const render = q.has("render");
+  if (render) document.body.classList.add("render");
+  const canvas = document.getElementById("c");
+  const ctx = canvas.getContext("2d");
+  const film = HQDemo.create(window.HQ_DATA);
+  const specs = ["400", "500", "600", "700", "800"].map((w) => `${w} 32px Inter`)
+    .concat(["400 16px 'JetBrains Mono'", "500 16px 'JetBrains Mono'"]);
+  await Promise.all(specs.map((s) => document.fonts.load(s, "0123456789 abc HyperQwen —×·“”")));
+  await document.fonts.ready;
+
+  window.HQ = { duration: film.duration, fps: 60, scenes: film.scenes, model: film.batchModel };
+
+  if (render) {
+    canvas.width = HQDemo.W; canvas.height = HQDemo.H;
+    window.HQ.frame = (t) => { ctx.setTransform(1, 0, 0, 1, 0, 0); film.draw(ctx, t); };
+    window.HQ.rgba = (t) => {
+      window.HQ.frame(t);
+      return ctx.getImageData(0, 0, HQDemo.W, HQDemo.H).data;
+    };
+    window.HQ.ready = true;
+    return;
+  }
+
+  let scale = 1;
+  function fit() {
+    const dpr = window.devicePixelRatio || 1;
+    scale = Math.min(innerWidth / HQDemo.W, innerHeight / HQDemo.H);
+    canvas.style.width = HQDemo.W * scale + "px";
+    canvas.style.height = HQDemo.H * scale + "px";
+    canvas.width = Math.round(HQDemo.W * scale * dpr);
+    canvas.height = Math.round(HQDemo.H * scale * dpr);
+  }
+  addEventListener("resize", fit); fit();
+
+  let t0 = performance.now() / 1000 - (parseFloat(q.get("t")) || 0);
+  let paused = q.has("still"), pausedAt = parseFloat(q.get("t")) || 0;
+  const now = () => paused ? pausedAt : (performance.now() / 1000 - t0) % film.duration;
+  function setPaused(p) {
+    if (p === paused) return;
+    if (p) pausedAt = now(); else t0 = performance.now() / 1000 - pausedAt;
+    paused = p; document.body.classList.toggle("paused", p);
+    document.getElementById("pp").textContent = p ? "Play" : "Pause";
+  }
+  function seek(t) {
+    t = Math.max(0, Math.min(film.duration - 0.001, t));
+    if (paused) pausedAt = t; else t0 = performance.now() / 1000 - t;
+  }
+  document.getElementById("pp").onclick = () => setPaused(!paused);
+  canvas.onclick = () => setPaused(!paused);
+  document.getElementById("track").onclick = (e) => {
+    const r = e.currentTarget.getBoundingClientRect();
+    seek((e.clientX - r.left) / r.width * film.duration);
+  };
+  addEventListener("keydown", (e) => {
+    if (e.key === " ") { setPaused(!paused); e.preventDefault(); }
+    if (e.key === "ArrowRight") seek(now() + 5);
+    if (e.key === "ArrowLeft") seek(now() - 5);
+  });
+  function loop() {
+    const t = now();
+    const s = canvas.width / HQDemo.W;
+    ctx.setTransform(s, 0, 0, s, 0, 0);
+    film.draw(ctx, t);
+    document.getElementById("fill").style.width = (t / film.duration * 100) + "%";
+    document.getElementById("time").textContent = `${t.toFixed(1)} / ${film.duration.toFixed(1)} s`;
+    requestAnimationFrame(loop);
+  }
+  requestAnimationFrame(loop);
+})();
+</script>
+</body>
+</html>

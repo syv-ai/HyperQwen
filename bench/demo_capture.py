@@ -16,7 +16,8 @@ Run it once per lane, against a server started in that configuration:
 
 Writes <out>/<lane>.json: per-prompt token arrival times relative to the first token,
 so the renderer never has to guess. Decode rate excludes prefill, the same convention
-the READMEs use.
+the READMEs use. The video is built from these files by bench/demo/build_data.py and
+rendered by bench/demo/render.mjs.
 """
 import json
 import os

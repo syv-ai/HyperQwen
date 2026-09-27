@@ -14,7 +14,10 @@
 <a href="https://ko-fi.com/mhenrichsen"><img alt="support on Ko-fi" src="https://img.shields.io/badge/Ko--fi-support%20GPU%20time-FF5E5B?logo=kofi&logoColor=white"></a>
 </p>
 
-![Stock vLLM against this repo, same card, same prompts](docs/media/demo.gif)
+<a href="docs/media/demo.mp4"><img src="docs/media/demo.avif" alt="HyperQwen on one RTX 3090: one request against stock vLLM, replayed from recorded token arrivals, then 64 requests at once" width="100%"></a>
+
+<sub>One request against stock vLLM, replayed in real time from recorded token arrivals, then 64 at once.
+<a href="docs/media/demo.mp4">1080p60 MP4</a> · <a href="bench/demo">how it is made</a></sub>
 
 </div>
 
