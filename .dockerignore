@@ -17,3 +17,6 @@ marlin-tune/build
 marlin-tune/*.so
 marlin-tune/csrc*
 marlin-tune/cuda13-home
+# the README film and its renderer's npm tree are not needed at runtime
+docs/media
+bench/demo/node_modules
