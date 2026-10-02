@@ -11,7 +11,7 @@ block 128 with their page padded to the primary page, so both trees compute the 
 (2176) and hash unit (128); the hunks changed nothing for this geometry, and the coordinator hunks below
 still exempt a sliding-window block that does not divide the scheduler block.
 
---- exported from cpuchip/vllm bcb7667ab (kvarn-v2-runner-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 757257e13 (kvarn-v2-runner-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
 index 47a1299c8..bc35fecea 100644
@@ -199,7 +199,7 @@ index 0ac3f2f63..c34f9f44e 100644
  
      def _get_mamba_group_info(
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 9383724ef..6f4354857 100644
+index 83dcac17d..633b8b78e 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@
@@ -221,7 +221,7 @@ index 9383724ef..6f4354857 100644
              (self.max_num_reqs, self.draft_block),
              dtype=self.draft_tokens.dtype,
              device=device,
-@@ -712,6 +715,7 @@
+@@ -715,6 +718,7 @@
              hidden_states,
              anchor_token_ids,
          )

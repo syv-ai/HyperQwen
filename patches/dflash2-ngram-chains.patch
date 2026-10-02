@@ -2,10 +2,10 @@ Ported to 0.29: the propose() override takes dp_sync (DPSyncState) instead of nu
 runner call and the DFlashSpeculator base (upstream changed the signature in 0.29); the inner draft path still receives
 num_tokens_across_dp from the base.
 
---- exported from cpuchip/vllm ebf9bd8c9 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm 596a96779 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index b6e04d4a0..6dcf80eb6 100644
+index b6e04d4a0..9c5c75ac8 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -90,7 +90,7 @@ index b6e04d4a0..6dcf80eb6 100644
          if not self._adaptive:
              return None
          emitted = getattr(self, "last_num_emitted", None)
-@@ -318,6 +368,251 @@
+@@ -318,6 +368,254 @@
          self._prev_want = want
          return self.num_speculative_steps if long_block else self.draft_block
  
@@ -275,6 +275,9 @@ index b6e04d4a0..6dcf80eb6 100644
 +                seeds,
 +                self.block_tables.input_block_tables[gid],
 +                self.block_tables.kernel_block_sizes[gid],
++                self.block_tables.cp_rank,
++                self.block_tables.cp_size,
++                self.block_tables.cp_interleave,
 +                self.parallel_drafting_token_id,
 +                self.num_query_per_req,
 +                self.draft_block,
@@ -342,7 +345,7 @@ index b6e04d4a0..6dcf80eb6 100644
      def set_req_states(self, req_states) -> None:
          """The token history the lookup matches against (set by the model runner)."""
          self._req_states = req_states
-@@ -330,6 +625,10 @@
+@@ -330,6 +628,10 @@
      def set_sampling_states(self, sampling_states) -> None:
          self._req_top_p = sampling_states.top_p.gpu
          self._req_top_k = sampling_states.top_k.gpu
@@ -353,7 +356,7 @@ index b6e04d4a0..6dcf80eb6 100644
  
      def _sample_path(
          self,
-@@ -489,3 +788,16 @@
+@@ -489,3 +791,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )
