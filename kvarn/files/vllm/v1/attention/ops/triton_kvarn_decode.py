@@ -27,6 +27,7 @@ layer forwards in a step.
 
 from __future__ import annotations
 
+import os
 
 import torch
 
@@ -328,10 +329,6 @@ def _kvarn_build_packed_kv_kernel(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@triton.autotune(
-    configs=_DECODE_AUTOTUNE_CONFIGS,
-    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS"],
-)
 @triton.jit
 def _kvarn_fused_decode_kernel(
     Q_ptr,              # [B, Hq, D]                               fp16 (rotated)
@@ -376,6 +373,7 @@ def _kvarn_fused_decode_kernel(
     V_S_ROW_OFFSET: tl.constexpr,
     V_ZP_OFFSET: tl.constexpr,
     VQ_INDIRECT: tl.constexpr,
+    F16: tl.constexpr = False,
 ):
     # GQA head-grouping: ONE program per (request, KV head) serves all Q_PER_KV
     # query heads that share this KV head, so each int4 K/V tile is dequantized
@@ -417,7 +415,8 @@ def _kvarn_fused_decode_kernel(
 
     # q: [Q_PER_KV_PAD, D] — padded lanes masked to 0 (no OOB read past Hq).
     q = tl.load(Q_ptr + b * stride_q_b + (hq0 + qh)[:, None] * stride_q_h
-                + d_offs[None, :], mask=qmask[:, None], other=0.0).to(tl.float32)
+                + d_offs[None, :], mask=qmask[:, None], other=0.0)
+    q = q.to(tl.float16) if F16 else q.to(tl.float32)
 
     m_i = tl.full([Q_PER_KV_PAD], -float("inf"), dtype=tl.float32)
     l_i = tl.zeros([Q_PER_KV_PAD], dtype=tl.float32)
@@ -450,9 +449,13 @@ def _kvarn_fused_decode_kernel(
         # them as a single uint16 (half the L1 transactions of the lo/hi byte
         # pair). (Garbage but unused for pool blocks.)
         ku16 = (KV_cache_ptr + tile_base).to(tl.pointer_type(tl.uint16))
-        s_col_K = tl.load(ku16 + (K_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True).to(tl.float32)
-        zp_K = tl.load(ku16 + (K_ZP_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True).to(tl.float32)
-        s_col_V = tl.load(ku16 + (V_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True).to(tl.float32)
+        s_col_K = tl.load(ku16 + (K_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True)
+        zp_K = tl.load(ku16 + (K_ZP_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True)
+        s_col_V = tl.load(ku16 + (V_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True)
+        if not F16:
+            s_col_K = s_col_K.to(tl.float32)
+            zp_K = zp_K.to(tl.float32)
+            s_col_V = s_col_V.to(tl.float32)
 
         for c0 in range(0, GROUP, BLOCK_N):
             cols = c0 + tl.arange(0, BLOCK_N)              # [BN] token indices in tile
@@ -463,29 +466,44 @@ def _kvarn_fused_decode_kernel(
             if pool_slot >= 0:
                 # fp16 already-rotated tokens in the pool (sink / partial tail).
                 src = pool_base + cols[:, None] * stride_pool_t + d_offs[None, :]
-                Kc = tl.load(Tail_K_pool_ptr + src, mask=cmask[:, None], other=0.0).to(tl.float32)  # [BN, D]
-                Vc = tl.load(Tail_V_pool_ptr + src, mask=cmask[:, None], other=0.0).to(tl.float32)  # [BN, D]
+                Kc = tl.load(Tail_K_pool_ptr + src, mask=cmask[:, None], other=0.0)    # [BN, D]
+                Vc = tl.load(Tail_V_pool_ptr + src, mask=cmask[:, None], other=0.0)    # [BN, D]
+                if not F16:
+                    Kc = Kc.to(tl.float32)
+                    Vc = Vc.to(tl.float32)
                 K_dg = tl.trans(Kc)                                       # [D, BN]
             else:
                 # int4 dequant for this chunk of tokens (ONCE, shared by all q heads).
+                # F16: the dequant math runs in fp16 (q codes are <= 15, exact in
+                # fp16; the scales are stored fp16 in the tile) so the working
+                # tiles cost half the registers — the occupancy fix; the fp32
+                # path (default) is what the kernel did before.
                 cb_k = cols // PACK_K
                 cs_k = (cols % PACK_K) * K_BITS
-                s_row_K = tl.load(ku16 + (K_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True).to(tl.float32)  # [BN]
+                s_row_K = tl.load(ku16 + (K_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True)  # [BN]
+                if not F16:
+                    s_row_K = s_row_K.to(tl.float32)
                 k_addrs = (tile_base + K_PACKED_OFFSET
                            + d_offs[:, None] * (GROUP // PACK_K) + cb_k[None, :])
                 k_bytes = tl.load(KV_cache_ptr + k_addrs).to(tl.int32)                  # [D, BN]
-                q_K = ((k_bytes >> cs_k[None, :]) & MASK_K).to(tl.float32)
+                q_K = (k_bytes >> cs_k[None, :]) & MASK_K
+                q_K = q_K.to(tl.float16) if F16 else q_K.to(tl.float32)
                 K_dg = (q_K * s_col_K[:, None] + zp_K[:, None]) * s_row_K[None, :]      # [D, BN]
 
-                s_row_V = tl.load(ku16 + (V_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True).to(tl.float32)  # [BN]
-                zp_V = tl.load(ku16 + (V_ZP_OFFSET // 2) + cols).to(tl.float16, bitcast=True).to(tl.float32)     # [BN]
+                s_row_V = tl.load(ku16 + (V_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True)  # [BN]
+                zp_V = tl.load(ku16 + (V_ZP_OFFSET // 2) + cols).to(tl.float16, bitcast=True)     # [BN]
+                if not F16:
+                    s_row_V = s_row_V.to(tl.float32)
+                    zp_V = zp_V.to(tl.float32)
                 v_addrs = (tile_base + V_PACKED_OFFSET
                            + cols[:, None] * (D // PACK_V) + d_byte_v[None, :])
                 v_bytes = tl.load(KV_cache_ptr + v_addrs).to(tl.int32)                  # [BN, D]
-                q_V = ((v_bytes >> d_shift_v[None, :]) & MASK_V).to(tl.float32)
+                q_V = (v_bytes >> d_shift_v[None, :]) & MASK_V
+                q_V = q_V.to(tl.float16) if F16 else q_V.to(tl.float32)
                 Vc = (q_V * s_row_V[:, None] + zp_V[:, None]) * s_col_V[None, :]        # [BN, D]
 
             # scores[h,c] = q·Kᵀ via tensor cores (q [Q_PER_KV,D] · K_dg [D,BN]).
+            # F16: fp16 x fp16 -> fp32-accumulate (the native fp16 MMA path).
             scores = tl.dot(q, K_dg)                                                   # [Q_PER_KV, BN]
             scores = tl.where(cmask[None, :], scores * scale, -float("inf"))
             m_new = tl.maximum(m_i, tl.max(scores, axis=1))                            # [Q_PER_KV]
@@ -495,8 +513,10 @@ def _kvarn_fused_decode_kernel(
             # poison l_i / acc for good. Force p = alpha = 0 in that state.
             m_dead = m_new == -float("inf")
             p = tl.where(m_dead[:, None], 0.0, tl.exp(scores - m_new[:, None]))        # [Q_PER_KV, BN]
+            if F16:
+                p = p.to(tl.float16)
             alpha = tl.where(m_dead, 0.0, tl.exp(m_i - m_new))                         # [Q_PER_KV]
-            l_i = l_i * alpha + tl.sum(p, axis=1)
+            l_i = l_i * alpha + tl.sum(p, axis=1).to(tl.float32)
             acc = acc * alpha[:, None] + tl.dot(p, Vc)                                 # [Q_PER_KV, D]
             m_i = m_new
 
@@ -504,6 +524,20 @@ def _kvarn_fused_decode_kernel(
     tl.store(Out_ptr + b * stride_o_b + (hq0 + qh)[:, None] * stride_o_h + d_offs[None, :],
              out, mask=qmask[:, None])
 
+
+# Two autotune instances over the same jit body: the default (F16 off) instance
+# keeps main's exact key so the default path reuses main's cached pick; the fp16
+# instance gets its own key entry. Both wrap the SAME jit function, so the disk
+# cache name stays main's.
+_decode_kernel_jit = _kvarn_fused_decode_kernel
+_kvarn_fused_decode_kernel = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS"],
+)(_decode_kernel_jit)
+_kvarn_fused_decode_kernel_f16 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS", "F16"],
+)(_decode_kernel_jit)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # SPLIT-K (flash-decoding) variant: stage 1 computes partial attention over a
@@ -521,10 +555,6 @@ def _kvarn_fused_decode_kernel(
 # LSE-combined so BLOCK_N never affects the output. Warmed in
 # _warm_decode_kernels (pre-CUDA-graph-capture), so autotune never triggers
 # mid-capture.
-@triton.autotune(
-    configs=_DECODE_AUTOTUNE_CONFIGS,
-    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS"],
-)
 @triton.jit
 def _kvarn_fused_decode_stage1(
     Q_ptr, Req_row_ptr, Block_table_ptr, Seq_lens_ptr, Block_to_slot_ptr,
@@ -550,6 +580,7 @@ def _kvarn_fused_decode_stage1(
     V_PACKED_OFFSET: tl.constexpr, V_S_COL_OFFSET: tl.constexpr,
     V_S_ROW_OFFSET: tl.constexpr, V_ZP_OFFSET: tl.constexpr,
     VQ_INDIRECT: tl.constexpr,
+    F16: tl.constexpr = False,
 ):
     b = tl.program_id(0)
     hk = tl.program_id(1)
@@ -577,7 +608,8 @@ def _kvarn_fused_decode_stage1(
     d_byte_v = d_offs // PACK_V
     d_shift_v = (d_offs % PACK_V) * V_BITS
     q = tl.load(Q_ptr + b * stride_q_b + (hq0 + qh)[:, None] * stride_q_h
-                + d_offs[None, :], mask=qmask[:, None], other=0.0).to(tl.float32)
+                + d_offs[None, :], mask=qmask[:, None], other=0.0)
+    q = q.to(tl.float16) if F16 else q.to(tl.float32)
 
     m_i = tl.full([Q_PER_KV_PAD], -float("inf"), dtype=tl.float32)
     l_i = tl.zeros([Q_PER_KV_PAD], dtype=tl.float32)
@@ -597,9 +629,13 @@ def _kvarn_fused_decode_stage1(
         # Single uint16 load per fp16 scale (half the L1 transactions of the
         # lo/hi byte pair); fp16 fields are at even byte offsets in the tile.
         ku16 = (KV_cache_ptr + tile_base).to(tl.pointer_type(tl.uint16))
-        s_col_K = tl.load(ku16 + (K_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True).to(tl.float32)
-        zp_K = tl.load(ku16 + (K_ZP_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True).to(tl.float32)
-        s_col_V = tl.load(ku16 + (V_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True).to(tl.float32)
+        s_col_K = tl.load(ku16 + (K_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True)
+        zp_K = tl.load(ku16 + (K_ZP_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True)
+        s_col_V = tl.load(ku16 + (V_S_COL_OFFSET // 2) + d_offs).to(tl.float16, bitcast=True)
+        if not F16:
+            s_col_K = s_col_K.to(tl.float32)
+            zp_K = zp_K.to(tl.float32)
+            s_col_V = s_col_V.to(tl.float32)
 
         for c0 in range(0, GROUP, BLOCK_N):
             cols = c0 + tl.arange(0, BLOCK_N)
@@ -608,19 +644,28 @@ def _kvarn_fused_decode_stage1(
                 cmask = cmask & ((k * GROUP + cols) >= tl.maximum(seq_len - SLIDING_WINDOW, 0))
             if pool_slot >= 0:
                 src = pool_base + cols[:, None] * stride_pool_t + d_offs[None, :]
-                Kc = tl.load(Tail_K_pool_ptr + src, mask=cmask[:, None], other=0.0).to(tl.float32)
-                Vc = tl.load(Tail_V_pool_ptr + src, mask=cmask[:, None], other=0.0).to(tl.float32)
+                Kc = tl.load(Tail_K_pool_ptr + src, mask=cmask[:, None], other=0.0)
+                Vc = tl.load(Tail_V_pool_ptr + src, mask=cmask[:, None], other=0.0)
+                if not F16:
+                    Kc = Kc.to(tl.float32)
+                    Vc = Vc.to(tl.float32)
                 K_dg = tl.trans(Kc)
             else:
+                s_row_K = tl.load(ku16 + (K_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True)
+                if not F16:
+                    s_row_K = s_row_K.to(tl.float32)
                 cb_k = cols // PACK_K
                 cs_k = (cols % PACK_K) * K_BITS
-                s_row_K = tl.load(ku16 + (K_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True).to(tl.float32)
                 k_addrs = (tile_base + K_PACKED_OFFSET + d_offs[:, None] * (GROUP // PACK_K) + cb_k[None, :])
                 k_bytes = tl.load(KV_cache_ptr + k_addrs).to(tl.int32)
-                q_K = ((k_bytes >> cs_k[None, :]) & MASK_K).to(tl.float32)
+                q_K = (k_bytes >> cs_k[None, :]) & MASK_K
+                q_K = q_K.to(tl.float16) if F16 else q_K.to(tl.float32)
                 K_dg = (q_K * s_col_K[:, None] + zp_K[:, None]) * s_row_K[None, :]
-                s_row_V = tl.load(ku16 + (V_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True).to(tl.float32)
-                zp_V = tl.load(ku16 + (V_ZP_OFFSET // 2) + cols).to(tl.float16, bitcast=True).to(tl.float32)
+                s_row_V = tl.load(ku16 + (V_S_ROW_OFFSET // 2) + cols).to(tl.float16, bitcast=True)
+                zp_V = tl.load(ku16 + (V_ZP_OFFSET // 2) + cols).to(tl.float16, bitcast=True)
+                if not F16:
+                    s_row_V = s_row_V.to(tl.float32)
+                    zp_V = zp_V.to(tl.float32)
                 # FIX: V packed-row stride is D/PACK_V bytes (PACK_V = 8/V_BITS).
                 # Was hardcoded `D // 2` (correct only for 4-bit V); with the shipped
                 # k4v2 preset (V_BITS=2 -> PACK_V=4) it strode 2x too far -> read
@@ -628,17 +673,21 @@ def _kvarn_fused_decode_stage1(
                 # The single-stage kernel already used (D // PACK_V); this matches it.
                 v_addrs = (tile_base + V_PACKED_OFFSET + cols[:, None] * (D // PACK_V) + d_byte_v[None, :])
                 v_bytes = tl.load(KV_cache_ptr + v_addrs).to(tl.int32)
-                q_V = ((v_bytes >> d_shift_v[None, :]) & MASK_V).to(tl.float32)
+                q_V = (v_bytes >> d_shift_v[None, :]) & MASK_V
+                q_V = q_V.to(tl.float16) if F16 else q_V.to(tl.float32)
                 Vc = (q_V * s_row_V[:, None] + zp_V[:, None]) * s_col_V[None, :]
 
+            # F16: fp16 x fp16 -> fp32-accumulate (the native fp16 MMA path).
             scores = tl.dot(q, K_dg)
             scores = tl.where(cmask[None, :], scores * scale, -float("inf"))
             m_new = tl.maximum(m_i, tl.max(scores, axis=1))
             # port(0.27.1): NaN guard (see _kvarn_fused_decode_kernel).
             m_dead = m_new == -float("inf")
             p = tl.where(m_dead[:, None], 0.0, tl.exp(scores - m_new[:, None]))
+            if F16:
+                p = p.to(tl.float16)
             alpha = tl.where(m_dead, 0.0, tl.exp(m_i - m_new))
-            l_i = l_i * alpha + tl.sum(p, axis=1)
+            l_i = l_i * alpha + tl.sum(p, axis=1).to(tl.float32)
             acc = acc * alpha[:, None] + tl.dot(p, Vc)
             m_i = m_new
 
@@ -651,6 +700,17 @@ def _kvarn_fused_decode_stage1(
              mask=qmask[:, None])
     tl.store(MidLse_ptr + rows * stride_ml_n + split, lse_s, mask=qmask)
 
+
+# Same two-instance split as the single-stage kernel above.
+_stage1_jit = _kvarn_fused_decode_stage1
+_kvarn_fused_decode_stage1 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS"],
+)(_stage1_jit)
+_kvarn_fused_decode_stage1_f16 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS", "F16"],
+)(_stage1_jit)
 
 @triton.jit
 def _kvarn_fused_decode_stage2(
@@ -752,6 +812,7 @@ def kvarn_decode_attention(
     _qpk_pad = 1 << (_qpk - 1).bit_length() if _qpk > 1 else 1
     # port(0.27.1): no MAX_BLOCKS_PER_REQ here — the fused kernels no longer
     # take it (only the materialize `_kvarn_build_packed_kv_kernel` below does).
+    _F16 = os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"
     common = dict(
         D=D, GROUP=group,
         Q_PER_KV=_qpk, Q_PER_KV_PAD=_qpk_pad,
@@ -763,6 +824,7 @@ def kvarn_decode_attention(
         V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
         V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
         VQ_INDIRECT=False,
+        F16=_F16,
     )
     # SPLIT-K (KVARN_SPLIT_K=1): two-stage flash-decoding — only a win in the
     # LOW-batch / long-context regime (few programs ⇒ the KV-split dim adds the
@@ -799,7 +861,8 @@ def kvarn_decode_attention(
     if use_fused and not split_k:
         fused_out = impl._fused_out_buf[:N]               # [N, D] fp16
         with torch.profiler.record_function("kvarn_fused_decode"):
-            _kvarn_fused_decode_kernel[(B, Hk)](
+            (_kvarn_fused_decode_kernel_f16 if _F16 else
+             _kvarn_fused_decode_kernel)[(B, Hk)](
                 q_rot_fp16, md.seq_lens, md.block_table, md.seq_lens,
                 impl._block_to_slot_t,
                 kv_cache, impl._tail_K_pool, impl._tail_V_pool, fused_out, scale,
@@ -815,7 +878,8 @@ def kvarn_decode_attention(
         mid_lse = impl._mid_lse_buf
         fused_out = impl._fused_out_buf[:N]
         with torch.profiler.record_function("kvarn_fused_decode_s1"):
-            _kvarn_fused_decode_stage1[(B, Hk, SPLITS)](
+            (_kvarn_fused_decode_stage1_f16 if _F16 else
+             _kvarn_fused_decode_stage1)[(B, Hk, SPLITS)](
                 q_rot_fp16, md.seq_lens, md.block_table, md.seq_lens,
                 impl._block_to_slot_t,
                 kv_cache, impl._tail_K_pool, impl._tail_V_pool, mid_o, mid_lse, scale,
@@ -919,6 +983,7 @@ def kvarn_verify_attention(
 
     _qpk = Hq // Hk
     _qpk_pad = 1 << (_qpk - 1).bit_length() if _qpk > 1 else 1
+    _F16 = os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"
     common = dict(
         D=D, GROUP=group,
         Q_PER_KV=_qpk, Q_PER_KV_PAD=_qpk_pad,
@@ -929,6 +994,7 @@ def kvarn_verify_attention(
         K_ZP_OFFSET=cfg.k_zp_offset, K_S_ROW_OFFSET=cfg.k_s_row_offset,
         V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
         V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
+        F16=_F16,
     )
 
     out_rot = torch.empty(NQ, Hq, D, dtype=torch.float16, device=device)
@@ -958,7 +1024,8 @@ def kvarn_verify_attention(
                             device=device)
         mid_lse = torch.empty(Nrows, SPLITS, dtype=torch.float32,
                               device=device)
-        _kvarn_fused_verify_stage1[(B, Hk, SPLITS)](
+        (_kvarn_fused_verify_stage1_f16 if _F16 else
+         _kvarn_fused_verify_stage1)[(B, Hk, SPLITS)](
             q_rot, block_table, vq_seqlen,
             impl._block_to_slot_t,
             kv_cache, impl._tail_K_pool, impl._tail_V_pool,
@@ -993,7 +1060,8 @@ def kvarn_verify_attention(
     split_k = auto_split or _sk_env == "1"
 
     if not split_k:
-        _kvarn_fused_decode_kernel[(NQ, Hk)](
+        (_kvarn_fused_decode_kernel_f16 if _F16 else
+         _kvarn_fused_decode_kernel)[(NQ, Hk)](
             q_rot, vq_req, block_table, vq_seqlen,
             impl._block_to_slot_t,
             kv_cache, impl._tail_K_pool, impl._tail_V_pool,
@@ -1008,7 +1076,8 @@ def kvarn_verify_attention(
         SPLITS = adaptive_num_kv_splits(max_ctx_blocks)
         mid_o = torch.empty(Nrows, SPLITS, D, dtype=torch.float32, device=device)
         mid_lse = torch.empty(Nrows, SPLITS, dtype=torch.float32, device=device)
-        _kvarn_fused_decode_stage1[(NQ, Hk, SPLITS)](
+        (_kvarn_fused_decode_stage1_f16 if _F16 else
+         _kvarn_fused_decode_stage1)[(NQ, Hk, SPLITS)](
             q_rot, vq_req, block_table, vq_seqlen,
             impl._block_to_slot_t,
             kv_cache, impl._tail_K_pool, impl._tail_V_pool,
@@ -1045,10 +1114,6 @@ def kvarn_verify_attention(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@triton.autotune(
-    configs=_DECODE_AUTOTUNE_CONFIGS,
-    key=["D", "GROUP", "Q_PER_KV", "QLEN", "K_BITS", "V_BITS"],
-)
 @triton.jit
 def _kvarn_fused_verify_stage1(
     Q_ptr,              # [NQ = B*QLEN, Hq, D] fp16 (rotated, token-major)
@@ -1081,6 +1146,7 @@ def _kvarn_fused_verify_stage1(
     K_ZP_OFFSET: tl.constexpr, K_S_ROW_OFFSET: tl.constexpr,
     V_PACKED_OFFSET: tl.constexpr, V_S_COL_OFFSET: tl.constexpr,
     V_S_ROW_OFFSET: tl.constexpr, V_ZP_OFFSET: tl.constexpr,
+    F16: tl.constexpr = False,
 ):
     b = tl.program_id(0)
     hk = tl.program_id(1)
@@ -1110,7 +1176,8 @@ def _kvarn_fused_verify_stage1(
     tok_row = b * QLEN + j                                 # [M] token-major Q row
     q = tl.load(Q_ptr + tok_row[:, None] * stride_q_t
                 + (hq0 + lane)[:, None] * stride_q_h + d_offs[None, :],
-                mask=rmask[:, None], other=0.0).to(tl.float32)   # [M, D]
+                mask=rmask[:, None], other=0.0)
+    q = q.to(tl.float16) if F16 else q.to(tl.float32)     # [M, D]
 
     m_i = tl.full([M], -float("inf"), dtype=tl.float32)
     l_i = tl.zeros([M], dtype=tl.float32)
@@ -1134,11 +1201,15 @@ def _kvarn_fused_verify_stage1(
 
         # Per-channel scales — direct fp16 loads (2-byte-aligned offsets).
         s_col_K = tl.load((KV_cache_ptr + tile_base + K_S_COL_OFFSET).to(
-            tl.pointer_type(tl.float16)) + d_offs).to(tl.float32)
+            tl.pointer_type(tl.float16)) + d_offs)
         zp_K = tl.load((KV_cache_ptr + tile_base + K_ZP_OFFSET).to(
-            tl.pointer_type(tl.float16)) + d_offs).to(tl.float32)
+            tl.pointer_type(tl.float16)) + d_offs)
         s_col_V = tl.load((KV_cache_ptr + tile_base + V_S_COL_OFFSET).to(
-            tl.pointer_type(tl.float16)) + d_offs).to(tl.float32)
+            tl.pointer_type(tl.float16)) + d_offs)
+        if not F16:
+            s_col_K = s_col_K.to(tl.float32)
+            zp_K = zp_K.to(tl.float32)
+            s_col_V = s_col_V.to(tl.float32)
 
         for c0 in range(0, GROUP, BLOCK_N):
             cols = c0 + tl.arange(0, BLOCK_N)
@@ -1148,30 +1219,41 @@ def _kvarn_fused_verify_stage1(
             if pool_slot >= 0:
                 src = pool_base + cols[:, None] * stride_pool_t + d_offs[None, :]
                 Kc = tl.load(Tail_K_pool_ptr + src, mask=cmask[:, None],
-                             other=0.0).to(tl.float32)            # [BN, D]
+                             other=0.0)                          # [BN, D]
                 Vc = tl.load(Tail_V_pool_ptr + src, mask=cmask[:, None],
-                             other=0.0).to(tl.float32)            # [BN, D]
+                             other=0.0)                          # [BN, D]
+                if not F16:
+                    Kc = Kc.to(tl.float32)
+                    Vc = Vc.to(tl.float32)
                 K_dg = tl.trans(Kc)                               # [D, BN]
             else:
+                s_row_K = tl.load((KV_cache_ptr + tile_base + K_S_ROW_OFFSET).to(
+                    tl.pointer_type(tl.float16)) + cols)
+                if not F16:
+                    s_row_K = s_row_K.to(tl.float32)
                 cb_k = cols // PACK_K
                 cs_k = (cols % PACK_K) * K_BITS
-                s_row_K = tl.load((KV_cache_ptr + tile_base + K_S_ROW_OFFSET).to(
-                    tl.pointer_type(tl.float16)) + cols).to(tl.float32)
                 k_addrs = (tile_base + K_PACKED_OFFSET
                            + d_offs[:, None] * (GROUP // PACK_K) + cb_k[None, :])
                 k_bytes = tl.load(KV_cache_ptr + k_addrs).to(tl.int32)
-                q_K = ((k_bytes >> cs_k[None, :]) & MASK_K).to(tl.float32)
+                q_K = (k_bytes >> cs_k[None, :]) & MASK_K
+                q_K = q_K.to(tl.float16) if F16 else q_K.to(tl.float32)
                 K_dg = (q_K * s_col_K[:, None] + zp_K[:, None]) * s_row_K[None, :]
                 s_row_V = tl.load((KV_cache_ptr + tile_base + V_S_ROW_OFFSET).to(
-                    tl.pointer_type(tl.float16)) + cols).to(tl.float32)
+                    tl.pointer_type(tl.float16)) + cols)
                 zp_V = tl.load((KV_cache_ptr + tile_base + V_ZP_OFFSET).to(
-                    tl.pointer_type(tl.float16)) + cols).to(tl.float32)
+                    tl.pointer_type(tl.float16)) + cols)
+                if not F16:
+                    s_row_V = s_row_V.to(tl.float32)
+                    zp_V = zp_V.to(tl.float32)
                 v_addrs = (tile_base + V_PACKED_OFFSET
                            + cols[:, None] * (D // PACK_V) + d_byte_v[None, :])
                 v_bytes = tl.load(KV_cache_ptr + v_addrs).to(tl.int32)
-                q_V = ((v_bytes >> d_shift_v[None, :]) & MASK_V).to(tl.float32)
+                q_V = (v_bytes >> d_shift_v[None, :]) & MASK_V
+                q_V = q_V.to(tl.float16) if F16 else q_V.to(tl.float32)
                 Vc = (q_V * s_row_V[:, None] + zp_V[:, None]) * s_col_V[None, :]
 
+            # F16: fp16 x fp16 -> fp32-accumulate (the native fp16 MMA path).
             scores = tl.dot(q, K_dg)                              # [M, BN]
             smask = cmask[None, :] & (kvpos[None, :] < limit[:, None])
             if SLIDING_WINDOW > 0:
@@ -1187,8 +1269,10 @@ def _kvarn_fused_verify_stage1(
             # catch NaN) -> NaN output after stage2.
             m_dead = m_new == -float("inf")
             p = tl.where(m_dead[:, None], 0.0, tl.exp(scores - m_new[:, None]))
+            if F16:
+                p = p.to(tl.float16)
             alpha = tl.where(m_dead, 0.0, tl.exp(m_i - m_new))
-            l_i = l_i * alpha + tl.sum(p, axis=1)
+            l_i = l_i * alpha + tl.sum(p, axis=1).to(tl.float32)
             acc = acc * alpha[:, None] + tl.dot(p, Vc)
             m_i = m_new
 
@@ -1200,3 +1284,15 @@ def _kvarn_fused_verify_stage1(
     tl.store(MidO_ptr + rows[:, None] * stride_mo_n + split * stride_mo_s
              + d_offs[None, :], O_s, mask=rmask[:, None])
     tl.store(MidLse_ptr + rows * stride_ml_n + split, lse_s, mask=rmask)
+
+
+# Same two-instance split as the decode kernels above.
+_verify_stage1_jit = _kvarn_fused_verify_stage1
+_kvarn_fused_verify_stage1 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "QLEN", "K_BITS", "V_BITS"],
+)(_verify_stage1_jit)
+_kvarn_fused_verify_stage1_f16 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "QLEN", "K_BITS", "V_BITS", "F16"],
+)(_verify_stage1_jit)
