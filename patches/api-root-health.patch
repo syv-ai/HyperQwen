@@ -1,0 +1,60 @@
+Adds GET/HEAD / and Ollama-style /api/status, /api/experimental/model-recommendations, /api/show to vllm's FastAPI app so ollama launch codex can discover the model and read its context length (256k) without a proxy. model-recommendations returns [] so codex falls back to the model name it was given.
+
+--- exported from cpuchip/vllm 3a9d20a (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/entrypoints/launchers/app.py b/entrypoints/launchers/app.py
+index ddea707..11989b8 100644
+--- a/entrypoints/launchers/app.py
++++ b/entrypoints/launchers/app.py
+@@ -3,7 +3,7 @@
+ import warnings
+ from argparse import Namespace
+ 
+-from fastapi import FastAPI
++from fastapi import FastAPI, Request
+ 
+ from vllm.config import ModelConfig
+ from vllm.entrypoints.serve.exception_handling.register import init_exception_handler
+@@ -42,6 +42,42 @@
+     app.state.args = args
+     app.root_path = args.root_path
+ 
++    # Compatibility endpoint for clients that probe the server root
++    # before using the OpenAI-compatible API.
++    @app.api_route(
++        "/",
++        methods=["GET", "HEAD"],
++        include_in_schema=False,
++    )
++    async def root():
++        return {"status": "ok"}
++
++    # Minimal Ollama compatibility endpoints used by `ollama launch codex`.
++    @app.get("/api/status", include_in_schema=False)
++    async def ollama_status():
++        return {"status": "ok"}
++
++    @app.get("/api/experimental/model-recommendations", include_in_schema=False)
++    async def ollama_model_recommendations():
++        return {"models": []}
++
++    @app.post("/api/show", include_in_schema=False)
++    async def ollama_show(request: Request):
++        body = await request.json()
++        model = body.get("model", "")
++
++        if model not in ("qwen3.8:27b", "qwen3.8-27b", "qwen38:27b", "qwen38-27b"):
++            return {"error": f"model '{model}' not found"}
++
++        return {
++            "model_info": {
++                "general.context_length": 262144,
++            },
++            "details": {
++                "parameter_size": "27B",
++            },
++        }
++
+     register_api_routers(args, app, supported_tasks, model_config)
+ 
+     # Endpoint plugins are attached last so their routes are registered after all core
