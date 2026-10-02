@@ -1730,7 +1730,9 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         from vllm.v1.attention.ops.triton_kvarn_decode import (
             _kvarn_build_packed_kv_kernel,
             _kvarn_fused_decode_kernel,
+            _kvarn_fused_decode_kernel_f16,
             _kvarn_fused_decode_stage1,
+            _kvarn_fused_decode_stage1_f16,
             _kvarn_fused_decode_stage2,
             adaptive_num_kv_splits,
         )
@@ -1765,6 +1767,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # stage1 / verify_stage1 kernels no longer take it (I1 dropped the
         # unused constexpr; Triton raises KeyError on unrecognised kwargs).
         # Only the build-packed kernel below still takes it (as a runtime int).
+        _F16 = os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"
         common = dict(
             D=D, GROUP=G,
             Q_PER_KV=qpk, Q_PER_KV_PAD=qpk_pad, SLIDING_WINDOW=sw,
@@ -1779,11 +1782,12 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
             V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
             VQ_INDIRECT=False,
-            F16=(os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"),
+            F16=_F16,
         )
         # 1. Single-stage fused kernel — runs the @triton.autotune sweep.
         # (sl doubles as the unused Req_row_ptr dummy; see VQ_INDIRECT.)
-        _kvarn_fused_decode_kernel[(B, Hk)](
+        (_kvarn_fused_decode_kernel_f16 if _F16 else
+         _kvarn_fused_decode_kernel)[(B, Hk)](
             q, sl, bt, sl, b2s, cache, pool_k, pool_v, out, self.scale,
             Hq * D, D, bt.stride(0), cache.stride(0), cache.stride(1),
             pool_k.stride(0), pool_k.stride(1), pool_k.stride(2),
@@ -1796,7 +1800,8 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         mid_lse = torch.zeros(B * Hq, splits, dtype=torch.float32, device=device)
         # stage1 is @triton.autotune'd; this warmup launch triggers its sweep
         # here (pre-CUDA-graph-capture) so capture never benchmarks.
-        _kvarn_fused_decode_stage1[(B, Hk, splits)](
+        (_kvarn_fused_decode_stage1_f16 if _F16 else
+         _kvarn_fused_decode_stage1)[(B, Hk, splits)](
             q, sl, bt, sl, b2s, cache, pool_k, pool_v, mid_o, mid_lse, self.scale,
             Hq * D, D, bt.stride(0), cache.stride(0), cache.stride(1),
             pool_k.stride(0), pool_k.stride(1), pool_k.stride(2),
@@ -1814,13 +1819,15 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # pay the Triton JIT mid-serving.
         vq_rows = torch.zeros(B, dtype=torch.int32, device=device)
         common_vq = dict(common, VQ_INDIRECT=True)
-        _kvarn_fused_decode_kernel[(B, Hk)](
+        (_kvarn_fused_decode_kernel_f16 if _F16 else
+         _kvarn_fused_decode_kernel)[(B, Hk)](
             q, vq_rows, bt, sl, b2s, cache, pool_k, pool_v, out, self.scale,
             Hq * D, D, bt.stride(0), cache.stride(0), cache.stride(1),
             pool_k.stride(0), pool_k.stride(1), pool_k.stride(2),
             Hq * D, D, **common_vq,
         )
-        _kvarn_fused_decode_stage1[(B, Hk, splits)](
+        (_kvarn_fused_decode_stage1_f16 if _F16 else
+         _kvarn_fused_decode_stage1)[(B, Hk, splits)](
             q, vq_rows, bt, sl, b2s, cache, pool_k, pool_v, mid_o, mid_lse,
             self.scale,
             Hq * D, D, bt.stride(0), cache.stride(0), cache.stride(1),
@@ -1850,6 +1857,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
                 and envs.KVARN_SHARED_VERIFY):
             from vllm.v1.attention.ops.triton_kvarn_decode import (
                 _kvarn_fused_verify_stage1,
+                _kvarn_fused_verify_stage1_f16,
             )
             nq = B * _qlen
             sl_vq = sl.repeat_interleave(_qlen)
@@ -1861,7 +1869,8 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             # port(0.27.1): _kvarn_fused_verify_stage1 has no VQ_INDIRECT
             # parameter (Triton raises KeyError on unrecognised kwargs).
             common_v = {k: v for k, v in common.items() if k != "VQ_INDIRECT"}
-            _kvarn_fused_verify_stage1[(B, Hk, splits)](
+            (_kvarn_fused_verify_stage1_f16 if _F16 else
+             _kvarn_fused_verify_stage1)[(B, Hk, splits)](
                 qv, bt, sl_vq, b2s, cache, pool_k, pool_v,
                 mid_o_v, mid_lse_v, self.scale,
                 Hq * D, D, bt.stride(0), cache.stride(0), cache.stride(1),

@@ -329,10 +329,6 @@ def _kvarn_build_packed_kv_kernel(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@triton.autotune(
-    configs=_DECODE_AUTOTUNE_CONFIGS,
-    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS", "F16"],
-)
 @triton.jit
 def _kvarn_fused_decode_kernel(
     Q_ptr,              # [B, Hq, D]                               fp16 (rotated)
@@ -529,6 +525,20 @@ def _kvarn_fused_decode_kernel(
              out, mask=qmask[:, None])
 
 
+# Two autotune instances over the same jit body: the default (F16 off) instance
+# keeps main's exact key so the default path reuses main's cached pick; the fp16
+# instance gets its own key entry. Both wrap the SAME jit function, so the disk
+# cache name stays main's.
+_decode_kernel_jit = _kvarn_fused_decode_kernel
+_kvarn_fused_decode_kernel = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS"],
+)(_decode_kernel_jit)
+_kvarn_fused_decode_kernel_f16 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS", "F16"],
+)(_decode_kernel_jit)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # SPLIT-K (flash-decoding) variant: stage 1 computes partial attention over a
 # contiguous slice of each request's KV blocks; the extra grid dim parallelizes
@@ -545,10 +555,6 @@ def _kvarn_fused_decode_kernel(
 # LSE-combined so BLOCK_N never affects the output. Warmed in
 # _warm_decode_kernels (pre-CUDA-graph-capture), so autotune never triggers
 # mid-capture.
-@triton.autotune(
-    configs=_DECODE_AUTOTUNE_CONFIGS,
-    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS", "F16"],
-)
 @triton.jit
 def _kvarn_fused_decode_stage1(
     Q_ptr, Req_row_ptr, Block_table_ptr, Seq_lens_ptr, Block_to_slot_ptr,
@@ -695,6 +701,17 @@ def _kvarn_fused_decode_stage1(
     tl.store(MidLse_ptr + rows * stride_ml_n + split, lse_s, mask=qmask)
 
 
+# Same two-instance split as the single-stage kernel above.
+_stage1_jit = _kvarn_fused_decode_stage1
+_kvarn_fused_decode_stage1 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS"],
+)(_stage1_jit)
+_kvarn_fused_decode_stage1_f16 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "K_BITS", "V_BITS", "F16"],
+)(_stage1_jit)
+
 @triton.jit
 def _kvarn_fused_decode_stage2(
     MidO_ptr,           # [N, NUM_KV_SPLITS, D] fp32
@@ -795,6 +812,7 @@ def kvarn_decode_attention(
     _qpk_pad = 1 << (_qpk - 1).bit_length() if _qpk > 1 else 1
     # port(0.27.1): no MAX_BLOCKS_PER_REQ here — the fused kernels no longer
     # take it (only the materialize `_kvarn_build_packed_kv_kernel` below does).
+    _F16 = os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"
     common = dict(
         D=D, GROUP=group,
         Q_PER_KV=_qpk, Q_PER_KV_PAD=_qpk_pad,
@@ -806,7 +824,7 @@ def kvarn_decode_attention(
         V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
         V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
         VQ_INDIRECT=False,
-        F16=(os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"),
+        F16=_F16,
     )
     # SPLIT-K (KVARN_SPLIT_K=1): two-stage flash-decoding — only a win in the
     # LOW-batch / long-context regime (few programs ⇒ the KV-split dim adds the
@@ -843,7 +861,8 @@ def kvarn_decode_attention(
     if use_fused and not split_k:
         fused_out = impl._fused_out_buf[:N]               # [N, D] fp16
         with torch.profiler.record_function("kvarn_fused_decode"):
-            _kvarn_fused_decode_kernel[(B, Hk)](
+            (_kvarn_fused_decode_kernel_f16 if _F16 else
+             _kvarn_fused_decode_kernel)[(B, Hk)](
                 q_rot_fp16, md.seq_lens, md.block_table, md.seq_lens,
                 impl._block_to_slot_t,
                 kv_cache, impl._tail_K_pool, impl._tail_V_pool, fused_out, scale,
@@ -859,7 +878,8 @@ def kvarn_decode_attention(
         mid_lse = impl._mid_lse_buf
         fused_out = impl._fused_out_buf[:N]
         with torch.profiler.record_function("kvarn_fused_decode_s1"):
-            _kvarn_fused_decode_stage1[(B, Hk, SPLITS)](
+            (_kvarn_fused_decode_stage1_f16 if _F16 else
+             _kvarn_fused_decode_stage1)[(B, Hk, SPLITS)](
                 q_rot_fp16, md.seq_lens, md.block_table, md.seq_lens,
                 impl._block_to_slot_t,
                 kv_cache, impl._tail_K_pool, impl._tail_V_pool, mid_o, mid_lse, scale,
@@ -963,6 +983,7 @@ def kvarn_verify_attention(
 
     _qpk = Hq // Hk
     _qpk_pad = 1 << (_qpk - 1).bit_length() if _qpk > 1 else 1
+    _F16 = os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"
     common = dict(
         D=D, GROUP=group,
         Q_PER_KV=_qpk, Q_PER_KV_PAD=_qpk_pad,
@@ -973,7 +994,7 @@ def kvarn_verify_attention(
         K_ZP_OFFSET=cfg.k_zp_offset, K_S_ROW_OFFSET=cfg.k_s_row_offset,
         V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
         V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
-        F16=(os.environ.get("KVARN_FP16_DEQUANT", "0") == "1"),
+        F16=_F16,
     )
 
     out_rot = torch.empty(NQ, Hq, D, dtype=torch.float16, device=device)
@@ -1003,7 +1024,8 @@ def kvarn_verify_attention(
                             device=device)
         mid_lse = torch.empty(Nrows, SPLITS, dtype=torch.float32,
                               device=device)
-        _kvarn_fused_verify_stage1[(B, Hk, SPLITS)](
+        (_kvarn_fused_verify_stage1_f16 if _F16 else
+         _kvarn_fused_verify_stage1)[(B, Hk, SPLITS)](
             q_rot, block_table, vq_seqlen,
             impl._block_to_slot_t,
             kv_cache, impl._tail_K_pool, impl._tail_V_pool,
@@ -1038,7 +1060,8 @@ def kvarn_verify_attention(
     split_k = auto_split or _sk_env == "1"
 
     if not split_k:
-        _kvarn_fused_decode_kernel[(NQ, Hk)](
+        (_kvarn_fused_decode_kernel_f16 if _F16 else
+         _kvarn_fused_decode_kernel)[(NQ, Hk)](
             q_rot, vq_req, block_table, vq_seqlen,
             impl._block_to_slot_t,
             kv_cache, impl._tail_K_pool, impl._tail_V_pool,
@@ -1053,7 +1076,8 @@ def kvarn_verify_attention(
         SPLITS = adaptive_num_kv_splits(max_ctx_blocks)
         mid_o = torch.empty(Nrows, SPLITS, D, dtype=torch.float32, device=device)
         mid_lse = torch.empty(Nrows, SPLITS, dtype=torch.float32, device=device)
-        _kvarn_fused_decode_stage1[(NQ, Hk, SPLITS)](
+        (_kvarn_fused_decode_stage1_f16 if _F16 else
+         _kvarn_fused_decode_stage1)[(NQ, Hk, SPLITS)](
             q_rot, vq_req, block_table, vq_seqlen,
             impl._block_to_slot_t,
             kv_cache, impl._tail_K_pool, impl._tail_V_pool,
@@ -1090,10 +1114,6 @@ def kvarn_verify_attention(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-@triton.autotune(
-    configs=_DECODE_AUTOTUNE_CONFIGS,
-    key=["D", "GROUP", "Q_PER_KV", "QLEN", "K_BITS", "V_BITS", "F16"],
-)
 @triton.jit
 def _kvarn_fused_verify_stage1(
     Q_ptr,              # [NQ = B*QLEN, Hq, D] fp16 (rotated, token-major)
@@ -1264,3 +1284,15 @@ def _kvarn_fused_verify_stage1(
     tl.store(MidO_ptr + rows[:, None] * stride_mo_n + split * stride_mo_s
              + d_offs[None, :], O_s, mask=rmask[:, None])
     tl.store(MidLse_ptr + rows * stride_ml_n + split, lse_s, mask=rmask)
+
+
+# Same two-instance split as the decode kernels above.
+_verify_stage1_jit = _kvarn_fused_verify_stage1
+_kvarn_fused_verify_stage1 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "QLEN", "K_BITS", "V_BITS"],
+)(_verify_stage1_jit)
+_kvarn_fused_verify_stage1_f16 = triton.autotune(
+    configs=_DECODE_AUTOTUNE_CONFIGS,
+    key=["D", "GROUP", "Q_PER_KV", "QLEN", "K_BITS", "V_BITS", "F16"],
+)(_verify_stage1_jit)
