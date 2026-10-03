@@ -22,6 +22,20 @@ jobs:
       - name: Check state detection crash resilience without a GPU
         run: python bench/test_prepare_state.py
 
+  kvarn-torch-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The fp16-dequant numerics gate is pure torch (no vLLM, no GPU) and works with any
+      # torch build, so the job takes the current CPU wheel and has no pin to bump with vLLM.
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Check the KVARN_FP16_DEQUANT numerics gate without a GPU
+        run: python kvarn/tests/test_kvarn_fp16_dequant_torch.py
+
   git-apply:
     runs-on: ubuntu-latest
     steps:

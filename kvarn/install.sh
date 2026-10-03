@@ -11,11 +11,13 @@ SP=$("$PY" -c 'import vllm, os; print(os.path.dirname(vllm.__file__))' 2>/dev/nu
 [ -n "$SP" ] && [ -d "$SP" ] || { echo "cannot import vllm with $PY (README: Setup)"; exit 1; }
 cp -r "$HERE/files/vllm/." "$SP/"
 # patches/apply.sh --kvarn applies kvarn-0.30.0, kvarn-v2-runner-0.30.0 (lets SPEC=dflash2 run with
-# CTX=huge: KVarN KV + prefix caching, 240k) and kvarn-recycled-pages-0.30.0 (the runner tells KVarN
+# CTX=huge: KVarN KV + prefix caching, 240k), kvarn-recycled-pages-0.30.0 (the runner tells KVarN
 # which pages moved to another KV-cache group each step, so a late flush never lands on another
-# request's mamba state, #208), in that order, at --fuzz 0, after the whole patches/ series. It checks
-# each patch with an exact reverse dry-run first, so a rerun is a no-op and a partly applied patch
-# fails by name.
+# request's mamba state, #208) and kvarn-fp16-dequant-0.30.0 (registers KVARN_FP16_DEQUANT in
+# envs.py; the modules above read it through vllm.envs), in that order, at --fuzz 0, after the
+# whole patches/ series. It checks each patch with an exact reverse dry-run first, so a rerun is a
+# no-op, a venv installed before the fp16 patch existed only gets that patch, and a partly applied
+# patch fails by name.
 bash "$REPO/patches/apply.sh" --kvarn "$SP"
 find "$SP" -type d -name __pycache__ -path "*kvarn*" -prune -exec rm -rf {} + 2>/dev/null || true
 "$PY" - <<'PY'

@@ -5,7 +5,7 @@ set -euo pipefail
 #
 # Two passes, because two tools are in play and they answer different questions:
 #
-#   1. Every patch, in the order of patches/series, then the three KVarN patches in
+#   1. Every patch, in the order of patches/series, then the four KVarN patches in
 #      kvarn/, applied by patches/apply.sh (which the Dockerfile, docs/install.md and
 #      kvarn/install.sh call) with GNU `patch` -- the tool that actually
 #      installs this stack. This is the pass that says "a clone of this repo
@@ -68,6 +68,18 @@ if printf '%s\n' "$kout" | grep -q 'already applied'; then
 fi
 kcount=$(printf '%s\n' "$kout" | grep -c '^== ' || true)
 echo "   $kcount KVarN patches applied after the series; $((count + kcount)) in total"
+# A rerun of kvarn/install.sh must be a no-op: on the fully installed tree, every KVarN patch must
+# reverse-apply on its own (apply.sh --kvarn's idempotence check). A later KVarN patch whose hunk
+# lands inside an earlier one's context breaks that, and the second install fails by name.
+rout=$(bash "$HERE/patches/apply.sh" --kvarn "$VLLM_SOURCE" 2>&1) || {
+  echo "ERROR: a second apply.sh --kvarn run failed -- a KVarN patch no longer reverse-applies on its own:" >&2
+  printf '%s\n' "$rout" | sed 's/^/   /' >&2; exit 1
+}
+if [ "$(printf '%s\n' "$rout" | grep -c 'already applied')" -ne "$kcount" ]; then
+  echo "ERROR: a second apply.sh --kvarn run applied something again:" >&2
+  printf '%s\n' "$rout" | sed 's/^/   /' >&2; exit 1
+fi
+echo "   a second apply.sh --kvarn run: all $kcount already applied (kvarn/install.sh rerun is a no-op)"
 
 echo "== pass 2: the ordered DFlash patches, git apply --check"
 git -C "$GIT_ROOT" checkout -q -- . && git -C "$GIT_ROOT" clean -qfd

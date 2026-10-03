@@ -120,6 +120,11 @@ if [ -f "$SP/v1/attention/backends/kvarn_attn.py" ]; then
       && grep -q "def note_scheduled_blocks" "$SP/v1/attention/backends/kvarn_attn.py"; then
     ok "kvarn-recycled-pages-0.30.0.patch applied (no late KVarN flush into mamba state, #208)"
   else warn "kvarn-recycled-pages-0.30.0.patch not applied, or partly applied: CTX=huge + PREFIX_CACHE=1 can print \"!!!!\" (#208; bash kvarn/install.sh)"; fi
+  # The KVarN modules read KVARN_FP16_DEQUANT through vllm.envs: without this hunk every KVarN
+  # decode raises AttributeError, so it is a failure, not a warning.
+  if patch -p1 -R --dry-run -s --fuzz 0 -d "$SP" < kvarn/kvarn-fp16-dequant-0.30.0.patch >/dev/null 2>&1; then
+    ok "kvarn-fp16-dequant-0.30.0.patch applied (KVARN_FP16_DEQUANT registered in envs.py)"
+  else fail "kvarn-fp16-dequant-0.30.0.patch not applied: the KVarN modules read KVARN_FP16_DEQUANT through vllm.envs (bash kvarn/install.sh)"; fi
 else warn "KVarN not installed (optional; bash kvarn/install.sh for 262k context)"; fi
 
 if [ $INSTALL = 0 ]; then

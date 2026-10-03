@@ -1,0 +1,38 @@
+Register KVARN_FP16_DEQUANT in envs.py, so the KVarN fp16-dequant switch
+(syv-ai/HyperQwen #240) is read through vllm.envs and is part of the
+torch.compile cache key (compile_factors() hashes every registered knob that
+is not in ignored_factors). Default off ("0"); "1" runs the dequant math of the
+three fused KVarN decode kernels in fp16. The kernels and the drivers that read
+the knob are in kvarn/files (the kvarn-modules commit on this branch).
+
+Applied after kvarn-0.30.0, kvarn-v2-runner-0.30.0 and
+kvarn-recycled-pages-0.30.0. Both hunks sit at the ends of the TYPE_CHECKING block
+and of environment_variables, away from kvarn-0.30.0's KVARN_* block, so every
+KVarN patch still reverse-applies on its own in a fully installed tree (the
+idempotence check patches/apply.sh --kvarn and verify.sh rely on).
+
+--- exported from cpuchip/vllm 7f8c3ef0a (kvarn-fp16-dequant-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 42e23eb6d..77233f054 100755
+--- a/envs.py
++++ b/envs.py
+@@ -382,6 +382,9 @@
+     VLLM_GPU_NIC_PCIE_MAPPING: str = ""
+     VLLM_NIC_SELECTION_VARS: str = ""
+     VLLM_ENABLE_HPC_OPS: bool = False
++    # KVarN fp16 dequant (kvarn-fp16-dequant-0.30.0), apart from the kvarn-0.30.0 block so
++    # each KVarN patch still reverse-applies on its own in a fully installed tree.
++    KVARN_FP16_DEQUANT: bool = False
+ 
+ 
+ def get_default_cache_root():
+@@ -2307,6 +2310,8 @@
+     # Each op additionally checks its own shape / dtype constraints and falls
+     # back to the eager path when they do not hold.
+     "VLLM_ENABLE_HPC_OPS": lambda: bool(int(os.getenv("VLLM_ENABLE_HPC_OPS", "0"))),
++    # KVarN: run the fused decode kernels' dequant math in fp16 (default off).
++    "KVARN_FP16_DEQUANT": lambda: os.environ.get("KVARN_FP16_DEQUANT", "0") == "1",
+ }
+ 
+ 

@@ -65,6 +65,7 @@ build by name instead of landing by guess. Regenerate a file with `bash scripts/
 | kvarn/kvarn-0.30.0 | feature | KVarN cache dtypes, quant mode, backend registration, page size | none (KVarN is Huawei CSL's, Apache-2.0) | 0.30.0: re-cut from the main-track resolution, with its #54713 replay_boundaries fixup | upstreamed |
 | kvarn/kvarn-v2-runner-0.30.0 | own | KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards) | none | 0.30.0: re-cut from the main-track resolution, with its #54713 replay_boundaries fixup; #53007 rewrote _largest_kernel_block_within and the SW divisor rule is carried into it by hand | rides with KVarN |
 | kvarn/kvarn-recycled-pages-0.30.0 | own | both runners hand KVarN each step's block ids, so it drops (never flushes) what it still holds for a page another KV-cache group has taken: a late flush of a finished request's last block, or of an evicted retired sink, into another request's mamba state was the "!!!!" output (#208); the KVarN half is in `kvarn/files` | none | 0.30.0 | rides with KVarN |
+| kvarn/kvarn-fp16-dequant-0.30.0 | own | registers `KVARN_FP16_DEQUANT` (#240's fp16 dequant in the fused KVarN decode kernels, default off) in `envs.py`, so `kvarn/files` reads it through `vllm.envs` and it is in the torch.compile cache key | none | 0.30.0 | rides with KVarN |
 
 Retired at 0.30.0 and removed from the tree: `offload-mtp-serve` (vllm #52771, #52807 and #54288, all in 0.30.0) and `mamba-align-retire-null-gaps` (vllm #55450, in 0.30.0).
 

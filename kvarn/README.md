@@ -25,10 +25,14 @@ What's in it:
   sink, could be flushed to int4 into a page that was already another
   request's mamba state, which reads back as NaN: the request then prints `!`
   (token 0) forever (#208).
+- `kvarn-fp16-dequant-0.30.0.patch` — registers `KVARN_FP16_DEQUANT` in
+  `envs.py`, so the modules read it through `vllm.envs` and it is part of the
+  torch.compile cache key (see "Environment knobs" below).
 - `install.sh` — copies the modules into the venv's `site-packages/vllm` (found by asking the venv's python, so any Python version)
-  and applies the three patches at `--fuzz 0` (safe to re-run; a rejected hunk stops it).
-  All three are exported from their commits on the fork branch (`cpuchip/vllm`
-  `qwen38/0.30`), which sit after the whole `patches/` series, so they are never edited by hand.
+  and applies the four patches at `--fuzz 0` (safe to re-run; a rejected hunk stops it).
+  The first three are exported from their commits on the fork branch (`cpuchip/vllm` `qwen38/0.30`);
+  `kvarn-fp16-dequant-0.30.0` is exported from `qwen38/0.30-kvarn-fp16`, export point tagged
+  `qwen38/0.30-kvarn-fp16-cut1`. All four sit after the whole `patches/` series, so they are never edited by hand.
 
 Port notes, for whoever bumps vLLM next:
 
@@ -72,6 +76,32 @@ Port notes, for whoever bumps vLLM next:
   the packed-KV kernel, verify-plan padding zeroed for CUDA-graph replays.
 - Not ported: the MLA path, `TQSlidingWindowSpec` (no sliding-window layers
   here), the Gemma-4 config hunk.
+
+Environment knobs (KVarN):
+
+- `KVARN_FP16_DEQUANT=1` — run the three fused decode kernels
+  (`_kvarn_fused_decode_kernel`, `_kvarn_fused_decode_stage1`,
+  `_kvarn_fused_verify_stage1`) in fp16: the dequant math (q codes, per-channel
+  and per-row scales, the `p` tile) stays fp16, the dots still accumulate in
+  fp32. Halving the working tiles' width halves their registers, which is what
+  lifts the long-context split-K decode. **Default off**, and with it off the
+  three kernels compile to the same TTGIR/PTX (and n_regs/n_spills) as the port
+  without the knob. Registered in `vllm/envs.py` by
+  `kvarn-fp16-dequant-0.30.0.patch` and read through `vllm.envs`, so it is part
+  of vLLM's torch.compile cache key: the two settings never share a compile
+  directory (switching it costs one cold compile). With the knob on, the split-K
+  stage1 and verify kernels autotune only over BLOCK_N 16/32, num_warps=4 and no
+  maxnreg, which spill 8 registers or fewer in every measured fp16 shape. The
+  configs that spill heavily (72 registers or more) are 2.5-24x slower at long
+  context, and the warmup-shape autotune could pick one of them. The rule also
+  drops BLOCK_N=64 w4, which spills only at verify QLEN=8: at verify QLEN 2 and in
+  stage1 the kept list is 8.4% and 3% slower than it. With the knob off the autotune list is unchanged.
+- `KVARN_SHARED_VERIFY=1` — the shared-dequant uniform verify kernel. Still off
+  by default: serving with it corrupts the MTP drafter's proposals through a
+  mechanism that is not isolated yet (see the comment at the driver's guard).
+- the rest (`KVARN_NUM_KV_SPLITS`, `KVARN_SPLIT_K`, `KVARN_FUSED_DECODE`,
+  `KVARN_POOL_MEM_FRAC`, `KVARN_FA_SCRATCH_CAP`, `KVARN_SPEC_DEBUG`, …) are in
+  `vllm/envs.py` once `install.sh` has run.
 
 Measured on the 3090 (details in [docs/long-context.md](../docs/long-context.md)): 262k context fits
 (420k-token pool at 4 slots vs ~200k with fp8), needle-in-a-haystack correct

@@ -1778,6 +1778,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
             V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
             VQ_INDIRECT=False,
+            F16=envs.KVARN_FP16_DEQUANT,
         )
         # 1. Single-stage fused kernel — runs the @triton.autotune sweep.
         # (sl doubles as the unused Req_row_ptr dummy; see VQ_INDIRECT.)
