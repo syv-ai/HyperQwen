@@ -59,3 +59,4 @@ auth-deny-default.patch
 spec-attn-smem-fit.patch
 bench-sse-keepalive.patch
 sampler-warmup-cuda.patch
+pinned-kv-empty-cache.patch

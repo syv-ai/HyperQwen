@@ -1,0 +1,28 @@
+With kv_cache_memory_bytes set, release the allocator's cached blocks after the profile run, before the KV cache is allocated.
+
+The pinned path runs profile_run() and returns, and the KV cache is allocated right after that, on top of what the run left in the allocator's cache. On a cold compile cache that is the torch.compile and Triton autotune scratch: 1.2 GiB on the reference RTX 3090 (CTX=huge, KVarN, SPEC=dflash2), so the pinned pool over-committed the 24 GiB card by about 0.8 GiB (20,391 MiB in use after the profile run, plus a 5,008 MiB pool). Under WSL2's driver the overflow does not fail: about 380 MiB of GPU memory was moved to system RAM for the life of the engine, the KVarN kernels that read it ran 14-28x slower, and about half of the fresh boots with KVARN_FP16_DEQUANT=1 decoded at half speed (25 against 50 tok/s, PCIe 3.6-4.8 GB/s). A boot on a warm compile cache leaves less scratch and was not affected.
+
+With the cache released: 1.2 GiB freed before the pool is allocated, the pool fits (24,183 of 24,576 MiB), no GPU memory in system RAM beyond pinned host buffers, PCIe ~20 MB/s during decode, and 4 of 4 fresh boots at 50.3-53.1 tok/s with the full pool (268,169 tokens). memory-profile-after-warmup releases the same cache on the measured path; this is the pinned path, which the launchers use.
+
+--- exported from cpuchip/vllm bbed74b28 (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
+index f7412e837..6b2c67912 100644
+--- a/v1/worker/gpu_worker.py
++++ b/v1/worker/gpu_worker.py
+@@ -543,6 +543,15 @@
+             # still need a profile run which compiles the model for
+             # max_num_batched_tokens
+             self.model_runner.profile_run()
++            # The KV cache is allocated right after this return, on top of
++            # whatever the profile run left in the allocator's cache. On a
++            # cold compile cache that is the torch.compile and Triton
++            # autotune scratch (1.2 GiB on a 24 GiB card), which the pinned
++            # size does not budget for: the pool then over-commits the card,
++            # and under WSL2's driver the overflow is moved to system RAM
++            # and read over PCIe. Release it, as the measured path below does.
++            torch.cuda.synchronize()
++            torch.cuda.empty_cache()
+ 
+             msg = (
+                 f"Initial free memory {format_gib(self.init_snapshot.free_memory)} "
