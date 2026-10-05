@@ -9,10 +9,10 @@ an external proxy.
 - Adds discovery routes to UNGUARDED_PATHS in AuthenticationMiddleware so
   servers configured with --api-key do not reject unauthenticated client probes.
 
---- exported from cpuchip/vllm ee7e77c (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cpuchip/vllm b258536b72 (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/app.py b/entrypoints/launchers/app.py
-index ddea707..069ac31 100644
+index ddea707810..069ac31f5d 100644
 --- a/entrypoints/launchers/app.py
 +++ b/entrypoints/launchers/app.py
 @@ -1,9 +1,12 @@
@@ -135,28 +135,8 @@ index ddea707..069ac31 100644
      register_api_routers(args, app, supported_tasks, model_config)
  
      # Endpoint plugins are attached last so their routes are registered after all core
-diff --git a/entrypoints/launchers/cli_args.py b/entrypoints/launchers/cli_args.py
-index d21c7e6..8ea32d4 100644
---- a/entrypoints/launchers/cli_args.py
-+++ b/entrypoints/launchers/cli_args.py
-@@ -299,10 +299,11 @@
-     the header.
- 
-     This authenticates every endpoint on the server, except a small liveness
--    allowlist (`/health`, `/ping`, `/load`, `/version`). All other endpoints
--    need the key. This includes `/invocations`, `/tokenize` and `/metrics`.
--    A scraper that must read `/metrics` without a key needs a separate
--    listener. See
-+    and discovery allowlist (`/health`, `/ping`, `/load`, `/version`, `/`,
-+    `/api/status`, `/api/experimental/model-recommendations`, `/api/show`).
-+    All other endpoints need the key. This includes `/invocations`,
-+    `/tokenize` and `/metrics`. A scraper that must read `/metrics` without a
-+    key needs a separate listener. See
-     https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations
-     for what `--api-key` does and does not protect."""
-     ssl_keyfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index 5f3c2af..8f042e5 100644
+index 5f3c2af30d..8f042e5c7d 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
 @@ -9,12 +9,24 @@
