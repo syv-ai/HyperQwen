@@ -1,6 +1,7 @@
 """Correctness + microbenchmark of the split-KV spec-decode attention kernel
 (patches/spec-decode-attn.patch) against vLLM's FlashAttention-2 call, including the
 long query blocks lookup-augmented drafting asks for (16 and 32 tokens per request).
+Exits 1 if any correctness row FAILs; the timing rows are informational.
 Run inside the vLLM venv on the GPU after applying the patch:
   venv/bin/python bench/test_spec_decode_attn.py"""
 import sys, os, time, math
@@ -63,6 +64,7 @@ def bench(fn, iters=200):
 
 att = SpecDecodeAttention(max_num_reqs=64, num_heads=Hq, head_dim=D, device=dev, qmax=64)
 print("correctness")
+fails = 0
 for kv_lens, q_len in [([1500], 5), ([37, 1000, 4321], 5), ([16000], 1), ([700, 8], 8), ([432], 5),
                        ([433, 431], 3), ([1500], 16), ([2000, 300], 16), ([9000], 21), ([1500], 22),
                        ([25000], 32), ([600, 4000], 32), ([1000], 64)]:
@@ -74,7 +76,8 @@ for kv_lens, q_len in [([1500], 5), ([37, 1000, 4321], 5), ([16000], 1), ([700, 
     flash_attn_varlen_func(q=q, k=kc, v=vc, out=fa, cu_seqlens_q=cu, max_seqlen_q=q_len, seqused_k=seqused,
                            max_seqlen_k=max(kv_lens), softmax_scale=scale, causal=True, block_table=bt, fa_version=2)
     err = (out.float() - r).abs().max().item(); err_fa = (fa.float() - r).abs().max().item()
-    print(f"  kv={kv_lens} q={q_len}: max|ours-ref|={err:.4f}  max|FA-ref|={err_fa:.4f}  {'OK' if err < 0.05 else 'FAIL'}")
+    ok = err < 0.05; fails += not ok
+    print(f"  kv={kv_lens} q={q_len}: max|ours-ref|={err:.4f}  max|FA-ref|={err_fa:.4f}  {'OK' if ok else 'FAIL'}")
 
 print("timing (us) per attention layer, batch=1")
 print(f"  {'kv':>7s} {'q_len':>5s} {'ours':>8s} {'FA2':>8s}")
@@ -87,3 +90,4 @@ for L in [1500, 4000, 25000, 60000]:
         t_fa = bench(lambda: flash_attn_varlen_func(q=q, k=kc, v=vc, out=fa, cu_seqlens_q=cu, max_seqlen_q=Q, seqused_k=seqused,
                                                     max_seqlen_k=L, softmax_scale=scale, causal=True, block_table=bt, fa_version=2), iters=50)
         print(f"  {L:7d} {Q:5d} {t_ours:8.1f} {t_fa:8.1f}")
+sys.exit(1 if fails else 0)

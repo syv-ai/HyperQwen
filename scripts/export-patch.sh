@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Export one topic commit from the vLLM fork branch as a patch file in this repo's convention
+# Export one topic commit from a vLLM checkout as a patch file in this repo's convention
 # (paths relative to the vllm package, applied with `patch -p1 -d site-packages/vllm`; prose above the first hunk).
-# The commit is the source of truth; the file is never edited by hand (docs/fork-workflow.md, rule 2).
+# The file is the source; this is how a commit becomes one, and the file is never edited by hand (PATCHES.md,
+# the "Cut against" paragraph). The marker names no repo: the hash belongs to whoever exported it.
 #
-#   bash scripts/export-patch.sh <fork checkout> <commit> [patches/<name>.patch]
+#   bash scripts/export-patch.sh <vllm checkout> <commit> [patches/<name>.patch]
 set -eu
 FORK="$1"; COMMIT="$2"; OUT="${3:-}"
 G="git -C $FORK"
@@ -16,7 +17,7 @@ BODY=$($G log -1 --format='%b' "$COMMIT" | sed -e '/^Source: /,$d' | grep -vE '^
 SHORT=$($G rev-parse --short "$COMMIT")
 {
   printf '%s\n\n' "$BODY"
-  printf -- '--- exported from cpuchip/vllm %s (%s); regenerate with scripts/export-patch.sh, do not edit ---\n\n' "$SHORT" "$TOPIC"
+  printf -- '--- exported from %s (%s); regenerate with scripts/export-patch.sh, do not edit ---\n\n' "$SHORT" "$TOPIC"
   # strip the vllm/ prefix from the paths and the function context git appends to hunk headers
   $G diff "$COMMIT^" "$COMMIT" -- vllm \
     | sed -E 's#^(--- |\+\+\+ )([ab])/vllm/#\1\2/#' \

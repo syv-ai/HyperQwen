@@ -26,13 +26,22 @@ the scheduler's allocations instead of a per-step window over each request's mam
 window also covered the column before the running one, which align mode frees, so a legitimate
 flush into that page after it was reused as an attention block would have been dropped.
 
---- exported from cpuchip/vllm 40ab8e0 (kvarn-recycled-pages-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: own
+What: both runners hand KVarN each step's block ids, so it drops (never flushes) what it still holds
+  for a page another KV-cache group has taken: a late flush of a finished request's last block, or
+  of an evicted retired sink, into another request's mamba state was the "!!!!" output (#208); the
+  KVarN half is in `kvarn/files`
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: rides with KVarN
+
+--- exported from cbf454e7c (kvarn-recycled-pages-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index ef9c1f3..46acb16 100644
+index 301952f68..857b0d6d5 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1668,6 +1668,13 @@
+@@ -1677,6 +1677,13 @@
              self.free_states(scheduler_output)
              self.add_requests(scheduler_output)
              self.update_requests(scheduler_output)
@@ -47,7 +56,7 @@ index ef9c1f3..46acb16 100644
              if scheduler_output.total_num_scheduled_tokens == 0:
                  # No need to run the model.
 diff --git a/v1/worker/gpu_model_runner.py b/v1/worker/gpu_model_runner.py
-index 97a59bd..aef83bb 100644
+index 97a59bd27..aef83bbbf 100644
 --- a/v1/worker/gpu_model_runner.py
 +++ b/v1/worker/gpu_model_runner.py
 @@ -1243,6 +1243,12 @@

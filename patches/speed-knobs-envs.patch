@@ -9,7 +9,13 @@ this a cached graph from a run without the flag fails with
 "assert_size_stride ... expected size 328==82". Independent of marlin-int8-layer-select.patch (same file, disjoint hunks):
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/speed-knobs-envs.patch
 
---- exported from cpuchip/vllm ec0ae4a23 (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: local
+What: register this repo's env knobs in `envs.py`
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: stays while the knobs exist
+
+--- exported from 82a8cbeee (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index 84b00ff3f..1707deec5 100755

@@ -48,7 +48,14 @@ Status: validated on the 170HX (4 boot cycles + a full serving session,
 bit-exact, 0 Xid) and in production there — but as load-time hygiene, not
 as the wedge fix this header originally proposed; see the history above.
 
---- exported from cpuchip/vllm 2ba5c626e (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: local
+What: one grow-only staging buffer for the sm80 Marlin repack (fork #27), opt-in with
+  `VLLM_MARLIN_REPACK_STAGED=1`
+Upstream: none
+Cut-against: 0.30.0, adapted to #54809 (activation ordering removed: g_idx, perm, is_k_full gone)
+Retires-when: stays
+
+--- exported from 6a127d6b5 (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index bae372347..543563e75 100644

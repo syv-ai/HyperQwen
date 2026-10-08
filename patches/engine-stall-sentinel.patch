@@ -40,10 +40,17 @@ stream and one 44,820-token / 28.5 s chunked prefill -- i.e. no false positive
 on the arm that fires the log-scraper. No wedge was induced, so the patch's
 true-positive path is unexercised here; it is the same clock the draft used.
 
---- exported from cpuchip/vllm 02ab64e56 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: daemon thread warns once per episode when no step completes for `VLLM_ENGINE_STALL_SENTINEL_S`
+  while requests are live
+Upstream: upstream PR (syv-ai #94/#110)
+Cut-against: 0.30.0
+Retires-when: upstreamed
+
+--- exported from 3ea5c4749 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 4c68d5f4a..ba36d50ff 100755
+index 1707deec5..96af42246 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -25,6 +25,7 @@
@@ -54,7 +61,7 @@ index 4c68d5f4a..ba36d50ff 100755
      VLLM_API_KEY: str | None = None
      VLLM_DEBUG_LOG_API_SERVER_RESPONSE: bool = False
      S3_ACCESS_KEY_ID: str | None = None
-@@ -849,6 +850,11 @@
+@@ -829,6 +830,11 @@
      "VLLM_ENGINE_ITERATION_TIMEOUT_S": lambda: int(
          os.environ.get("VLLM_ENGINE_ITERATION_TIMEOUT_S", "60")
      ),

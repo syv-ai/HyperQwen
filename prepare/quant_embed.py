@@ -86,7 +86,9 @@ else:
     save_tensors(tensors, d + shard, meta or {"format": "pt"})
     del tensors
 
-g2 = copy.deepcopy(qc["config_groups"]["group_1"])
+# group_0, as the other scripts clone: quant_lm_head.py's group_1 may not exist yet,
+# and the shard is already replaced at this point.
+g2 = copy.deepcopy(qc["config_groups"]["group_0"])
 g2["targets"] = ["re:.*embed_tokens$"]
 g2["weights"]["num_bits"] = BITS
 # the tensors written here are symmetric with no zero point, whatever the body

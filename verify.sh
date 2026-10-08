@@ -52,7 +52,13 @@ import torch; assert torch.cuda.is_available()
 p=torch.cuda.get_device_properties(0)
 print(f"  PASS  GPU: {p.name}, {p.total_memory/2**30:.1f} GiB, sm{p.major}{p.minor}, torch {torch.__version__}")
 EOF
-command -v nvidia-smi >/dev/null && { PL=$(nvidia-smi --query-gpu=power.limit --format=csv,noheader,nounits | head -1); ok "power limit ${PL} W (README numbers are at 250 W)"; }
+# Ask about the card torch will use: nvidia-smi ignores CUDA_VISIBLE_DEVICES, so
+# its first row can be a different GPU (#258). torch's device 0 is the one the
+# server gets; select it by UUID.
+command -v nvidia-smi >/dev/null && {
+  UUID=$($PY -c "import torch; print('GPU-'+str(torch.cuda.get_device_properties(0).uuid))" 2>/dev/null)
+  PL=$(nvidia-smi ${UUID:+-i "$UUID"} --query-gpu=power.limit --format=csv,noheader,nounits | head -1)
+  ok "power limit ${PL} W (README numbers are at 250 W)"; }
 fi
 for t in triton compressed_tensors; do $PY -c "import $t" 2>/dev/null && ok "python module $t" || fail "python module $t missing"; done
 # a bare `import flashinfer` passes while vLLM still falls back to torch.topk:
@@ -325,7 +331,7 @@ else warn "no DFlash2 drafter (venv/bin/python prepare/fetch_dflash2.py; SPEC=df
 echo "== keys / units"
 # A key is optional: with neither api_key.txt nor VLLM_API_KEY the launchers export
 # nothing and vLLM serves unauthenticated, which is a fine way to run this locally.
-# With no key the launchers bind 127.0.0.1 (resolve_bind_host in resolve_api_key.sh), so that is a WARN.
+# With no key the launchers bind 127.0.0.1 (resolve_bind_host in launcher_common.sh), so that is a WARN.
 # It is a FAIL only when the bind is explicitly set off loopback (HOST=0.0.0.0 and no key). A container
 # keeps 0.0.0.0 by default, so a keyless container is a WARN: the published port is what limits it.
 if [ -s api_key.txt ] || [ -n "${VLLM_API_KEY:-}" ]; then ok "API key configured (api_key.txt or VLLM_API_KEY)"

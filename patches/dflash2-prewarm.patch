@@ -1,6 +1,10 @@
+Kind: fix
+What: compile every DFlash2 rung at boot instead of at first request
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
 
-
---- exported from cpuchip/vllm b0a2903d6 (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 2debf75f3 (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
 index d6055d026..11ae1425b 100644

@@ -18,10 +18,17 @@ warm-up with OutOfResources (98,304 bytes required, 65,536 available). With it, 
 (55,680 KV tokens), answers correctly, and decodes 31.6 tok/s at one stream and 104.4
 aggregate at four (~1.5k-token prompts).
 
---- exported from cpuchip/vllm ede631297e (spec-attn-smem-fit); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: the split-KV verify attention sizes its KV tile to the device's shared memory: halve the KV
+  tile when Triton reports OutOfResources, so it launches on Turing (sm75, 64 KB per block)
+Upstream: none
+Cut-against: 0.30.0: hunk 1 (the import) re-placed by hand, hunks 2-4 at offset -1
+Retires-when: upstream with spec-decode-attn
+
+--- exported from b41abb2dc (spec-attn-smem-fit); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
-index 06fa37fa42..9fe6e48450 100644
+index 06fa37fa4..9fe6e4845 100644
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -45,6 +45,7 @@

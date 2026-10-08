@@ -1,6 +1,10 @@
+Kind: fix
+What: adaptive z counts emitted tokens, not sampling slots
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
 
-
---- exported from cpuchip/vllm 9f56aace2 (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 06ce24abf (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
 index 11ae1425b..20ff8d10b 100644
@@ -25,7 +29,7 @@ index 11ae1425b..20ff8d10b 100644
          num_query_tokens = num_reqs * self.num_query_per_req
          max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 6dcf80eb6..9383724ef 100644
+index 9c5c75ac8..83dcac17d 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -513,9 +513,7 @@

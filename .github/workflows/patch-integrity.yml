@@ -21,6 +21,14 @@ jobs:
         run: python bench/test_model_verification.py
       - name: Check state detection crash resilience without a GPU
         run: python bench/test_prepare_state.py
+      - name: Check the MQ-3D split-KV capacity property holds without a GPU
+        run: python bench/mq3d_capacity_property.py
+      - name: Check the capacity property test still catches a broken derivation
+        run: python bench/mq3d_capacity_property.py --mutate seq-rows
+      - name: Check verbatim answer classification without a GPU
+        run: python bench/verbatim.py
+      - name: Check a launcher with no API key binds 127.0.0.1
+        run: bash bench/test_no_key_bind.sh
 
   kvarn-torch-gate:
     runs-on: ubuntu-latest
@@ -35,6 +43,18 @@ jobs:
         run: pip install torch --index-url https://download.pytorch.org/whl/cpu
       - name: Check the KVARN_FP16_DEQUANT numerics gate without a GPU
         run: python kvarn/tests/test_kvarn_fp16_dequant_torch.py
+
+  patch-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check the PATCHES.md table matches the patch headers
+        run: |
+          python scripts/patches_md.py
+          git diff --exit-code PATCHES.md || { echo "::error::PATCHES.md is not current: run python3 scripts/patches_md.py and commit the result"; exit 1; }
 
   git-apply:
     runs-on: ubuntu-latest
@@ -58,3 +78,23 @@ jobs:
 
       - name: Validate patch series with git apply
         run: bash patches/check_vllm_series.sh .ci/vllm/vllm
+
+  prepare-crash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The prepare scripts run in the image, so the libraries they import come at the image's pins
+      # and a pin bump in docker/requirements.txt is tested with them. They use no CUDA, so torch is
+      # the CPU wheel, as in kvarn-torch-gate. psutil is installed by name: compressed-tensors 0.17.0
+      # imports it without declaring it, and the image gets it from vLLM.
+      - name: Install CPU torch and the prepare scripts' libraries at the image's pins
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          grep -E '^(transformers|tokenizers|compressed-tensors|huggingface_hub)==' docker/requirements.txt > "$RUNNER_TEMP/prepare-req.txt"
+          [ "$(wc -l < "$RUNNER_TEMP/prepare-req.txt")" = 4 ] || { echo "::error::docker/requirements.txt no longer pins all four prepare libraries"; exit 1; }
+          pip install safetensors psutil -r "$RUNNER_TEMP/prepare-req.txt"
+      - name: Check the prepare scripts recover from a kill after every write without a GPU
+        run: python bench/test_prepare_crash.py

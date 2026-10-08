@@ -188,7 +188,8 @@ reuse above, not prefill.
 
 `docs/vllm-0.29.md`'s three steps stand. The replay oracle ("the patch files reproduce the fork branch") was green
 at every cut of this port, and still four defects shipped into a built image, because a patch that applies is not a
-patch that still means what it did. The procedure now starts with four checks that need no card:
+patch that still means what it did. The procedure now starts with five checks that need no card (the fifth was added
+after this port, by #261):
 
 - `scripts/port-triage.sh`: cherry-picks each topic onto the new tag and reports clean, CONFLICT (with files) or
   EMPTY, plus a RETIRE? column from each row's upstream PR ancestry.
@@ -200,6 +201,12 @@ patch that still means what it did. The procedure now starts with four checks th
 - `scripts/port-removed-names.py`: every identifier the series' added lines use that upstream deleted between the
   pins. The #54809 names were invisible to the replay and to a clean apply, because they sit in our lines and never
   in hunk context. At cut2 it reports all three topics.
+- `scripts/port-changed-signatures.py`: every call on the series' added lines whose callee it can resolve (imports,
+  the enclosing class and its bases, constructors, Triton launches), bound against the new pin's definition. The
+  name survives, so neither the replay nor port-removed-names sees it: #52188 added three parameters to
+  `prepare_dflash_inputs` in 0.29.0, the chains topic kept the old argument list through two ports, and
+  `VLLM_DFLASH2_CHAIN=1` failed on the first request until #261. Run it on the old branch before the rebase (it says
+  "a preview") and again after.
 - `scripts/port-drift.sh --show`: each topic's added lines compared with the same topic on the old line, **printing
   the lost lines**. A count ("attention.py:18") was filed as a documented adaptation at cut2; the lines were the
   divisor rule behind #179.

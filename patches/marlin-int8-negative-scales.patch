@@ -14,7 +14,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
---- exported from cpuchip/vllm 3a9508d10 (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: Marlin W4A8 reads group scales as unsigned; AutoRound exports negative ones
+Upstream: none yet
+Cut-against: 0.30.0, adapted to #54809 (activation ordering removed: g_idx, perm, is_k_full gone)
+Retires-when: upstream PR
+
+--- exported from 682ca2414 (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index 387c33c11..bae372347 100644

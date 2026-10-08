@@ -8,7 +8,13 @@ kv_cache_interface.compute_layout_strides, where the block stride follows the sp
 (padded or not) for every backend; the KVarN backend now declares its layout (LBNHC) and folds the
 per-token [N, C] slots of the runner's 4D view back into one tile per (block, head).
 
---- exported from cpuchip/vllm 6a60dbc2c (kvarn-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: KVarN cache dtypes, quant mode, backend registration, page size
+Upstream: none (KVarN is Huawei CSL's, Apache-2.0)
+Cut-against: 0.30.0: re-cut from the main-track resolution, with its #54713 replay_boundaries fixup
+Retires-when: upstreamed
+
+--- exported from 82059afb6 (kvarn-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/cache.py b/config/cache.py
 index 9bd898731..5eee41e94 100644
@@ -26,10 +32,10 @@ index 9bd898731..5eee41e94 100644
      "int8_per_token_head",
      "fp8_per_token_head",
 diff --git a/envs.py b/envs.py
-index 1707deec5..eeb3dd3a0 100755
+index a74623e01..42e23eb6d 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -222,6 +222,26 @@
+@@ -225,6 +225,26 @@
      VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
      VLLM_DRAFT_TEMP_SCALE: float = 1.0
      VLLM_MARLIN_REPACK_STAGED: str | None = None
@@ -56,7 +62,7 @@ index 1707deec5..eeb3dd3a0 100755
      # GiB of vision-tower weights to keep in pinned host memory; 0 disables.
      VLLM_VISION_CPU_OFFLOAD_GB: float = 0.0
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
-@@ -1584,6 +1604,28 @@
+@@ -1594,6 +1614,28 @@
      "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
      # Marlin repack staging buffer, opt-in: "1" turns it on (GA100 mining cards); unset or anything else = off
      "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),

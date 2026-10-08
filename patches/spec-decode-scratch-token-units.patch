@@ -92,7 +92,13 @@ VERIFICATION
 
 ---
 
---- exported from cpuchip/vllm a332a16a2 (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: own
+What: mq3d scratch sized in tokens, not sequences (fork #46, #57)
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: rides with mq3d
+
+--- exported from 821ab29e9 (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
 index 98356fd7d..2d7b1297c 100644

@@ -14,7 +14,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
---- exported from cpuchip/vllm 691b39fc3 (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: local
+What: env vars to pick which layers run W4A8 with the Marlin kernel
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: stays
+
+--- exported from 8453a86db (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index 6158f86f8..f4bddb0e7 100755

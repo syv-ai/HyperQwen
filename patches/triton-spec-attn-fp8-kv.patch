@@ -55,10 +55,17 @@ Re-cut for 0.29: the envs.py anchors moved, and this tree already carries
 0.28 patch is a no-op here. VLLM_SPEC_ATTN_DEBUG is registered beside VLLM_SPEC_ATTN_BLOCK_M
 rather than at the 0.28 line numbers.
 
---- exported from cpuchip/vllm 8ec0fbb40 (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: split-KV verify attention on the per-tensor fp8 KV cache (TRITON_ATTN, sm89+); registers
+  `VLLM_SPEC_ATTN_DEBUG`
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: upstreamed
+
+--- exported from bbb2ad38a (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index ba36d50ff..9083fbd60 100755
+index 96af42246..9bdd6f1ab 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -183,6 +183,8 @@
@@ -70,7 +77,7 @@ index ba36d50ff..9083fbd60 100755
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
      VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
      VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
-@@ -1508,6 +1510,8 @@
+@@ -1488,6 +1490,8 @@
      "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
      "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
      "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),

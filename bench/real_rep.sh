@@ -20,9 +20,9 @@ snap() { metrics | grep -E "^vllm:spec_decode_num_(drafts|accepted_tokens)_total
 for i in $(seq 1 $N); do
   S0=$(snap)
   [ -n "$T" ] && TA="--temperature $T" || TA=""
-  $B --dataset-name custom --dataset-path $HERE/prompts_real.jsonl --custom-output-len 1024 --num-prompts 8 --max-concurrency 1 $TA > /tmp/rr_$TAG_$i.log 2>&1
+  $B --dataset-name custom --dataset-path $HERE/prompts_real.jsonl --custom-output-len 1024 --num-prompts 8 --max-concurrency 1 $TA > /tmp/rr_${TAG}_$i.log 2>&1
   S1=$(snap)
-  OUT=$(awk '/Total generated tokens/ {print $4}' /tmp/rr_$TAG_$i.log); DUR=$(awk '/Benchmark duration/ {print $4}' /tmp/rr_$TAG_$i.log); E2E=$(awk '/Output token throughput/ {print $5}' /tmp/rr_$TAG_$i.log); TPOT=$(awk '/Mean TPOT/ {print $4}' /tmp/rr_$TAG_$i.log)
+  OUT=$(awk '/Total generated tokens/ {print $4}' /tmp/rr_${TAG}_$i.log); DUR=$(awk '/Benchmark duration/ {print $4}' /tmp/rr_${TAG}_$i.log); E2E=$(awk '/Output token throughput/ {print $5}' /tmp/rr_${TAG}_$i.log); TPOT=$(awk '/Mean TPOT/ {print $4}' /tmp/rr_${TAG}_$i.log)
   python3 - "$S0" "$S1" "$TAG" "$i" "$OUT" "$DUR" "$E2E" "$TPOT" <<PY
 import sys
 a=[float(x) for x in sys.argv[1].split()]; b=[float(x) for x in sys.argv[2].split()]

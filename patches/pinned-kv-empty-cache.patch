@@ -4,7 +4,17 @@ The pinned path runs profile_run() and returns, and the KV cache is allocated ri
 
 With the cache released: 1.2 GiB freed before the pool is allocated, the pool fits (24,183 of 24,576 MiB), no GPU memory in system RAM beyond pinned host buffers, PCIe ~20 MB/s during decode, and 4 of 4 fresh boots at 50.3-53.1 tok/s with the full pool (268,169 tokens). memory-profile-after-warmup releases the same cache on the measured path; this is the pinned path, which the launchers use.
 
---- exported from cpuchip/vllm bbed74b28 (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: with `kv_cache_memory_bytes` pinned (the launchers' `KV_MEM`), synchronize and empty the
+  allocator cache after the profile run, so a cold compile cache's scratch (1.2 GiB on a 24 GiB
+  card) does not stay under the KV cache and over-commit the card, which under WSL2's driver moves
+  GPU memory to system RAM and slows the KVarN kernels; `memory-profile-after-warmup` does the same
+  on the measured path only
+Upstream: vllm #59893
+Cut-against: 0.30.0
+Retires-when: upstream empties the cache on the pinned path
+
+--- exported from 55a5da817 (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
 index f7412e837..6b2c67912 100644

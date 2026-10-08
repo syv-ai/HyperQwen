@@ -1,6 +1,12 @@
 lookup-augmented drafting for DFlash2 (n-gram search over the context)
 
---- exported from cpuchip/vllm c2547a7e7 (dflash2-lookup-drafting); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: lookup-augmented drafting for DFlash2 (n-gram search over the context)
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: upstreamed
+
+--- exported from d0888e930 (dflash2-lookup-drafting); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
 index 5504304c7..d77132b67 100644

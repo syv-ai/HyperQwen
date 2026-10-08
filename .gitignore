@@ -2,6 +2,7 @@ __pycache__/
 api_key.txt
 bench/quality-data/
 bench/results/
+bench/results-prefill-ab/
 models/
 profiles/
 qwen.log

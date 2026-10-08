@@ -1,6 +1,7 @@
 """API feature smoke test against the running server: the request-level features a different
 model runner could break (logprobs, n, stop, seeds, structured outputs, penalties, streaming,
-thinking, prompt_logprobs, a 20k-token prompt). Prints PASS/FAIL per feature.
+thinking, prompt_logprobs, a 20k-token prompt). Prints PASS/FAIL per feature, and exits 1
+unless all of them pass. It exits 2 when no request reaches a server.
 
   venv/bin/python bench/api_smoke.py          # key from api_key.txt or VLLM_API_KEY, PORT=18020
 """
@@ -34,12 +35,14 @@ def chat(msg, **kw):
     return post(URL, p)
 
 
-results = []
+results, unreached = [], []
 def check(name, fn):
     try:
         ok, info = fn()
     except Exception as e:  # noqa
         ok, info = False, f"{type(e).__name__}: {str(e)[:200]}"
+        if type(e) is urllib.error.URLError:  # its subclass HTTPError means a server answered
+            unreached.append(name)
     results.append((name, ok, info)); print(("PASS " if ok else "FAIL ") + name + " — " + str(info)[:200], flush=True)
 
 
@@ -104,3 +107,7 @@ for name, fn in [("greedy determinism", t_greedy_det), ("seeded sampling determi
                  ("thinking_token_budget -> 400", t_thinking_budget_rejected)]:
     check(name, fn)
 print("SUMMARY", sum(1 for _, ok, _ in results if ok), "/", len(results), "passed")
+if len(unreached) == len(results):
+    print(f"INVALID: no server answered on port {PORT}, so there is no verdict.")
+    sys.exit(2)
+sys.exit(0 if all(ok for _, ok, _ in results) else 1)

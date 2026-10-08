@@ -8,7 +8,14 @@ all as exact matches: nothing fuzzy, nothing prefix-matched. This removes
 the failure class for every client, including ones the operator does not
 control.
 
---- exported from cpuchip/vllm b9703204d (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: a model name equal to a served model's root path or its basename is accepted (exact matches
+  only): /v1/models publishes the root, and echoing it back used to 404
+Upstream: vllm #59890
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from 61e9463aa (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/models/serving.py b/entrypoints/openai/models/serving.py
 index 7378d37c6..fdc6ffa43 100644

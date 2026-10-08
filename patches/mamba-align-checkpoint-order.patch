@@ -76,7 +76,13 @@ Apply from the installed vllm package directory:
 
 Written against vLLM 0.27.1.
 
---- exported from cpuchip/vllm 2f22d12d4 (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: keep reachable Mamba state snapshots alive until request end (fork #52)
+Upstream: vllm #45238 (not merged)
+Cut-against: 0.30.0: re-cut from the main-track resolution
+Retires-when: check against upstream #52789 (internal prefill checkpoints, in 0.29) at each pin
+
+--- exported from 19043be9a (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
 index 40027e71f..0bc3f7343 100644

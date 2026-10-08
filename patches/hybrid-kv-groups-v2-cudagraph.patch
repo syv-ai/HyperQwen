@@ -36,7 +36,13 @@ Retired on the 0.29 port: the VLLM_V2_CUDAGRAPH_MEM_MIB reserve hunk in v1/worke
 vLLM 0.29 profiles CUDA graph memory natively (cudagraph_utils.profile_cudagraph_memory, upstream #53306), so the
 reserve knob is a no-op there; only the kv_cache_utils hunks remain.
 
---- exported from cpuchip/vllm 1203697ad (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: KV group sizing when the smallest bucket is the drafter's sliding-window layers
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from 36f3b7d31 (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
 index 28478b69f..4f720299b 100644

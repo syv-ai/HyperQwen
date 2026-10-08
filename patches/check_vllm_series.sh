@@ -56,7 +56,7 @@ if git -C "$GIT_ROOT" diff --quiet; then
   exit 1
 fi
 echo "   $count patches applied with exact context, $offset of them at an offset, 0 with fuzz"
-# The KVarN patches are exported from the fork branch after the whole series, so they go on this tree.
+# The KVarN patches are exported from commits that sit after the whole series, so they go on this tree.
 # On a pristine checkout every one must apply now; "already applied" here means the checkout is not pristine.
 kout=$(bash "$HERE/patches/apply.sh" --kvarn "$VLLM_SOURCE" 2>&1) || {
   printf '%s\n' "$kout" | sed 's/^/   /'; exit 1

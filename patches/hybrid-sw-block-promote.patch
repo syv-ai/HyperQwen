@@ -71,7 +71,14 @@ non-MLA attention layer). The "can this layer pad" check mirrors that: not isins
 promotion on every target layer; on 0.28 attn_utils set the flag from the backend for every attention spec, so the
 branch was taken there. The int4 profile then padded the five drafter layers at block 16 and could not fit 120k.)
 
---- exported from cpuchip/vllm 00ce09670 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: promote a draft SW layer's block to a divisor of the primary block instead of padding its page
+Upstream: none yet (upstream pads)
+Cut-against: 0.30.0: re-cut from the main-track resolution against upstream #53007; #142's divisor
+  condition carried
+Retires-when: upstream PR
+
+--- exported from 23d6ad49b (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
 index 4f720299b..d3e4606d4 100644

@@ -7,6 +7,7 @@ a run of 8 or more "!" (token 0). That's the symptom #208 traced to a late KVarN
 on a page that had become another request's mamba state. The failure is probabilistic (4 of 30
 on a single 3090 on 0.28 in #208), and KVarN's fp16 pool has to fill with finished requests'
 sinks before sinks are evicted, so run all the trials on one boot, one after the other.
+Exits 1 if any trial collapsed or a request errored.
 
   venv/bin/python bench/concurrent_collapse.py <label> [trials=30] [long_tokens=9000]
 
@@ -97,3 +98,4 @@ for i in range(TRIALS):
 c1 = corrupted()
 nan = "" if c0 is None or c1 is None else f", corrupted_requests_total +{c1 - c0:.0f}"
 print(f"[{LABEL}] DONE: {collapsed} of {TRIALS} trials collapsed{nan}")
+sys.exit(1 if collapsed else 0)

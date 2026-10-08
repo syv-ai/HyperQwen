@@ -19,7 +19,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0 (issue #25, item 15). Reapply after upgrades.
 
---- exported from cpuchip/vllm 88efc51c2 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: bf16 DSpark drafter beside a quantized target (callable `hf_overrides`)
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from 9ea737d23 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/utils.py b/model_executor/models/utils.py
 index 6cd21763a..cca8f5339 100644

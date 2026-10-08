@@ -19,7 +19,13 @@ model's default sampling (temperature 1.0, top-p 0.95, top-k 20):
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/sampler-small-topk-fast-softmax.patch
 
---- exported from cpuchip/vllm 9b58aeee3 (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: sort-free top-k/top-p for small k, multi-block row softmax
+Upstream: none
+Cut-against: 0.30.0: re-cut from the main-track resolution
+Retires-when: upstreamed or superseded
+
+--- exported from b2d8dffad (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/sample/metadata.py b/v1/sample/metadata.py
 index fa4ceac8e..1560b83f9 100644

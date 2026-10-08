@@ -10,7 +10,8 @@ Sequence against a running server:
      but never serves (the #52735 defect), TTFT is a full re-prefill and the counter stays put.
 
     TIER_GIB=<--kv-offloading-size> python replay.py TAG PORT DEPTH_CHARS N_EVICTORS
-Prints one JSON line per request and a final verdict line.
+Prints one JSON line per request and a final verdict line. Exits 0 on SERVED, 1 on NOT-SERVED, 2 on
+INVALID-TIER-OVERFLOW.
 
 Sizing rule (the verdict is meaningless otherwise): the GPU pool must be smaller than the tier IN TOKENS, and the
 evictor traffic must exceed the GPU pool while staying under the tier. A token costs several times more in the tier
@@ -117,5 +118,4 @@ if V == "INVALID-TIER-OVERFLOW":
     print(f"INVALID: {stores_gb:.2f} GB stored into a {TIER_GIB:g} GiB tier; X left the tier before X-again, so this run cannot "
           "tell a veto from an eviction. Shrink the GPU pool or the evictor count, or grow the tier.", file=sys.stderr)
 print(json.dumps({"tag": TAG, "verdict": V, "stores_gb": round(stores_gb, 2), "tier_gib": TIER_GIB, "cold_ttft_s": x1["ttft_s"], "again_ttft_s": x2["ttft_s"], "ratio": round(ratio, 2), "cached_again": x2["cached"], "loads": loads}), flush=True)
-if V == "INVALID-TIER-OVERFLOW":
-    sys.exit(2)
+sys.exit({"SERVED": 0, "NOT-SERVED": 1}.get(V, 2))

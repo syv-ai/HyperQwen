@@ -35,7 +35,17 @@ unkeyed server, and the None-on-missing-metrics contract, are unchanged.
 Alignment behaviour is unchanged: it still runs only for str prompts, still
 skips on failure rather than failing the run.
 
---- exported from cpuchip/vllm 46ac577da (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: `vllm bench serve`'s /tokenize alignment probe sends the API key (Bearer from OPENAI_API_KEY,
+  --header wins) and classifies its failure (404 route-or-name vs 401 vs unreachable vs timeout)
+  instead of one "endpoint unavailable" line for every cause; the /metrics scrapes
+  (`fetch_spec_decode_metrics`, `fetch_diffusion_metrics`) send the benchmark's headers too, so a
+  keyed server no longer reports the spec-decode block as absent
+Upstream: vllm #59888
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from 39ed548b3 (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/serve.py b/benchmarks/serve.py
 index 0292ff939..b5cce35ca 100644

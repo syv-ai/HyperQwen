@@ -20,7 +20,14 @@ compiles too. No-op without a speculator or on the v1 model runner.
 
 Apply with the patches/ set.
 
---- exported from cpuchip/vllm a5341af8b (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: compile the rejection sampler's Triton kernels at boot (fork #48)
+Upstream: none yet
+Cut-against: 0.30.0, hand-resolved: upstream #56323 warms the V1 sampler's kernels, not the V2
+  runner's this patch warms
+Retires-when: upstream PR
+
+--- exported from 48dfe45bf (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/warmup/kernel_warmup.py b/model_executor/warmup/kernel_warmup.py
 index bcb2dd779..c01c566e5 100644

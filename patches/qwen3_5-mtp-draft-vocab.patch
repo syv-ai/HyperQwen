@@ -12,7 +12,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0.
 
---- exported from cpuchip/vllm 7256ad3b3 (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: vocab-truncated draft head for MTP
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: upstreamed
+
+--- exported from 57b5c1a94 (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
 index d424d0c63..3e4421645 100644

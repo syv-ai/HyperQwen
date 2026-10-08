@@ -9,7 +9,16 @@ an external proxy.
 - Adds discovery routes to UNGUARDED_PATHS in AuthenticationMiddleware so
   servers configured with --api-key do not reject unauthenticated client probes.
 
---- exported from cpuchip/vllm b258536b72 (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: GET/HEAD /, /api/status, /api/experimental/model-recommendations, and /api/show for `ollama launch codex`
+  compatibility. Matches served models dynamically, returns 404 for unserved models (the body names the
+  requested model only, never a served name or path), reads context length from model_config.max_model_len,
+  and adds the routes to UNGUARDED_PATHS
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from b258536b72 (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/app.py b/entrypoints/launchers/app.py
 index ddea707810..069ac31f5d 100644
@@ -29,7 +38,7 @@ index ddea707810..069ac31f5d 100644
  
  from vllm.config import ModelConfig
  from vllm.entrypoints.serve.exception_handling.register import init_exception_handler
-@@ -42,6 +45,105 @@
+@@ -42,6 +45,102 @@
      app.state.args = args
      app.root_path = args.root_path
  
@@ -102,10 +111,7 @@ index ddea707810..069ac31f5d 100644
 +            return JSONResponse(
 +                status_code=404,
 +                content={
-+                    "error": (
-+                        f"model '{req_model}' not found. "
-+                        f"Served models: {', '.join(unique_served)}"
-+                    )
++                    "error": f"model '{req_model}' not found"
 +                },
 +            )
 +

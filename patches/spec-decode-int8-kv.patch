@@ -39,7 +39,13 @@ Apply from the repo root, after spec-decode-attn.patch:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
---- exported from cpuchip/vllm 1bb6f44e4 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: split-KV verify attention over an int8 per-token-head cache
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: rides with spec-decode-attn
+
+--- exported from 5c1271db1 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
 index 2754d357d..10b94c1e0 100755

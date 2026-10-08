@@ -29,7 +29,14 @@ block - leaves the captured decode graph reading freed memory.
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/spec-decode-attn.patch
 
---- exported from cpuchip/vllm c1b817a9b (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: split-KV verify attention on FLASH_ATTN with query-row tiling
+Upstream: none
+Cut-against: 0.30.0: main-track resolution, envs.py from the 0.29 line (#114), flash_attn.py
+  hand-resolved against #55768
+Retires-when: upstreamed
+
+--- exported from dc94813d4 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index f4bddb0e7..84b00ff3f 100755

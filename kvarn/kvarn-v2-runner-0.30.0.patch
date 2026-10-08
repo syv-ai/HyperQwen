@@ -11,7 +11,14 @@ block 128 with their page padded to the primary page, so both trees compute the 
 (2176) and hash unit (128); the hunks changed nothing for this geometry, and the coordinator hunks below
 still exempt a sliding-window block that does not divide the scheduler block.
 
---- exported from cpuchip/vllm 757257e13 (kvarn-v2-runner-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: own
+What: KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards)
+Upstream: none
+Cut-against: 0.30.0: re-cut from the main-track resolution, with its #54713 replay_boundaries fixup;
+  #53007 rewrote _largest_kernel_block_within and the SW divisor rule is carried into it by hand
+Retires-when: rides with KVarN
+
+--- exported from 4cb7e8125 (kvarn-v2-runner-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
 index 47a1299c8..bc35fecea 100644
@@ -160,10 +167,10 @@ index 0bc3f7343..ed0c4fe8f 100644
  class CircularBufferManager(FullAttentionManager):
      """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index a614760fd..91dde6a54 100644
+index 07c818b22..301952f68 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1269,9 +1269,14 @@
+@@ -1290,9 +1290,14 @@
              is_prefilling_np=is_prefilling_np,
              has_prefill=bool(is_prefilling_np.any()),
          )

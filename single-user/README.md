@@ -438,6 +438,7 @@ included (`tools` + `tool_choice: "auto"` come back as `tool_calls`).
 | `WARMUP` | 0 | `qwen-server.sh` only: 1 = wait for `/health`, then run `bench/warmup.sh` (21-25 s) before serving (see "Post-boot serving warmup"). Advisory — a failed warmup logs and serves anyway. Not read by `start_qwen.sh` itself |
 | `SSE_KEEP_ALIVE` | 30 | seconds between SSE `: keep-alive` comment lines on a streaming response, so an idle stream survives a proxy read timeout during a long prefill (Bifrost's default is 120 s; a 90K cold prefill takes ~105 s and sends nothing until it finishes). `0` passes the interval vLLM reads as off; empty drops the flag entirely, which is what a vLLM tree without `patches/sse-keep-alive.patch` needs |
 | `PORT` | 18020 | |
+| `PRINT_ARGV` | 0 | 1 = print the `vllm serve` argv, one argument per line, and exit 0 instead of starting the server. Every profile check, default and warning runs first, so it is a dry run that needs no GPU |
 
 ## Switching modes
 

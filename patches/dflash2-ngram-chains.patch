@@ -2,7 +2,13 @@ Ported to 0.29: the propose() override takes dp_sync (DPSyncState) instead of nu
 runner call and the DFlashSpeculator base (upstream changed the signature in 0.29); the inner draft path still receives
 num_tokens_across_dp from the base.
 
---- exported from cpuchip/vllm 596a96779 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: feature
+What: quantized candidate chains for the drafter; `propose` override
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: upstreamed
+
+--- exported from 842dc000b (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 index b6e04d4a0..9c5c75ac8 100644

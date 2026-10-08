@@ -21,7 +21,15 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0; the same two hunks apply to 0.29.0 at an offset.
 
---- exported from cpuchip/vllm f11865100 (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: the Marlin int8-activation path (`INT8_ACT=int8`) accepts zero-point `uint4` weights, so
+  asymmetric AWQ exports (compressed-tensors `symmetric: false`) run W4A8 like the symmetric ones;
+  the `kS8 x kU4` kernel is already compiled, only two asserts refused it
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from 744d10c9e (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index 543563e75..a37420e1c 100644

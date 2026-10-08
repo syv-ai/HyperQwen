@@ -11,7 +11,15 @@ and of environment_variables, away from kvarn-0.30.0's KVARN_* block, so every
 KVarN patch still reverse-applies on its own in a fully installed tree (the
 idempotence check patches/apply.sh --kvarn and verify.sh rely on).
 
---- exported from cpuchip/vllm 7f8c3ef0a (kvarn-fp16-dequant-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: own
+What: registers `KVARN_FP16_DEQUANT` (#240's fp16 dequant in the fused KVarN decode kernels, default
+  off) in `envs.py`, so `kvarn/files` reads it through `vllm.envs` and it is in the torch.compile
+  cache key
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: rides with KVarN
+
+--- exported from 7c013fc0e (kvarn-fp16-dequant-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index 42e23eb6d..77233f054 100755

@@ -28,10 +28,23 @@ request through to the app, so both headers are necessary.
 
 On v0.30.0: authenticate.py is unchanged from v0.29.0 and the patch applies to it as cut; cli_args.py's help-text hunk lands 7 lines lower (#50195, #53353, #55176 moved it). The routes 0.30 adds (/v1/responses/render, the --enable-scale-out endpoints) fall under the deny-by-default rule with no allowlist change.
 
---- exported from cpuchip/vllm f79bedd0a2 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: --api-key guards every path except /health, /ping, /load and /version (deny by default). The
+  old prefix list left /tokenize, /detokenize, /metrics and the docs open without the key. /metrics
+  now needs the key: a scraper that cannot send it must use a separate listener, and the in-tree
+  scrapes send it (bench-probe-errors). The allowlist ignores a trailing slash, so a probe on
+  /health/ does not get a 401. Only a real CORS preflight (OPTIONS with Origin and
+  Access-Control-Request-Method) skips the token; a bare OPTIONS needs it, because /metrics answers
+  any method. The --api-key help text describes the allowlist
+Upstream: vllm #59892
+Cut-against: 0.30.0: cut against 0.29.0 and applies as cut (authenticate.py is unchanged; the
+  cli_args.py help-text hunk lands at an offset)
+Retires-when: upstream PR
+
+--- exported from ff2ccf845 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/cli_args.py b/entrypoints/launchers/cli_args.py
-index 89af22cdc8..d21c7e6ed5 100644
+index 89af22cdc..d21c7e6ed 100644
 --- a/entrypoints/launchers/cli_args.py
 +++ b/entrypoints/launchers/cli_args.py
 @@ -298,13 +298,13 @@
@@ -55,7 +68,7 @@ index 89af22cdc8..d21c7e6ed5 100644
      """The file path to the SSL key file."""
      ssl_certfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index e8a61b21ee..5f3c2af30d 100644
+index e8a61b21e..5f3c2af30 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
 @@ -8,7 +8,29 @@

@@ -33,11 +33,9 @@ B="venv/bin/vllm bench serve --host 127.0.0.1 --port $PORT --model qwen3.8-27b -
 if curl -sf -o /dev/null http://127.0.0.1:$PORT/health; then
   echo "server already on :$PORT — reusing (set FRESH=1 to refuse)"; [ "${FRESH:-0}" = 1 ] && exit 1
 else
-  # INT8_ACT/INT8_LAYERS: same translation batch/start_qwen.sh does (single-user
-  # script has no wiring yet); CHUNK rides EXTRA_ARGS — the launcher's hardcoded
+  # single-user/start_qwen.sh reads INT8_ACT/INT8_LAYERS from the environment
+  # (qwen_int8_exports). CHUNK rides EXTRA_ARGS — the launcher's hardcoded
   # --max-num-batched-tokens 2048 is overridden because EXTRA_ARGS expands last.
-  [ -n "${INT8_ACT:-}" ] && export VLLM_MARLIN_INPUT_DTYPE=$INT8_ACT
-  [ -n "${INT8_LAYERS:-}" ] && export VLLM_MARLIN_INT8_INCLUDE_RE=$INT8_LAYERS
   [ -n "${CHUNK:-}" ] && EXTRA_ARGS="${EXTRA_ARGS:-} --max-num-batched-tokens $CHUNK"
   echo "# booting arm=$ARM  envs: SPEC=${SPEC:-dflash2} CTX=${CTX:-fast} DFLASH_TOKENS=${DFLASH_TOKENS:-15} PREFIX_CACHE=${PREFIX_CACHE:-1} INT8_ACT=${INT8_ACT:-} INT8_LAYERS=${INT8_LAYERS:-} CHUNK=${CHUNK:-} EXTRA_ARGS=${EXTRA_ARGS:-}"
   SPEC=${SPEC:-dflash2} CTX=${CTX:-fast} DFLASH_TOKENS=${DFLASH_TOKENS:-15} \

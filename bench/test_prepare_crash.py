@@ -11,13 +11,15 @@ run without a kill. That run must also leave each backup equal to the file as it
 before its step. Finally (step `reject`) it runs each in-place script on a copy of the
 fixture whose config.json it cannot extend -- a native AutoRound export, no group_0, no
 ignore list -- and checks it exits non-zero with a message and leaves the copy identical,
-so an unsupported checkpoint is refused before the shard is replaced (#241).
+so an unsupported checkpoint is refused before the shard is replaced (#241). Step `order`
+runs quant_embed.py before quant_lm_head.py, as a manual run can, and checks that both
+complete and leave the same model as the usual order.
 
   venv/bin/python bench/test_prepare_crash.py [step ...]   # CPU and Linux only, minutes
 
-Steps: lm_head embed mtp draft fast harden translate stream reject (default: all). The kill
-goes into the named steps only; reject has no kill and runs on its own. Exit 0 when every
-case passes.
+Steps: lm_head embed mtp draft fast harden translate stream reject order (default: all).
+The kill goes into the named steps only; reject and order have no kill and run on their
+own. Exit 0 when every case passes.
 """
 import builtins
 import hashlib
@@ -35,7 +37,7 @@ from types import SimpleNamespace
 
 REPO = Path(__file__).resolve().parents[1]
 KILLED = 137
-STEPS = ("lm_head", "embed", "mtp", "draft", "fast", "harden", "translate", "stream", "reject")
+STEPS = ("lm_head", "embed", "mtp", "draft", "fast", "harden", "translate", "stream", "reject", "order")
 BACKUPS = (".bak", ".bak_embed", ".bak-mtp", ".bak-quant", ".bak-draft", ".bak-orig")
 V, K = 512, 256  # vocab x hidden, multiples of the 128-wide quantization group
 MTP = {"mtp.fc": (K, 2 * K), "mtp.layers.0.mlp.down_proj": (K, 2 * K),
@@ -412,6 +414,36 @@ def reject(ctx):
     return fails, cases
 
 
+def order(ctx):
+    """quant_embed.py needs nothing quant_lm_head.py writes: run first, it still completes,
+    and either order leaves the same model."""
+    scripts, got = ("quant_lm_head.py", "quant_embed.py"), []
+    for seq in (scripts, scripts[::-1]):
+        root = f"{ctx.work}/order-{seq[0].removesuffix('.py')}"
+        shutil.copytree(f"{ctx.pristine}/base", root)
+        step = stepper(ctx, root)
+        try:
+            for script in seq:
+                step(script, script, [root])
+        except Stop as e:
+            print(f"FAIL  order: {seq[0]} first: {e}")
+            return 1, 1
+        # .bak-quant is config.json and the index as quant_lm_head.py found them, so it
+        # holds quant_embed.py's edits when that ran first. JSON is compared parsed: the
+        # key order follows the run order.
+        got.append({p: json.load(open(f"{root}/{p}")) if p.endswith(".json") else h
+                    for p, h in snapshot(root).items() if not p.endswith(".bak-quant")})
+    diff = sorted(k for k in got[0].keys() | got[1].keys() if got[0].get(k) != got[1].get(k))
+    bad = [f"embed first leaves different files: {diff}"] if diff else []
+    # Both int8 groups describe tensors the same math wrote, so only their targets differ.
+    groups = got[0]["config.json"]["quantization_config"]["config_groups"]
+    if {**groups["group_2"], "targets": None} != {**groups["group_1"], "targets": None}:
+        bad.append("group_2 (embed) is not group_1 (lm_head) with other targets")
+    print(f"FAIL  order: {'; '.join(bad)}" if bad
+          else "OK    order: embed first, then lm_head, leaves the same model")
+    return int(bool(bad)), 1
+
+
 def main():
     steps = sys.argv[1:] or list(STEPS)
     if set(steps) - set(STEPS) or not hasattr(os, "fork"):
@@ -433,7 +465,7 @@ def main():
         shutil.copytree(REPO / "prepare", ctx.prep)
         if fork(lambda: build(ctx.pristine, ctx.prep, ctx.ids), ctx.log)[0]:
             sys.exit("fixture build failed:\n" + open(ctx.log).read())
-        for name, run_pass, own in (("prepare", prepare_pass, STEPS[:-2]),
+        for name, run_pass, own in (("prepare", prepare_pass, STEPS[:-3]),
                                     ("stream", stream_pass, ("stream",))):
             inject = [s for s in steps if s in own]
             if inject:
@@ -441,6 +473,9 @@ def main():
                 fails, cases = fails + f, cases + c
         if "reject" in steps:
             f, c = reject(ctx)
+            fails, cases = fails + f, cases + c
+        if "order" in steps:
+            f, c = order(ctx)
             fails, cases = fails + f, cases + c
     print(f"{cases} cases, {fails} failures")
     sys.exit(1 if fails else 0)

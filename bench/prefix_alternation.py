@@ -20,6 +20,11 @@ Regimes are sharp, so read the size table in the issue rather than one run:
     two conversations, sequential       ~96.6-99.7%
     two conversations, alternating      0% every turn  (above a size knee)
 
+Exits 1 when the arm reproduces the defect (a PREFIX-LOST turn), 0 when it does not. It
+exits 2 when it checked no turn. Round 1 is cold, so a run needs at least two rounds inside
+the budget. A clean arm is not a fix on its own: run the dense arm too. If that is also
+clean, the test failed to reproduce rather than the fix working.
+
 Usage:
     python bench/prefix_alternation.py --target-tokens 60000 --rounds 3
     python bench/prefix_alternation.py --target-tokens 96000 --noise 2 --rounds 4
@@ -292,6 +297,9 @@ def main():
             print(f"  r{r} {s}  previous prefix {pp:,} tok, reused {c:,} tok "
                   f"(short by {pp - c:,}, {sec:.1f}s)")
         print("\nthis arm REPRODUCES the defect.")
+    elif not stats["healthy"]:
+        print("\nINVALID: no turn was checked. Round 1 is cold, so run at least two")
+        print("   rounds inside --budget-min.")
     else:
         print("\n✅ no prefix loss: every turn reused the previous turn's whole prefix.")
         print("   ⚠️ This only says so for this arm. To claim a fix, run the dense")
@@ -301,7 +309,7 @@ def main():
         json.dump({"arm": tag, "args": vars(args), "stats": stats,
                    "elapsed_s": el, "log": LOG}, f, ensure_ascii=False, indent=1)
     print(f"\nraw records -> {out}")
-    return 0
+    return 1 if fail_rows else 0 if stats["healthy"] else 2
 
 
 if __name__ == "__main__":

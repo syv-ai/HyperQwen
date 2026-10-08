@@ -15,6 +15,8 @@ Two things his run could not separate, because it measured one request per boot:
 
 Each prompt carries its own salt, so no request is ever served out of the prefix cache
 and "warm" means warm engine, not warm cache.
+
+A measurement, so it exits 0 whatever the numbers say. It exits 2 if every request failed.
 """
 import json, os, sys, time, urllib.request
 
@@ -108,3 +110,4 @@ else:
     print(f"[{TAG}] SUMMARY cold={'n/a' if cold is None else f'{cold*1000:.1f} ms'}  "
           f"warm_median={sorted(warm)[len(warm)//2]*1000:.1f} ms  "
           f"warm_min={min(warm)*1000:.1f} ms  n_warm={len(warm)}")
+sys.exit(2 if all(f is None for _, f in rows) else 0)

@@ -10,7 +10,13 @@ Apply from the installed vllm package directory:
 
 Validated against vLLM 0.28.0. Reapply after upgrades.
 
---- exported from cpuchip/vllm eb6a03e9f (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: fix
+What: pass `quant_config` to the token embedding (main model and MTP module)
+Upstream: none yet
+Cut-against: 0.30.0
+Retires-when: upstream PR
+
+--- exported from 4b609dc9a (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 index f991f05d7..fe960984b 100644

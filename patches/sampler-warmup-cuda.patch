@@ -17,10 +17,19 @@ without that gate: with a persistent cache volume the cost is paid once per volu
 Signed-off-by: Andreas Karatzas <akaratza@amd.com>
 Signed-off-by: Michael Stufflebeam <cpuchip@gmail.com>
 
---- exported from cpuchip/vllm 92e7256fa (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
+Kind: backport
+What: registers the V2 runner's top-k/top-p sampler JIT warmups on CUDA too (vllm #58092 without
+  #58465's ROCm-only gate): 0 in-request compiles, ~71-78 s of warmup once per cold cache volume,
+  ~0.2 s warm
+Upstream: vllm #58092 (merged after 0.30.0)
+Cut-against: 0.30.0
+Retires-when: the pin that carries #58092 with CUDA registration (upstream gates it to ROCm; an
+  opt-in is the ask)
+
+--- exported from b433a4f79 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 46acb1688..857b0d6d5 100644
+index cc59a227b..07c818b22 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
 @@ -461,6 +461,15 @@
