@@ -1,0 +1,132 @@
+Off by default. With VLLM_EMBED_UVA=1 the packed embedding table (weight_packed, from
+qwen3_5-embed-quant) of the main model and the MTP module is moved to pinned host memory after the
+weights load and read through a CUDA UVA view. A decode step pulls one row per request over PCIe, and the
+freed VRAM goes to the KV pool: +32,143 tokens (204,336 to 236,479, +15.7%) at SPEC=mtp CTX=long on a
+3090 (PCIe 4.0 x16) with decode and prefill unchanged, for about 2.1 GiB of host RAM and 20 s of boot.
+Skipped for tied embeddings, whose lm_head would read the whole table from host RAM every step, and for
+a table that is not quantized (a warning says so). The knob is registered in envs.py so it sits in the
+torch.compile cache key. Based on a script by @rodrigocsousa (syv-ai/HyperQwen#281), who measured it first
+on two RTX 3060s (155k to 200k context).
+
+Kind: feature
+What: `VLLM_EMBED_UVA=1` keeps the quantized token embedding (main model and MTP module) in pinned host RAM
+  behind a CUDA UVA view, freeing about 1.25 GiB of VRAM for the KV pool (+15.7% tokens on a 3090) at no
+  measured decode or prefill cost, for about 2.1 GiB of host RAM; default off
+Upstream: none
+Cut-against: 0.30.0
+Retires-when: stays while the knob exists
+
+--- exported from f6299d2 (embed-uva); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 77233f0..085cd90 100755
+--- a/envs.py
++++ b/envs.py
+@@ -182,6 +182,7 @@
+     # syv patch: split-KV verify attention, registered by the patch that reads it (#114)
+     VLLM_SPEC_DECODE_ATTN: bool = False
+     VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
++    VLLM_EMBED_UVA: bool = False
+     VLLM_SPEC_ATTN_BLOCK_M: int = 0
+     # syv patch: split-KV verify debug print (patches/triton-spec-attn-fp8-kv.patch)
+     VLLM_SPEC_ATTN_DEBUG: bool = False
+@@ -1512,6 +1513,8 @@
+     "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
+     "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
+     "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
++    # Qwen3.5 family: keep the quantized token embedding in pinned host RAM (default off).
++    "VLLM_EMBED_UVA": lambda: os.environ.get("VLLM_EMBED_UVA", "0") == "1",
+     "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),
+     # split-KV verify kernel: debug print
+     "VLLM_SPEC_ATTN_DEBUG": lambda: os.environ.get("VLLM_SPEC_ATTN_DEBUG", "0") == "1",
+diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
+index fe96098..f5e5c4d 100644
+--- a/model_executor/models/qwen3_5.py
++++ b/model_executor/models/qwen3_5.py
+@@ -29,6 +29,7 @@
+ import torch
+ from torch import nn
+ 
++from vllm import envs
+ from vllm.compilation.decorators import support_torch_compile
+ from vllm.config import VllmConfig
+ from vllm.distributed import (
+@@ -57,6 +58,7 @@
+ from vllm.sequence import IntermediateTensors
+ from vllm.tokenizers.registry import cached_tokenizer_from_config
+ from vllm.transformers_utils.configs.qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig
++from vllm.utils.torch_utils import get_accelerator_view_from_cpu_tensor
+ from vllm.transformers_utils.configs.qwen3_5_moe import (
+     Qwen3_5MoeConfig,
+     Qwen3_5MoeTextConfig,
+@@ -103,6 +105,34 @@
+ logger = init_logger(__name__)
+ 
+ 
++def _offload_quantized_embedding_to_uva(embedding: nn.Module) -> None:
++    """VLLM_EMBED_UVA=1: keep the packed embedding table in pinned host RAM.
++
++    The table is read through a CUDA UVA view, so a decode step pulls one row per
++    request over PCIe instead of holding the whole table in VRAM; the freed
++    memory goes to the KV pool. Only a quantized table (weight_packed, from
++    qwen3_5-embed-quant) is moved, and the callers skip tied embeddings, whose
++    lm_head would read the whole table from host RAM on every step.
++    """
++    if not envs.VLLM_EMBED_UVA:
++        return
++    weight = getattr(embedding, "weight_packed", None)
++    if weight is None:
++        logger.warning_once(
++            "VLLM_EMBED_UVA=1 but the token embedding is not quantized "
++            "(no weight_packed); leaving it in VRAM."
++        )
++        return
++    if getattr(weight, "_vllm_is_uva_offloaded", False):
++        return
++
++    cpu_weight = weight.data.to("cpu").pin_memory()
++    weight.data = get_accelerator_view_from_cpu_tensor(cpu_weight)
++    weight._vllm_is_uva_offloaded = True
++
++    torch.cuda.empty_cache()
++
++
+ class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
+     def get_hf_config(self):
+         return self.ctx.get_hf_config(Qwen3_5Config)
+@@ -288,7 +318,10 @@
+                 ckpt_prefix="mlp.shared_expert",
+             )
+         loader = AutoWeightsLoader(self)
+-        return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
++        loaded = loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
++        if not getattr(self.config, "tie_word_embeddings", False):
++            _offload_quantized_embedding_to_uva(self.embed_tokens)
++        return loaded
+ 
+ 
+ class Qwen3_5ForCausalLMBase(
+diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+index 3e44216..95ecb4c 100644
+--- a/model_executor/models/qwen3_5_mtp.py
++++ b/model_executor/models/qwen3_5_mtp.py
+@@ -25,6 +25,7 @@
+     Qwen3_5DecoderLayer,
+     Qwen3_5Model,
+     Qwen3_5RMSNorm,
++    _offload_quantized_embedding_to_uva,
+ )
+ from vllm.model_executor.models.qwen3_next import (
+     Qwen3NextSparseMoeBlock,
+@@ -222,7 +223,10 @@
+             ckpt_prefix="mlp.shared_expert",
+         )
+         loader = AutoWeightsLoader(self)
+-        return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
++        loaded = loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
++        if not getattr(self.config, "tie_word_embeddings", False):
++            _offload_quantized_embedding_to_uva(self.embed_tokens)
++        return loaded
+ 
+ 
+ @support_torch_compile(

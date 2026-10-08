@@ -735,6 +735,12 @@ if [ "${VISION:-0}" = 1 ]; then
 else
   VISION_ARGS="--language-model-only"
 fi
+# EMBED_UVA=1 keeps the quantized token embedding in pinned host RAM, read through a CUDA UVA view
+# (patches/qwen3_5-embed-uva.patch, VLLM_EMBED_UVA). The freed VRAM goes to the KV pool: +15.7% tokens
+# (204,336 to 236,479) at SPEC=mtp CTX=long on a 3090 at PCIe 4.0 x16, decode and prefill unchanged, for
+# about 2.1 GiB of host RAM and 20 s of boot (#281). Off by default: a card with spare VRAM pays a PCIe
+# read per decode step for nothing, and a narrow slot is unmeasured.
+[ "${EMBED_UVA:-0}" = 1 ] && export VLLM_EMBED_UVA=1
 
 # fp16 activations do not work with the speculative path, and the way you find that out
 # is late and cryptic (#27): the split-KV verify kernel hardcodes tl.bfloat16 for the

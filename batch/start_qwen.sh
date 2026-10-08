@@ -225,6 +225,10 @@ if [ "${VISION:-0}" = 1 ]; then
 else
   VISION_ARGS="--language-model-only"
 fi
+# EMBED_UVA=1 keeps the quantized token embedding in pinned host RAM, read through a CUDA UVA view
+# (patches/qwen3_5-embed-uva.patch, VLLM_EMBED_UVA); the freed VRAM goes to the KV pool. Off by default,
+# numbers and caveats in single-user/README.md (#281).
+[ "${EMBED_UVA:-0}" = 1 ] && export VLLM_EMBED_UVA=1
 
 export PATH="$REPO/venv/bin:$PATH"
 # Off under WSL, where the VMM calls break Marlin repack — see the long note in
