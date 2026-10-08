@@ -24,10 +24,8 @@ TIER_GIB set the script refuses that verdict and prints INVALID-TIER-OVERFLOW in
 import glob
 import json
 import os
-import re
 import sys
 import time
-import urllib.request
 
 import harness
 
@@ -42,31 +40,19 @@ while len(TEXT) < (N + 2) * DEPTH + 100000:
 
 
 def metrics():
-    r = urllib.request.urlopen(harness.request("/metrics"), timeout=30).read().decode()
-    out = {}
-    for line in r.splitlines():
-        if (line.startswith("vllm:kv_offload") or line.startswith("vllm:prefix_cache") or line.startswith("vllm:external_prefix_cache")) and "_bucket" not in line and "_created" not in line:
-            m = re.match(r'(\S+?)(\{[^}]*\})? ([0-9.e+-]+)$', line)
-            if m:
-                out[m.group(1) + (m.group(2) or "")] = float(m.group(3))
-    return out
+    # The prefixes have no _total, so they also take each counter's <name>_created line: drop those.
+    return {name + labels: value for name, labels, value in harness.samples()
+            if name.startswith(("vllm:kv_offload", "vllm:prefix_cache", "vllm:external_prefix_cache"))
+            and "_bucket" not in name and "_created" not in name}
 
 
 def ask(label, prompt, max_tokens=32):
-    req = harness.request("/v1/chat/completions", {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": prompt}],
-                          "max_tokens": max_tokens, "temperature": 0, "stream": True, "stream_options": {"include_usage": True}})
+    payload = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": prompt}],
+               "max_tokens": max_tokens, "temperature": 0, "stream": True, "stream_options": {"include_usage": True}}
     t0 = time.time()
-    resp = urllib.request.urlopen(req, timeout=None)
     first = None
     usage = None
-    for raw in resp:
-        line = raw.decode("utf-8", "replace").strip()
-        if not line.startswith("data:") or line == "data: [DONE]":
-            continue
-        try:
-            j = json.loads(line[5:].strip())
-        except Exception:
-            continue
+    for j in harness.stream("/v1/chat/completions", payload, timeout=None):
         if first is None and any((c.get("delta") or {}).get("content") for c in j.get("choices", [])):
             first = time.time()
         if j.get("usage"):

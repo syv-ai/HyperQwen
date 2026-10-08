@@ -86,7 +86,6 @@ import os
 import re
 import sys
 import time
-import urllib.request
 
 import harness
 
@@ -122,17 +121,11 @@ def metrics():
     """(drafts, draft_slots, accepted, {position: accepted}) summed over engines."""
     scal = {k: 0.0 for k in SCALARS}
     pos = {}
-    for line in urllib.request.urlopen(harness.request("/metrics")).read().decode().splitlines():
-        if not line or line[0] == "#":
-            continue
-        # "name{labels} value" or "name value"; prometheus_client also emits _created lines,
-        # which fall through both branches below.
-        name = line.split("{", 1)[0].split(" ", 1)[0]
-        val = float(line.rsplit(" ", 1)[-1])
+    for name, labels, val in harness.samples():
         if name in scal:
             scal[name] += val
         elif name == PER_POS:
-            m = POS_RE.search(line)
+            m = POS_RE.search(labels)
             if m:
                 pos[int(m.group(1))] = pos.get(int(m.group(1)), 0.0) + val
     return (scal[SCALARS[0]], scal[SCALARS[1]], scal[SCALARS[2]], pos)
@@ -163,23 +156,15 @@ def generate(prompt_ids, max_tokens):
                "stream": True, "stream_options": {"include_usage": True}}
     toks, usage, t_first = [], {}, None
     t0 = time.time()
-    with urllib.request.urlopen(harness.request("/v1/completions", payload), timeout=1800) as r:
-        for raw in r:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            body = line[6:]
-            if body == "[DONE]":
-                break
-            ev = json.loads(body)
-            if ev.get("usage"):
-                usage = ev["usage"]
-            for ch in ev.get("choices", []):
-                lp = ch.get("logprobs") or {}
-                if lp.get("tokens"):
-                    if t_first is None:
-                        t_first = time.time()
-                    toks.extend(lp["tokens"])
+    for ev in harness.stream("/v1/completions", payload):
+        if ev.get("usage"):
+            usage = ev["usage"]
+        for ch in ev.get("choices", []):
+            lp = ch.get("logprobs") or {}
+            if lp.get("tokens"):
+                if t_first is None:
+                    t_first = time.time()
+                toks.extend(lp["tokens"])
     t_end = time.time()
     ids = ids_from_logprobs(toks)
     if ids is None:

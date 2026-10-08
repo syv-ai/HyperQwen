@@ -47,7 +47,7 @@ reproduce here: 105 / 98 / 86 tok/s at N=1/2/3, SPEC=mtp k=3 PREFIX_CACHE=1) and
 extended for issue #25 (dflash2 reported to collapse from N=2 up on 4-8 independent
 long streams).
 """
-import json, sys, time, urllib.request, threading, re
+import json, sys, time, threading
 
 import harness
 
@@ -102,41 +102,29 @@ def _short(name):
 
 
 def metrics():
-    txt = urllib.request.urlopen(harness.request("/metrics"), timeout=20).read().decode()
-    out = {}
-    for name in COUNTERS + GAUGES:
-        m = re.findall(rf"^{re.escape(name)}\{{[^}}]*}} ([0-9.e+-]+)$", txt, re.M)
-        out[_short(name)] = sum(float(x) for x in m) if m else 0.0
-    return out
+    m = harness.metrics(*COUNTERS, *GAUGES, timeout=20)
+    return {_short(name): m.get(name, 0.0) for name in COUNTERS + GAUGES}
 
 
 def stream(i, salt, res, first_tok):
-    req = harness.request("/v1/chat/completions", {
+    payload = {
         "model": "qwen3.8-27b",
         "messages": [{"role": "user", "content": make_prompt(i, salt)}],
         "max_tokens": NOUT, "temperature": 0.0, "stream": True,
         "stream_options": {"include_usage": True},
         "chat_template_kwargs": {"enable_thinking": False},
-    })
+    }
     t0 = time.perf_counter(); first = None; last = None; ntok = 0
-    with urllib.request.urlopen(req, timeout=3600) as r:
-        for raw in r:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            payload = line[6:]
-            if payload == "[DONE]":
-                break
-            d = json.loads(payload)
-            if d.get("usage"):
-                ntok = d["usage"]["completion_tokens"]
-            ch = d.get("choices") or []
-            if ch and ch[0].get("delta", {}).get("content"):
-                now = time.perf_counter()
-                if first is None:
-                    first = now
-                    first_tok[i] = now
-                last = now
+    for d in harness.stream("/v1/chat/completions", payload, timeout=3600):
+        if d.get("usage"):
+            ntok = d["usage"]["completion_tokens"]
+        ch = d.get("choices") or []
+        if ch and ch[0].get("delta", {}).get("content"):
+            now = time.perf_counter()
+            if first is None:
+                first = now
+                first_tok[i] = now
+            last = now
     res[i] = dict(ttft=(first - t0) if first else None,
                   decode_s=(last - first) if first and last else None, ntok=ntok,
                   rate=((ntok - 1) / (last - first)) if first and last and last > first else None)

@@ -20,7 +20,7 @@ confident derailment on three different configurations; see bench/verbatim.py.
 
 Exits 1 if the final pass, against the whole neighbourhood, finds a broken residue.
 """
-import hashlib, os, re, sys, urllib.request
+import hashlib, os, sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from verbatim import classify, median, prefix_match, repeats  # noqa: E402
@@ -36,20 +36,13 @@ from transformers import AutoTokenizer  # noqa: E402
 TOK = AutoTokenizer.from_pretrained(os.path.join(REPO, "models", "Qwen3.8-27B-W4A16-AutoRound-fast"))
 
 
-def metrics():
-    txt = urllib.request.urlopen(harness.request("/metrics"), timeout=30).read().decode()
-    g = lambda n: sum(float(x) for x in re.findall(
-        rf"^{re.escape(n)}\{{[^}}]*}} ([0-9.e+]+)$", txt, re.M)) or 0.0
-    return g("vllm:spec_decode_num_drafts_total"), g("vllm:spec_decode_num_accepted_tokens_total")
-
-
 def once(content):
     payload = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": content}],
                "max_tokens": 300, "temperature": 0,
                "chat_template_kwargs": {"enable_thinking": False}}
-    d0 = metrics()
+    d0 = harness.spec()
     r = harness.post("/v1/chat/completions", payload, timeout=1800)
-    d1 = metrics()
+    d1 = harness.spec()
     # `or ""`: a collapse-to-stop returns content=null, and indexing that ended an
     # earlier sweep with a TypeError instead of a finding.
     ans = r["choices"][0]["message"].get("content") or ""

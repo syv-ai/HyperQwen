@@ -39,7 +39,6 @@ worth ruling in or out with PREFIX_CACHE=0 before blaming the drafter.
 import os
 import sys
 import time
-import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 
 import harness
@@ -66,17 +65,6 @@ TASKS = [
 ]
 
 
-def metrics():
-    d = {}
-    for line in urllib.request.urlopen(harness.request("/metrics")).read().decode().splitlines():
-        for k in ("vllm:spec_decode_num_drafts_total",
-                  "vllm:spec_decode_num_accepted_tokens_total"):
-            if line.startswith(k + " ") or line.startswith(k + "{"):
-                d[k] = float(line.split()[-1])
-    return (d.get("vllm:spec_decode_num_drafts_total", 0.0),
-            d.get("vllm:spec_decode_num_accepted_tokens_total", 0.0))
-
-
 def ask(task):
     name, q = task
     payload = {"model": "qwen3.8-27b",
@@ -97,7 +85,7 @@ print(f"  batch 1 copy: {alone['tokens']} tokens in {alone['wall']:.1f}s", flush
 bad = 0
 soft = 0
 first_round_copy = None
-d0, a0 = metrics()
+d0, a0 = harness.spec()
 t_end = time.time() + MINUTES * 60
 rnd = 0
 while rnd < ROUNDS or time.time() < t_end:
@@ -121,7 +109,7 @@ while rnd < ROUNDS or time.time() < t_end:
             bad += 1
         print(f"  round {rnd} {o['task']:8s} {o['tokens']:4d} tok {o['wall']:6.1f}s "
               f"{'ok' if ok else 'EMPTY'}{note}", flush=True)
-d1, a1 = metrics()
+d1, a1 = harness.spec()
 steps = d1 - d0
 print(f"soak: {rnd} rounds x {CONC} requests, tokens/step={1 + (a1 - a0) / max(steps, 1):.2f}, "
       f"{'OK' if not bad else str(bad) + ' PROBLEMS'}"

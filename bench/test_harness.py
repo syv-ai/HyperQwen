@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-"""CPU-only checks for bench/harness.py: the key chain matches resolve_api_key.sh, one URL convention, post()."""
+"""CPU-only checks for bench/harness.py: the key chain matches resolve_api_key.sh, one URL convention, post(),
+stream() and the /metrics readers."""
+import contextlib
 import http.server
 import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import threading
 import unittest
@@ -64,35 +67,43 @@ class BaseUrlTests(unittest.TestCase):
                 self.assertEqual(harness.base_url(), want)
 
 
+@contextlib.contextmanager
+def stub(body):
+    """A server on a free port that answers every GET and POST with `body`, then closes the connection.
+    Yields the list of requests it saw, as {method, path, auth, ctype, body}, and sets VLLM_API and the key."""
+    seen = []
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def answer(self):
+            n = int(self.headers["Content-Length"] or 0)
+            seen.append({"method": self.command, "path": self.path, "auth": self.headers["Authorization"],
+                         "ctype": self.headers["Content-Type"], "body": json.loads(self.rfile.read(n)) if n else None})
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(body)
+
+        do_GET = do_POST = answer
+
+        def log_message(self, format, *args):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    try:
+        with mock.patch.dict(os.environ, {"VLLM_API": f"http://127.0.0.1:{srv.server_port}/v1", "OPENAI_API_KEY": "k"}):
+            yield seen
+    finally:
+        srv.shutdown()
+        srv.server_close()
+
+
 class PostTests(unittest.TestCase):
     def test_post_sends_key_and_json(self):
-        seen = {}
-
-        class Stub(http.server.BaseHTTPRequestHandler):
-            def do_POST(self):
-                seen.update(path=self.path, auth=self.headers["Authorization"], ctype=self.headers["Content-Type"],
-                            body=json.loads(self.rfile.read(int(self.headers["Content-Length"]))))
-                out = json.dumps({"ok": 1}).encode()
-                self.send_response(200)
-                self.send_header("Content-Length", str(len(out)))
-                self.end_headers()
-                self.wfile.write(out)
-
-            def log_message(self, format, *args):
-                pass
-
-        srv = http.server.HTTPServer(("127.0.0.1", 0), Stub)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        try:
-            env = {"VLLM_API": f"http://127.0.0.1:{srv.server_port}/v1", "OPENAI_API_KEY": "k"}
-            with mock.patch.dict(os.environ, env):
-                got = harness.post("/v1/chat/completions", {"model": "m"}, timeout=10)
-        finally:
-            srv.shutdown()
-            srv.server_close()
+        with stub(b'{"ok": 1}') as seen:
+            got = harness.post("/v1/chat/completions", {"model": "m"}, timeout=10)
         self.assertEqual(got, {"ok": 1})
-        self.assertEqual(seen, {"path": "/v1/chat/completions", "auth": "Bearer k",
-                                "ctype": "application/json", "body": {"model": "m"}})
+        self.assertEqual(seen, [{"method": "POST", "path": "/v1/chat/completions", "auth": "Bearer k",
+                                 "ctype": "application/json", "body": {"model": "m"}}])
 
     def test_get_request_has_no_body(self):
         with mock.patch.dict(os.environ, {"OPENAI_API_KEY": "k", "PORT": "1"}):
@@ -100,6 +111,66 @@ class PostTests(unittest.TestCase):
             req = harness.request("/metrics")
         self.assertEqual((req.full_url, req.get_method(), req.data), ("http://127.0.0.1:1/metrics", "GET", None))
         self.assertEqual(req.get_header("Authorization"), "Bearer k")
+
+
+# A keep-alive comment before and between frames, a data line with no space after the colon, and a frame
+# after [DONE] that must not be read.
+SSE = (b': keep-alive\n\ndata: {"choices": [{"delta": {"content": "a"}}]}\n\n: keep-alive\n\n'
+       b'data:{"choices": [], "usage": {"completion_tokens": 1}}\n\ndata: [DONE]\n\ndata: {"after": 1}\n\n')
+
+
+class StreamTests(unittest.TestCase):
+    def test_frames_until_done(self):
+        with stub(SSE) as seen:
+            got = list(harness.stream("/v1/chat/completions", {"stream": True}, timeout=10))
+        self.assertEqual(got, [{"choices": [{"delta": {"content": "a"}}]},
+                               {"choices": [], "usage": {"completion_tokens": 1}}])
+        self.assertEqual((seen[0]["path"], seen[0]["auth"], seen[0]["body"]),
+                         ("/v1/chat/completions", "Bearer k", {"stream": True}))
+
+
+# What vLLM's prometheus_client writes for two engines: <name>_total and <name>_created per label set, with
+# the accepted counter ahead of the drafts counter, so a reader that goes by line order gets them swapped.
+METRICS = b"""# HELP vllm:spec_decode_num_accepted_tokens_total Number of accepted tokens.
+# TYPE vllm:spec_decode_num_accepted_tokens_total counter
+vllm:spec_decode_num_accepted_tokens_total{engine="0",model_name="m"} 25.0
+vllm:spec_decode_num_accepted_tokens_created{engine="0",model_name="m"} 1.7e+09
+vllm:spec_decode_num_accepted_tokens_total{engine="1",model_name="m"} 5.0
+vllm:spec_decode_num_drafts_total{engine="0",model_name="m"} 10.0
+vllm:spec_decode_num_drafts_created{engine="0",model_name="m"} 1.7e+09
+vllm:spec_decode_num_drafts_total{engine="1",model_name="m"} 4.0
+vllm:cache_config_info{block_size="16",note="a b}"} 1.0
+vllm:num_preemptions_total 3.0
+vllm:num_requests_running{engine="0"} 2.0 1700000000000
+"""
+
+
+class MetricsTests(unittest.TestCase):
+    def test_samples_keep_labels_with_spaces(self):
+        with stub(METRICS) as seen:
+            got = harness.samples(timeout=10)
+        self.assertIn(("vllm:cache_config_info", '{block_size="16",note="a b}"}', 1.0), got)
+        self.assertIn(("vllm:num_preemptions_total", "", 3.0), got)
+        self.assertIn(("vllm:num_requests_running", '{engine="0"}', 2.0), got)
+        self.assertEqual(len(got), 9)
+        self.assertEqual((seen[0]["method"], seen[0]["path"], seen[0]["auth"]), ("GET", "/metrics", "Bearer k"))
+
+    def test_metrics_sum_engines_and_skip_created(self):
+        with stub(METRICS):
+            got = harness.metrics("vllm:spec_decode_num_drafts_total", "vllm:num_preemptions_total", "vllm:absent")
+        self.assertEqual(got, {"vllm:spec_decode_num_drafts_total": 14.0, "vllm:num_preemptions_total": 3.0})
+
+    def test_spec_by_name(self):
+        with stub(METRICS):
+            self.assertEqual(harness.spec(), (14.0, 30.0))
+            out = subprocess.run([sys.executable, str(REPO / "bench" / "harness.py"), "spec"],
+                                 capture_output=True, check=True, text=True).stdout
+        self.assertEqual(out, "14.0 30.0\n")
+
+    def test_spec_cli_without_server(self):
+        with mock.patch.dict(os.environ, {"VLLM_API": "http://127.0.0.1:9"}):
+            r = subprocess.run([sys.executable, str(REPO / "bench" / "harness.py"), "spec"], capture_output=True, text=True)
+        self.assertEqual((r.returncode, r.stdout, r.stderr.count("\n")), (1, "", 1))
 
 
 if __name__ == "__main__":

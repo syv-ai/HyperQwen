@@ -31,12 +31,13 @@ MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}
 # filesystem path 404s the model check there — the run then logs "WARNING:
 # /tokenize unavailable" and silently skips alignment. --tokenizer keeps
 # loading the tokenizer from the checkpoint dir, which is what the path is for.
-B="venv/bin/vllm bench serve --host $HOST --port $PORT --model qwen3.8-27b --tokenizer $MODEL --served-model-name qwen3.8-27b"
+# An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
+B=(venv/bin/vllm bench serve --host "$HOST" --port "$PORT" --model qwen3.8-27b --tokenizer "$MODEL" --served-model-name qwen3.8-27b)
 OUT=${OUT:-$HERE/results}; mkdir -p "$OUT"
 
 curl -sf -o /dev/null http://$HOST:$PORT/health || { echo "no server on $HOST:$PORT"; exit 1; }
-metrics() { curl -s http://$HOST:$PORT/metrics -H "Authorization: Bearer $OPENAI_API_KEY"; }
-spec() { metrics | grep -E "^vllm:spec_decode_num_(drafts|accepted_tokens)_total" | awk '{print $2}' | tr "\n" " "; }
+# Drafts and accepted tokens by name, summed over engines (bench/harness.py).
+spec() { VLLM_API="http://$HOST:$PORT" python3 "$HERE/harness.py" spec; }
 num() { awk "/$1/ {print \$$2}" "$3"; }
 row() { # label logfile conc
   local L=$1 F=$2 C=$3
@@ -59,11 +60,11 @@ echo "# $(date) mode=$MODE server=$HOST:$PORT"
 # "measured" at 4.0 s that cold costs 11.2 s). Distinct seeds per call make
 # every request a cold miss; SEED_BASE pins them for reproducibility.
 SEED=${SEED_BASE:-1000}
-$B --dataset-name random --seed $((SEED+=1)) --random-input-len 256 --random-output-len 256 --num-prompts 16 --max-concurrency 8 > /dev/null 2>&1   # warmup
+"${B[@]}" --dataset-name random --seed $((SEED+=1)) --random-input-len 256 --random-output-len 256 --num-prompts 16 --max-concurrency 8 > /dev/null 2>&1   # warmup
 
 if [ "$MODE" = "batch" ]; then
   for W in "128 512" "256 256"; do set -- $W
-    $B --dataset-name random --seed $((SEED+=1)) --ignore-eos --random-input-len $1 --random-output-len $2 --num-prompts 256 --max-concurrency 64 > $OUT/batch_${1}_${2}.log 2>&1
+    "${B[@]}" --dataset-name random --seed $((SEED+=1)) --ignore-eos --random-input-len $1 --random-output-len $2 --num-prompts 256 --max-concurrency 64 > $OUT/batch_${1}_${2}.log 2>&1
     row "64conc $1in/$2out" $OUT/batch_${1}_${2}.log 64
   done
 fi
@@ -73,7 +74,7 @@ for T in default 0; do
   TARG=""; [ "$T" = "0" ] && TARG="--temperature 0"
   for C in 1 2 4 8; do
     S0=$(spec)
-    $B --dataset-name custom --dataset-path $HERE/prompts_real.jsonl --custom-output-len 1024 --num-prompts 8 --max-concurrency $C $TARG > $OUT/cohort_T${T}_c$C.log 2>&1
+    "${B[@]}" --dataset-name custom --dataset-path "$HERE/prompts_real.jsonl" --custom-output-len 1024 --num-prompts 8 --max-concurrency $C $TARG > $OUT/cohort_T${T}_c$C.log 2>&1
     S1=$(spec)
     L="cohort C$C real prompts T=$T"; F=$OUT/cohort_T${T}_c$C.log
     echo "ROW $L | e2e=$(num "Output token throughput" 5 $F) tok/s | decode(C/meanTPOT)=$(python3 -c "print(f'{$C*1000/$(num "Mean TPOT" 4 $F):.1f}')") | tok/step=$(tokstep "$S0" "$S1") | meanTTFT=$(num "Mean TTFT" 4 $F) ms"
@@ -81,7 +82,7 @@ for T in default 0; do
 done
 if [ $DO_PREFILL = 1 ]; then
   pf() { LEN=$1; C=$2; N=$3
-    $B --dataset-name random --seed $((SEED+=1)) --random-output-len 1 --random-input-len $LEN --num-prompts $N --max-concurrency $C > $OUT/prefill_${LEN}_c$C.log 2>&1
+    "${B[@]}" --dataset-name random --seed $((SEED+=1)) --random-output-len 1 --random-input-len $LEN --num-prompts $N --max-concurrency $C > $OUT/prefill_${LEN}_c$C.log 2>&1
     IN=$(num "Total input tokens" 4 $OUT/prefill_${LEN}_c$C.log); DUR=$(num "Benchmark duration" 4 $OUT/prefill_${LEN}_c$C.log)
     echo "ROW prefill len=$LEN conc=$C | $(python3 -c "print(f'{$IN/$DUR:.0f}')") tok/s | meanTTFT=$(num "Mean TTFT" 4 $OUT/prefill_${LEN}_c$C.log) ms"; }
   pf 1024 1 16; pf 1024 4 32; pf 1024 16 64
@@ -91,9 +92,9 @@ if [ $DO_PREFILL = 1 ]; then
   pf 102400 1 2
 fi
 if [ $DO_LONG = 1 ]; then
-  $B --dataset-name random --seed $((SEED+=1)) --ignore-eos --random-input-len 100000 --random-output-len 256 --num-prompts 1 --max-concurrency 1 > $OUT/long_100k.log 2>&1
+  "${B[@]}" --dataset-name random --seed $((SEED+=1)) --ignore-eos --random-input-len 100000 --random-output-len 256 --num-prompts 1 --max-concurrency 1 > $OUT/long_100k.log 2>&1
   echo "ROW 1x100k/256 | meanTTFT=$(num "Mean TTFT" 4 $OUT/long_100k.log) ms | TPOT=$(num "Mean TPOT" 4 $OUT/long_100k.log) ms"
-  $B --dataset-name random --seed $((SEED+=1)) --ignore-eos --random-input-len 60000 --random-output-len 1024 --num-prompts 4 --max-concurrency 4 > $OUT/long_4x60k.log 2>&1
+  "${B[@]}" --dataset-name random --seed $((SEED+=1)) --ignore-eos --random-input-len 60000 --random-output-len 1024 --num-prompts 4 --max-concurrency 4 > $OUT/long_4x60k.log 2>&1
   echo "ROW 4x60k/1024 conc4 | e2e=$(num "Output token throughput" 5 $OUT/long_4x60k.log) tok/s | medITL=$(num "Median ITL" 4 $OUT/long_4x60k.log) ms | dur=$(num "Benchmark duration" 4 $OUT/long_4x60k.log)s"
 fi
 echo "# raw logs in $OUT"

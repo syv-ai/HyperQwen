@@ -23,7 +23,6 @@ import json
 import os
 import sys
 import time
-import urllib.request
 
 import harness
 
@@ -60,29 +59,20 @@ def run(key, label, content, max_tokens=None):
                "chat_template_kwargs": {"enable_thinking": False}}
     if max_tokens:
         payload["max_tokens"] = max_tokens
-    req = harness.request("/v1/chat/completions", payload)
     t0 = time.time()
     first = None
     toks = []          # (ms since first token, text)
     usage = {}
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        for raw in r:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            body = line[6:]
-            if body == "[DONE]":
-                break
-            ev = json.loads(body)
-            if ev.get("usage"):
-                usage = ev["usage"]
-            for ch in ev.get("choices", []):
-                piece = ch.get("delta", {}).get("content")
-                if piece:
-                    now = time.time()
-                    if first is None:
-                        first = now
-                    toks.append([round((now - first) * 1000, 1), piece])
+    for ev in harness.stream("/v1/chat/completions", payload):
+        if ev.get("usage"):
+            usage = ev["usage"]
+        for ch in ev.get("choices", []):
+            piece = ch.get("delta", {}).get("content")
+            if piece:
+                now = time.time()
+                if first is None:
+                    first = now
+                toks.append([round((now - first) * 1000, 1), piece])
     end = time.time()
     ttft = (first or end) - t0
     decode_s = end - (first or end)

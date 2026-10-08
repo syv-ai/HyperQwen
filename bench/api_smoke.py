@@ -57,11 +57,9 @@ def t_min_tokens_penalty():
     r = chat("Sig hej.", temperature=0.7, min_tokens=30, presence_penalty=1.2, frequency_penalty=0.3, max_tokens=48)
     return r["usage"]["completion_tokens"] >= 30, r["usage"]
 def t_stream():
-    req = harness.request("/v1/chat/completions", {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "Skriv to sætninger om vejret."}],
-                          "max_tokens": 48, "stream": True, "chat_template_kwargs": {"enable_thinking": False}})
-    body = urllib.request.urlopen(req, timeout=600).read().decode()
-    chunks = [l for l in body.splitlines() if l.startswith("data: ") and "[DONE]" not in l]
-    return len(chunks) > 5, f"{len(chunks)} chunks"
+    n = sum(1 for _ in harness.stream("/v1/chat/completions", {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "Skriv to sætninger om vejret."}],
+                                         "max_tokens": 48, "stream": True, "chat_template_kwargs": {"enable_thinking": False}}, timeout=600))
+    return n > 5, f"{n} chunks"
 def t_thinking():
     r = chat("Hvad er 17*23? Svar kort.", temperature=0.6, max_tokens=512, chat_template_kwargs={"enable_thinking": True})
     m = r["choices"][0]["message"]

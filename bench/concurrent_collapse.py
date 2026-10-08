@@ -14,7 +14,7 @@ Exits 1 if any trial collapsed or a request errored.
 On CTX=huge SPEC=dflash2 PREFIX_CACHE=1. With kvarn/kvarn-recycled-pages-0.30.0.patch applied the
 engine log says "KVarN: dropped the pending tiles of N block(s)" the first time the fix fires.
 """
-import os, re, secrets, sys, threading, urllib.request
+import os, re, secrets, sys, threading
 
 import harness
 
@@ -39,11 +39,9 @@ def post(messages, max_tokens):
 
 def corrupted():  # counts only with VLLM_COMPUTE_NANS_IN_LOGITS=1; None when the metric is absent
     try:
-        txt = urllib.request.urlopen(harness.request("/metrics"), timeout=30).read().decode()
+        return harness.metrics("vllm:corrupted_requests_total").get("vllm:corrupted_requests_total")
     except OSError:
         return None
-    v = re.findall(r"^vllm:corrupted_requests_total(?:\{[^}]*\})? ([0-9.e+]+)$", txt, re.M)
-    return sum(float(x) for x in v) if v else None
 
 
 def trial(i):

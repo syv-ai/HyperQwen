@@ -27,7 +27,7 @@ jobs:
         run: python bench/mq3d_capacity_property.py --mutate seq-rows
       - name: Check verbatim answer classification without a GPU
         run: python bench/verbatim.py
-      - name: Check the bench scripts reach the server with resolve_api_key.sh's key
+      - name: Check the bench harness (resolve_api_key.sh's key, the URL, streams and /metrics) without a GPU
         run: python bench/test_harness.py
       - name: Check a launcher with no API key binds 127.0.0.1
         run: bash bench/test_no_key_bind.sh

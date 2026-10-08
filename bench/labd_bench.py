@@ -23,7 +23,6 @@ import json
 import os
 import sys
 import time
-import urllib.request
 
 import harness
 
@@ -37,16 +36,6 @@ def arg(name, default):
 CORPUS = os.path.expanduser(arg("--corpus", "~/bench/labd_corpus.txt"))
 CTX = int(arg("--ctx", 20000))
 MAXTOK = int(arg("--max-tokens", 512))
-
-
-def metrics():
-    d = {}
-    for line in urllib.request.urlopen(harness.request("/metrics")).read().decode().splitlines():
-        for k in ("vllm:spec_decode_num_drafts_total", "vllm:spec_decode_num_accepted_tokens_total"):
-            if line.startswith(k + " ") or line.startswith(k + "{"):
-                d[k] = float(line.split()[-1])
-    return (d.get("vllm:spec_decode_num_drafts_total", 0.0),
-            d.get("vllm:spec_decode_num_accepted_tokens_total", 0.0))
 
 
 if not os.path.exists(CORPUS):
@@ -94,30 +83,21 @@ for name, q in TASKS:
                "max_tokens": MAXTOK, "temperature": 0, "stream": True,
                "stream_options": {"include_usage": True},
                "chat_template_kwargs": {"enable_thinking": False}}
-    req = harness.request("/v1/chat/completions", payload)
-    d0, a0 = metrics()
+    d0, a0 = harness.spec()
     t0 = time.time()
     t_first = None
     n_chunks = 0
     usage = {}
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        for raw in r:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            body = line[6:]
-            if body == "[DONE]":
-                break
-            ev = json.loads(body)
-            if ev.get("usage"):
-                usage = ev["usage"]
-            for ch in ev.get("choices", []):
-                if ch.get("delta", {}).get("content"):
-                    if t_first is None:
-                        t_first = time.time()
-                    n_chunks += 1
+    for ev in harness.stream("/v1/chat/completions", payload):
+        if ev.get("usage"):
+            usage = ev["usage"]
+        for ch in ev.get("choices", []):
+            if ch.get("delta", {}).get("content"):
+                if t_first is None:
+                    t_first = time.time()
+                n_chunks += 1
     t_end = time.time()
-    d1, a1 = metrics()
+    d1, a1 = harness.spec()
     steps = d1 - d0
     tps = 1 + (a1 - a0) / max(steps, 1)
     out = usage.get("completion_tokens", n_chunks)

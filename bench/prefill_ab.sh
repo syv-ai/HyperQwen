@@ -27,7 +27,8 @@ MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast}
 # --model is the served name (the bench client's /tokenize alignment probe
 # posts it as the request's model; a checkpoint path 404s there); the
 # checkpoint dir rides --tokenizer, which is what actually reads it.
-B="venv/bin/vllm bench serve --host 127.0.0.1 --port $PORT --model qwen3.8-27b --tokenizer $MODEL --served-model-name qwen3.8-27b"
+# An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
+B=(venv/bin/vllm bench serve --host 127.0.0.1 --port "$PORT" --model qwen3.8-27b --tokenizer "$MODEL" --served-model-name qwen3.8-27b)
 
 # ---- boot -------------------------------------------------------------------
 if curl -sf -o /dev/null http://127.0.0.1:$PORT/health; then
@@ -51,16 +52,16 @@ fi
 nvidia-smi --query-gpu=memory.used,memory.total,power.limit --format=csv,noheader | tee "$OUT/gpu-after-boot.txt"
 
 num() { awk "/$1/ {print \$$2}" "$3"; }
-metrics() { curl -s http://127.0.0.1:$PORT/metrics -H "Authorization: Bearer $OPENAI_API_KEY"; }
-spec() { metrics | grep -E "^vllm:spec_decode_num_(drafts|accepted_tokens)_total" | awk '{print $2}' | tr "\n" " "; }
+# Drafts and accepted tokens by name, summed over engines (bench/harness.py).
+spec() { VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" spec; }
 
 # ---- warmup (JIT shapes: small + one large continuation) --------------------
 # Every call gets its own --seed: the bench default (0) reuses the same prompts
 # call to call, and with PREFIX_CACHE=1 that hands later calls silent
 # prefix-cache hits whose size depends on the arm's pool geometry — pass 1 of
 # spec-off measured 4.0 s for a 16k prefill that cold costs 11.2 s.
-$B --dataset-name random --seed 901 --random-input-len 256 --random-output-len 64 --num-prompts 8 --max-concurrency 4 > /dev/null 2>&1
-$B --dataset-name random --seed 902 --random-input-len 16384 --random-output-len 1 --num-prompts 2 --max-concurrency 1 > /dev/null 2>&1
+"${B[@]}" --dataset-name random --seed 901 --random-input-len 256 --random-output-len 64 --num-prompts 8 --max-concurrency 4 > /dev/null 2>&1
+"${B[@]}" --dataset-name random --seed 902 --random-input-len 16384 --random-output-len 1 --num-prompts 2 --max-concurrency 1 > /dev/null 2>&1
 
 # ---- prefill rows, two passes, keep the second ------------------------------
 # Pass 2's seeds are the same in every arm, so all arms measure identical prompts.
@@ -69,7 +70,7 @@ for PASS in 1 2; do
   for L in $ROWS; do
     IDX=$((IDX+1))
     N=4; [ "$L" -ge 16384 ] && N=3; [ "$L" -ge 40000 ] && N=2
-    $B --dataset-name random --seed $((PASS*1000+IDX)) --random-output-len 1 --random-input-len $L --num-prompts $N --max-concurrency 1 > "$OUT/pf_${L}_p$PASS.log" 2>&1
+    "${B[@]}" --dataset-name random --seed $((PASS*1000+IDX)) --random-output-len 1 --random-input-len $L --num-prompts $N --max-concurrency 1 > "$OUT/pf_${L}_p$PASS.log" 2>&1
     IN=$(num "Total input tokens" 4 "$OUT/pf_${L}_p$PASS.log"); DUR=$(num "Benchmark duration" 4 "$OUT/pf_${L}_p$PASS.log")
     TTFT=$(num "Mean TTFT" 4 "$OUT/pf_${L}_p$PASS.log")
     [ "$PASS" = 2 ] && echo "ROW $ARM prefill len=$L | $(python3 -c "print(f'{$IN/$DUR:.0f}')") tok/s | meanTTFT=$TTFT ms"
@@ -78,7 +79,7 @@ done
 
 # ---- decode guard: C1 cohort, default sampling + tok/step -------------------
 S0=$(spec)
-$B --dataset-name custom --dataset-path "$HERE/prompts_real.jsonl" --custom-output-len 1024 --num-prompts 8 --max-concurrency 1 > "$OUT/cohort_c1.log" 2>&1
+"${B[@]}" --dataset-name custom --dataset-path "$HERE/prompts_real.jsonl" --custom-output-len 1024 --num-prompts 8 --max-concurrency 1 > "$OUT/cohort_c1.log" 2>&1
 S1=$(spec)
 TS=$(python3 -c "
 a='$S0'.split(); b='$S1'.split()

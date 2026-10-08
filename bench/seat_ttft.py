@@ -18,7 +18,7 @@ and "warm" means warm engine, not warm cache.
 
 A measurement, so it exits 0 whatever the numbers say. It exits 2 if every request failed.
 """
-import json, sys, time, urllib.request
+import sys, time
 
 import harness
 
@@ -39,30 +39,22 @@ def prompt(salt):
 
 def ttft(salt):
     """Time to the first streamed content chunk, plus the prompt length the server saw."""
-    req = harness.request("/v1/chat/completions", {
+    payload = {
         "model": "qwen3.8-27b",
         "messages": [{"role": "user", "content": prompt(salt)}],
         "temperature": 0, "max_tokens": 32, "stream": True,
         "stream_options": {"include_usage": True},
         "chat_template_kwargs": {"enable_thinking": False},
-    })
+    }
     t0 = time.perf_counter()
     first = None
     ptok = None
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        for raw in r:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            payload = line[6:]
-            if payload == "[DONE]":
-                break
-            ev = json.loads(payload)
-            if ev.get("usage"):
-                ptok = ev["usage"]["prompt_tokens"]
-            ch = ev.get("choices") or []
-            if first is None and ch and (ch[0].get("delta") or {}).get("content"):
-                first = time.perf_counter() - t0
+    for ev in harness.stream("/v1/chat/completions", payload):
+        if ev.get("usage"):
+            ptok = ev["usage"]["prompt_tokens"]
+        ch = ev.get("choices") or []
+        if first is None and ch and (ch[0].get("delta") or {}).get("content"):
+            first = time.perf_counter() - t0
     return first, time.perf_counter() - t0, ptok
 
 

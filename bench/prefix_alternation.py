@@ -38,7 +38,6 @@ import os
 import subprocess
 import sys
 import time
-import urllib.request
 
 import harness
 
@@ -63,9 +62,11 @@ def engine_block():
     except Exception:  # noqa: BLE001
         pass
     try:
-        text = urllib.request.urlopen(harness.request("/metrics"), timeout=30).read().decode()
-        m = re.search(r'^vllm:cache_config_info\{[^}]*\bblock_size="(\d+)"', text, re.M)
-        return int(m.group(1)) if m else None
+        for name, labels, _ in harness.samples():
+            if name == "vllm:cache_config_info":
+                m = re.search(r'\bblock_size="(\d+)"', labels)
+                return int(m.group(1)) if m else None
+        return None
     except Exception:  # noqa: BLE001
         return None
 
