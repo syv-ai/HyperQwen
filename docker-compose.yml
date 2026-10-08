@@ -79,7 +79,7 @@ x-qwen: &qwen
 x-serve: &serve
   <<: *qwen
   ports:
-    - "${PORT:-18020}:${PORT:-18020}"
+    - "${BIND:-127.0.0.1}:${PORT:-18020}:${PORT:-18020}"
   depends_on:
     prepare:
       condition: service_completed_successfully
@@ -133,7 +133,7 @@ services:
       CUDA_VISIBLE_DEVICES: "2"  # explicit value wins over .env's 0,1
       EXTRA_ARGS: ""             # one card: .env's --tensor-parallel-size must not apply
     ports:
-      - "${SOLO_PORT:-18021}:${SOLO_PORT:-18021}"
+      - "${BIND:-127.0.0.1}:${SOLO_PORT:-18021}:${SOLO_PORT:-18021}"
     healthcheck:
       test: ["CMD", "curl", "-sf", "http://127.0.0.1:${SOLO_PORT:-18021}/health"]
       interval: 30s

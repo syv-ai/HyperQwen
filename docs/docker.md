@@ -27,7 +27,7 @@ configured as a runtime. The 250 W power limit is a host setting
 git clone https://github.com/syv-ai/HyperQwen && cd HyperQwen
 cp .env.example .env                              # all knobs live in .env (gitignored)
 # PowerShell: Copy-Item .env.example .env
-echo "VLLM_API_KEY=$(openssl rand -hex 24)" >> .env   # skip only if the port stays on this machine
+echo "VLLM_API_KEY=$(openssl rand -hex 24)" >> .env   # skip only if the port stays on this machine (compose publishes on 127.0.0.1; add BIND=0.0.0.0 to serve other machines)
 docker compose --profile single up -d               # or --profile batch
 docker compose logs -f single
 ```
@@ -116,7 +116,7 @@ separate `prepare` service, nothing the image needs. The same server, one
 command, no checkout:
 
 ```bash
-docker run -d --name qwen --gpus all --ipc=host -p 18020:18020 \
+docker run -d --name qwen --gpus all --ipc=host -p 127.0.0.1:18020:18020 \
   -v qwen-models:/app/models -v qwen-cache:/cache \
   --restart unless-stopped ghcr.io/syv-ai/hyperqwen:latest
 ```
