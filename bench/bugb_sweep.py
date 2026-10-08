@@ -47,8 +47,7 @@ for ctx in [int(a) for a in sys.argv[1:]]:
     ptok = len(TOK.encode(TOK.apply_chat_template(
         [{"role": "user", "content": content}], tokenize=False,
         add_generation_prompt=True, enable_thinking=False), add_special_tokens=False))
-    payload = {"model": "qwen3.8-27b",
-               "messages": [{"role": "user", "content": content}],
+    payload = {"messages": [{"role": "user", "content": content}],
                "max_tokens": 400, "temperature": 0,
                "chat_template_kwargs": {"enable_thinking": False}}
     d0 = harness.spec()

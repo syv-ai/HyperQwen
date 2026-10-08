@@ -56,7 +56,7 @@ def docs():
 
 def ppl_one(item):
     lang, text = item
-    r = harness.post("/v1/completions", {"model":"qwen3.8-27b","prompt":text,"max_tokens":1,"temperature":0,
+    r = harness.post("/v1/completions", {"prompt":text,"max_tokens":1,"temperature":0,
                               "prompt_logprobs":0,"echo":False})
     pl = r["choices"][0]["prompt_logprobs"]  # list; first is None
     lps = []
@@ -85,7 +85,7 @@ def extract_num(s):
 def gsm_one(row):
     q, a = row
     gold = a.split("####")[-1].strip().replace(",","")
-    r = harness.post("/v1/chat/completions", {"model":"qwen3.8-27b","messages":[{"role":"user","content":q+"\n\nSolve step by step, then give the final answer as 'Final answer: <number>'."}],
+    r = harness.post("/v1/chat/completions", {"messages":[{"role":"user","content":q+"\n\nSolve step by step, then give the final answer as 'Final answer: <number>'."}],
         "max_tokens":768,"temperature":0,"chat_template_kwargs":{"enable_thinking":False}})
     txt = r["choices"][0]["message"]["content"] or ""
     m = re.search(r"Final answer:\s*\**\s*\$?(-?[\d,]*\.?\d+)", txt)

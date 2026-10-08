@@ -25,17 +25,20 @@ export PATH="$REPO/venv/bin:$PATH"
 source "$REPO/resolve_api_key.sh"
 resolve_client_key
 HOST=${HOST:-127.0.0.1}; PORT=${PORT:-18020}
-MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}
+# The tokenizer directory, as the single-user launcher picks it. The -fast and base dirs share one tokenizer.
+source "$REPO/single-user/select_model.sh"
+curl -sf -o /dev/null http://$HOST:$PORT/health || { echo "no server on $HOST:$PORT"; exit 1; }
 # --model must be the SERVED name, not the checkpoint path: vllm bench serve's
 # tokenizer-alignment probe posts it to /tokenize as the request's model, and a
 # filesystem path 404s the model check there — the run then logs "WARNING:
 # /tokenize unavailable" and silently skips alignment. --tokenizer keeps
 # loading the tokenizer from the checkpoint dir, which is what the path is for.
+# The name is the one the server lists first on /v1/models, or VLLM_MODEL (bench/harness.py).
+NAME=$(VLLM_API="http://$HOST:$PORT" python3 "$HERE/harness.py" model) || exit 1
 # An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
-B=(venv/bin/vllm bench serve --host "$HOST" --port "$PORT" --model qwen3.8-27b --tokenizer "$MODEL" --served-model-name qwen3.8-27b)
+B=(venv/bin/vllm bench serve --host "$HOST" --port "$PORT" --model "$NAME" --tokenizer "$MODEL" --served-model-name "$NAME")
 OUT=${OUT:-$HERE/results}; mkdir -p "$OUT"
 
-curl -sf -o /dev/null http://$HOST:$PORT/health || { echo "no server on $HOST:$PORT"; exit 1; }
 # Drafts and accepted tokens by name, summed over engines (bench/harness.py).
 spec() { VLLM_API="http://$HOST:$PORT" python3 "$HERE/harness.py" spec; }
 num() { awk "/$1/ {print \$$2}" "$3"; }

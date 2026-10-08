@@ -74,16 +74,17 @@ if [ "$WARMUP" = "1" ]; then
         # Do not tear down a boot that is merely slow: systemd's
         # TimeoutStartSec bounds a boot that never completes.
         echo "[server] health timeout after $((WARMUP_ATTEMPTS * WARMUP_INTERVAL))s, serving anyway" >&2
-    # warmup.sh inherits this wrapper's environment (MODEL, HOST, API key) and
-    # re-derives the same defaults as start_qwen.sh, so it targets the server
-    # just started; only PORT needs pinning to the port checked above.
+    # warmup.sh inherits this wrapper's environment (MODEL, HOST, API key,
+    # VLLM_MODEL) and re-derives the same defaults as start_qwen.sh, so it
+    # targets the server just started; only PORT needs pinning to the port
+    # checked above.
     elif PORT="$PORT" bash "$REPO/bench/warmup.sh"; then
         echo "[server] Warmup OK"
         echo "[server] server ready for traffic"
     else
-        # warmup.sh hard-codes its own model path and venv relative to its
-        # tree; a deploy dir that has drifted, or a transient 401, must not
-        # turn a healthy engine into a restart loop.
+        # warmup.sh finds its venv relative to its tree and reads the served
+        # name from /v1/models; a deploy dir that has drifted, or a transient
+        # 401, must not turn a healthy engine into a restart loop.
         echo "[server] warmup failed, serving anyway" >&2
     fi
 fi

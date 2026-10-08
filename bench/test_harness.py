@@ -70,7 +70,8 @@ class BaseUrlTests(unittest.TestCase):
 @contextlib.contextmanager
 def stub(body):
     """A server on a free port that answers every GET and POST with `body`, then closes the connection.
-    Yields the list of requests it saw, as {method, path, auth, ctype, body}, and sets VLLM_API and the key."""
+    Yields the list of requests it saw, as {method, path, auth, ctype, body}, sets VLLM_API and the key, and
+    unsets VLLM_MODEL."""
     seen = []
 
     class Handler(http.server.BaseHTTPRequestHandler):
@@ -91,6 +92,7 @@ def stub(body):
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     try:
         with mock.patch.dict(os.environ, {"VLLM_API": f"http://127.0.0.1:{srv.server_port}/v1", "OPENAI_API_KEY": "k"}):
+            os.environ.pop("VLLM_MODEL", None)
             yield seen
     finally:
         srv.shutdown()
@@ -111,6 +113,40 @@ class PostTests(unittest.TestCase):
             req = harness.request("/metrics")
         self.assertEqual((req.full_url, req.get_method(), req.data), ("http://127.0.0.1:1/metrics", "GET", None))
         self.assertEqual(req.get_header("Authorization"), "Bearer k")
+
+
+# /v1/models as vLLM writes it: the served name first, then any LoRA adapters.
+MODELS = b'{"object": "list", "data": [{"id": "served", "root": "/models/x"}, {"id": "lora", "root": "/a"}]}'
+
+
+class ModelTests(unittest.TestCase):
+    def test_payload_names_vllm_model_only_when_set(self):
+        with stub(b"{}") as seen:
+            harness.post("/v1/completions", {"prompt": "p"}, timeout=10)
+            os.environ["VLLM_MODEL"] = "m"
+            harness.post("/v1/completions", {"prompt": "p"}, timeout=10)
+        self.assertEqual([r["body"] for r in seen], [{"prompt": "p"}, {"model": "m", "prompt": "p"}])
+
+    def test_model_from_server_unless_vllm_model(self):
+        with stub(MODELS) as seen:
+            self.assertEqual(harness.model(), "served")
+            out = subprocess.run([sys.executable, str(REPO / "bench" / "harness.py"), "model"],
+                                 capture_output=True, check=True, text=True).stdout
+            os.environ["VLLM_MODEL"] = "m"
+            self.assertEqual(harness.model(), "m")
+        self.assertEqual(out, "served\n")
+        self.assertEqual(seen, 2 * [{"method": "GET", "path": "/v1/models", "auth": "Bearer k", "ctype": None, "body": None}])
+
+    def test_model_cli_without_a_name(self):
+        def cli():
+            r = subprocess.run([sys.executable, str(REPO / "bench" / "harness.py"), "model"], capture_output=True, text=True)
+            return r.returncode, r.stdout, r.stderr.count("\n")
+        for body in (b'{"data": []}', b"<html>"):
+            with self.subTest(body=body), stub(body):
+                self.assertEqual(cli(), (1, "", 1))
+        with mock.patch.dict(os.environ, {"VLLM_API": "http://127.0.0.1:9"}):
+            os.environ.pop("VLLM_MODEL", None)
+            self.assertEqual(cli(), (1, "", 1))
 
 
 # A keep-alive comment before and between frames, a data line with no space after the colon, and a frame

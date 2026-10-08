@@ -1,4 +1,4 @@
-"""How the bench/ scripts reach the server: the key, the URL, the request, the stream and /metrics.
+"""How the bench/ scripts reach the server: the key, the URL, the model, the request, the stream and /metrics.
 
 Every script runs as `python bench/<script>.py`, which puts bench/ on sys.path, so `import harness` needs no
 path setup. Stdlib only: the scripts run on the venv's bare Python.
@@ -33,11 +33,23 @@ def base_url():
     return "http://127.0.0.1:" + os.environ.get("PORT", "18020")
 
 
+def model():
+    """VLLM_MODEL if set, else the first id the server lists on /v1/models. vLLM serves a request that names no
+    model with that same model, so the scripts' payloads leave it out and only `vllm bench serve` needs this."""
+    if os.environ.get("VLLM_MODEL"):
+        return os.environ["VLLM_MODEL"]
+    with urllib.request.urlopen(request("/v1/models"), timeout=30) as r:
+        return json.load(r)["data"][0]["id"]
+
+
 def request(path, payload=None):
-    """A request to base_url() + path with the key; a payload makes it a JSON POST."""
+    """A request to base_url() + path with the key; a payload makes it a JSON POST, naming VLLM_MODEL if set and
+    the payload names no model."""
     headers = {"Authorization": "Bearer " + client_key()}
     data = None
     if payload is not None:
+        if os.environ.get("VLLM_MODEL"):
+            payload = {"model": os.environ["VLLM_MODEL"], **payload}
         headers["Content-Type"] = "application/json"
         data = json.dumps(payload).encode()
     return urllib.request.Request(base_url() + path, data=data, headers=headers)
@@ -102,11 +114,13 @@ def spec():
 
 
 if __name__ == "__main__":
-    # The bash scripts call `python3 bench/harness.py spec` for "drafts accepted". With no server it prints
-    # nothing on stdout, as their `curl -s` did, and one line on stderr instead of a traceback.
-    if sys.argv[1:] != ["spec"]:
-        sys.exit("usage: harness.py spec")
+    # The bash scripts call `python3 bench/harness.py spec` for "drafts accepted" and `model` for the name to
+    # give `vllm bench serve`. With no server, or a reply they cannot read, they print nothing on stdout, as
+    # `curl -s` did, and one line on stderr instead of a traceback.
+    commands = {"spec": lambda: print(*spec()), "model": lambda: print(model())}
+    if len(sys.argv) != 2 or sys.argv[1] not in commands:
+        sys.exit("usage: harness.py spec|model")
     try:
-        print(*spec())
-    except OSError as e:
-        sys.exit(f"harness.py spec: {e}")
+        commands[sys.argv[1]]()
+    except (OSError, ValueError, LookupError) as e:
+        sys.exit(f"harness.py {sys.argv[1]}: {e}")

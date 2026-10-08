@@ -37,7 +37,7 @@ TOK = AutoTokenizer.from_pretrained(os.path.join(REPO, "models", "Qwen3.8-27B-W4
 
 
 def once(content):
-    payload = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": content}],
+    payload = {"messages": [{"role": "user", "content": content}],
                "max_tokens": 300, "temperature": 0,
                "chat_template_kwargs": {"enable_thinking": False}}
     d0 = harness.spec()

@@ -1,6 +1,6 @@
 """replay_offload_serve.py: does the CPU offload tier ever SERVE a stored request back? (syv-ai #95 oracle)
 
-Set VLLM_API_KEY and DEPTH_CORPUS_GLOB. Run against a server booted with --kv-offloading-size and a GPU pool
+Set DEPTH_CORPUS_GLOB; the key comes from bench/harness.py. Run against a server booted with --kv-offloading-size and a GPU pool
 SMALLER than the tier, so a request is evicted from GPU but fits the tier; then it can only come back by a load.
 
 Sequence against a running server:
@@ -9,7 +9,7 @@ Sequence against a running server:
   3. request X again: if the tier serves, TTFT is a fraction of (1) and the CPU->GPU counter grows; if the tier stores
      but never serves (the #52735 defect), TTFT is a full re-prefill and the counter stays put.
 
-    TIER_GIB=<--kv-offloading-size> python replay.py TAG PORT DEPTH_CHARS N_EVICTORS
+    TIER_GIB=<--kv-offloading-size> python bench/replay_offload_serve.py TAG PORT DEPTH_CHARS N_EVICTORS
 Prints one JSON line per request and a final verdict line. Exits 0 on SERVED, 1 on NOT-SERVED, 2 on
 INVALID-TIER-OVERFLOW.
 
@@ -24,6 +24,7 @@ TIER_GIB set the script refuses that verdict and prints INVALID-TIER-OVERFLOW in
 import glob
 import json
 import os
+import re
 import sys
 import time
 
@@ -47,7 +48,7 @@ def metrics():
 
 
 def ask(label, prompt, max_tokens=32):
-    payload = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": prompt}],
+    payload = {"messages": [{"role": "user", "content": prompt}],
                "max_tokens": max_tokens, "temperature": 0, "stream": True, "stream_options": {"include_usage": True}}
     t0 = time.time()
     first = None
@@ -59,7 +60,7 @@ def ask(label, prompt, max_tokens=32):
             usage = j["usage"]
     ttft = round((first or time.time()) - t0, 2)
     m = metrics()
-    served = {k.replace("{engine=\"0\",model_name=\"qwen3.8-27b\",", "{"): v for k, v in m.items() if "total_bytes" in k or "load" in k or "store" in k or "usage_perc" in k or "skipped" in k or "lookup" in k or "prefix_cache" in k}
+    served = {re.sub(r'\{engine="0",model_name="[^"]*",', "{", k): v for k, v in m.items() if "total_bytes" in k or "load" in k or "store" in k or "usage_perc" in k or "skipped" in k or "lookup" in k or "prefix_cache" in k}
     rec = {"tag": TAG, "req": label, "ttft_s": ttft, "total_s": round(time.time() - t0, 1),
            "prompt_tokens": (usage or {}).get("prompt_tokens"), "cached": ((usage or {}).get("prompt_tokens_details") or {}).get("cached_tokens"),
            "offload": served}

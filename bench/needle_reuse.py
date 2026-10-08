@@ -25,13 +25,10 @@ Usage:
 """
 import argparse
 import json
-import os
 import sys
 import time
 
 import harness
-
-MODEL = os.environ.get("VLLM_MODEL", "qwen3.8-27b")
 
 # ~46 chars, ~11 tokens of filler per unit
 UNIT = "All work and no play makes Jack a dull boy. "
@@ -39,7 +36,7 @@ UNIT = "All work and no play makes Jack a dull boy. "
 
 def ask(messages, max_tokens=48):
     payload = {
-        "model": MODEL, "messages": messages, "max_tokens": max_tokens,
+        "messages": messages, "max_tokens": max_tokens,
         "temperature": 0,
         "chat_template_kwargs": {"enable_thinking": False},
     }

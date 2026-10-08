@@ -42,7 +42,6 @@ import time
 import harness
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-MODEL = os.environ.get("VLLM_MODEL", "qwen3.8-27b")
 UNIT = os.environ.get("HQ_UNIT", "")
 
 LOG = []
@@ -80,7 +79,7 @@ def healthy_floor(prev_prompt, block):
 
 def call(messages, max_tokens=24):
     payload = {
-        "model": MODEL, "messages": messages, "max_tokens": max_tokens,
+        "messages": messages, "max_tokens": max_tokens,
         "temperature": 0,
         "chat_template_kwargs": {"enable_thinking": False},
     }

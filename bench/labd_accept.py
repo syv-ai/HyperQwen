@@ -77,7 +77,9 @@ Usage (on syv, against a server started with SPEC=dflash2):
                                        [--chunk 128] [--block 7]
                                        [--tasks copy,code,edit,quote,summary,qa]
                                        [--base http://127.0.0.1:18020] [--recapture]
-                                       [--keep-dirty]
+                                       [--keep-dirty] [--model NAME]
+
+--model sets VLLM_MODEL (bench/harness.py); without it the server's first model answers.
 """
 import glob
 import hashlib
@@ -104,7 +106,8 @@ def flag(name):
 
 if flag("--base"):
     os.environ["VLLM_API"] = arg("--base", "")
-MODEL = arg("--model", "qwen3.8-27b")
+if flag("--model"):
+    os.environ["VLLM_MODEL"] = arg("--model", "")
 CTX = int(arg("--ctx", 20000))
 MAXTOK = int(arg("--max-tokens", 512))
 CHUNK = int(arg("--chunk", 128))
@@ -133,7 +136,7 @@ def metrics():
 
 def tokenize_chat(content):
     """The prompt token ids /v1/chat/completions would build for this message."""
-    r = harness.post("/tokenize", {"model": MODEL, "messages": [{"role": "user", "content": content}],
+    r = harness.post("/tokenize", {"messages": [{"role": "user", "content": content}],
                                    "add_generation_prompt": True,
                                    "chat_template_kwargs": {"enable_thinking": False}}, timeout=600)
     return r["tokens"], r["max_model_len"]
@@ -151,7 +154,7 @@ def ids_from_logprobs(tokens):
 
 def generate(prompt_ids, max_tokens):
     """Stream a completion from raw prompt ids. -> (ids, ttft, decode_seconds, usage)."""
-    payload = {"model": MODEL, "prompt": prompt_ids, "max_tokens": max_tokens,
+    payload = {"prompt": prompt_ids, "max_tokens": max_tokens,
                "temperature": 0, "logprobs": 0, "return_tokens_as_token_ids": True,
                "stream": True, "stream_options": {"include_usage": True}}
     toks, usage, t_first = [], {}, None

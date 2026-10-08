@@ -11,12 +11,16 @@ export PATH="$REPO/venv/bin:$PATH"
 # never a bare "Bearer " against a server that bound a key.
 source "$REPO/resolve_api_key.sh"
 resolve_client_key
-M=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}; TAG=$1; N=${2:-3}; T=${3:-}
+# The tokenizer directory, as the single-user launcher picks it. The -fast and base dirs share one tokenizer.
+source "$REPO/single-user/select_model.sh"
+TAG=$1; N=${2:-3}; T=${3:-}
 # --model is the served name (the /tokenize alignment probe posts it as the
 # request's model; a checkpoint path 404s there); --tokenizer loads locally.
+# The name is the one the server lists first on /v1/models, or VLLM_MODEL (bench/harness.py).
 PORT=${PORT:-18020}
+NAME=$(VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" model) || exit 1
 # An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
-B=(venv/bin/vllm bench serve --host 127.0.0.1 --port "$PORT" --model qwen3.8-27b --tokenizer "$M" --served-model-name qwen3.8-27b)
+B=(venv/bin/vllm bench serve --host 127.0.0.1 --port "$PORT" --model "$NAME" --tokenizer "$MODEL" --served-model-name "$NAME")
 # Drafts and accepted tokens by name, summed over engines (bench/harness.py).
 snap() { VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" spec; }
 for i in $(seq 1 $N); do

@@ -23,12 +23,8 @@ export PATH="$REPO/venv/bin:$PATH"
 # never a bare "Bearer " against a server that bound a key.
 source "$REPO/resolve_api_key.sh"
 resolve_client_key
-MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast}
-# --model is the served name (the bench client's /tokenize alignment probe
-# posts it as the request's model; a checkpoint path 404s there); the
-# checkpoint dir rides --tokenizer, which is what actually reads it.
-# An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
-B=(venv/bin/vllm bench serve --host 127.0.0.1 --port "$PORT" --model qwen3.8-27b --tokenizer "$MODEL" --served-model-name qwen3.8-27b)
+# The tokenizer directory, as the single-user launcher picks it. The -fast and base dirs share one tokenizer.
+source "$REPO/single-user/select_model.sh"
 
 # ---- boot -------------------------------------------------------------------
 if curl -sf -o /dev/null http://127.0.0.1:$PORT/health; then
@@ -54,6 +50,25 @@ nvidia-smi --query-gpu=memory.used,memory.total,power.limit --format=csv,noheade
 num() { awk "/$1/ {print \$$2}" "$3"; }
 # Drafts and accepted tokens by name, summed over engines (bench/harness.py).
 spec() { VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" spec; }
+teardown() {
+  if [ -f "$OUT/server.pid" ] && [ "${KEEP:-0}" != 1 ]; then
+    kill "$(cat $OUT/server.pid)" 2>/dev/null; sleep 1
+    pkill -f "vllm serve.*$PORT" 2>/dev/null
+    for i in $(seq 1 30); do
+      sleep 2; U=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits); [ "$U" -lt 2000 ] && break
+    done
+    echo "# torn down (gpu mem now ${U:-?} MiB)"
+  fi
+}
+
+# --model is the served name (the bench client's /tokenize alignment probe
+# posts it as the request's model; a checkpoint path 404s there); the
+# checkpoint dir rides --tokenizer, which is what actually reads it.
+# The name is the one the server lists first on /v1/models, or VLLM_MODEL
+# (bench/harness.py), so it is read once the server is up.
+NAME=$(VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" model) || { teardown; exit 1; }
+# An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
+B=(venv/bin/vllm bench serve --host 127.0.0.1 --port "$PORT" --model "$NAME" --tokenizer "$MODEL" --served-model-name "$NAME")
 
 # ---- warmup (JIT shapes: small + one large continuation) --------------------
 # Every call gets its own --seed: the bench default (0) reuses the same prompts
@@ -89,12 +104,5 @@ except Exception: print('-')")
 echo "ROW $ARM decode C1 | decode=$(python3 -c "print(f'{1000/$(num "Mean TPOT" 4 "$OUT/cohort_c1.log"):.1f}')") tok/s | tok/step=$TS | meanTTFT=$(num "Mean TTFT" 4 "$OUT/cohort_c1.log") ms"
 
 # ---- teardown ---------------------------------------------------------------
-if [ -f "$OUT/server.pid" ] && [ "${KEEP:-0}" != 1 ]; then
-  kill "$(cat $OUT/server.pid)" 2>/dev/null; sleep 1
-  pkill -f "vllm serve.*$PORT" 2>/dev/null
-  for i in $(seq 1 30); do
-    sleep 2; U=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits); [ "$U" -lt 2000 ] && break
-  done
-  echo "# torn down (gpu mem now ${U:-?} MiB)"
-fi
+teardown
 echo "# raw logs in $OUT"

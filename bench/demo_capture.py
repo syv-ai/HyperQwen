@@ -52,8 +52,7 @@ PROMPTS = [
 
 
 def run(key, label, content, max_tokens=None):
-    payload = {"model": "qwen3.8-27b",
-               "messages": [{"role": "user", "content": content}],
+    payload = {"messages": [{"role": "user", "content": content}],
                "temperature": 0, "stream": True,
                "stream_options": {"include_usage": True},
                "chat_template_kwargs": {"enable_thinking": False}}

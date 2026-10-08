@@ -24,13 +24,10 @@ Usage:
 """
 import argparse
 import json
-import os
 import sys
 import time
 
 import harness
-
-MODEL = os.environ.get("VLLM_MODEL", "qwen3.8-27b")
 
 WORDS = ("the scheduler interleaves prefill chunks with decode steps while a mamba "
          "state snapshot is materialised at the last prefill chunk boundary so the "
@@ -55,7 +52,7 @@ def make_doc(tokens, salt):
 
 def ask(messages, max_tokens=24):
     payload = {
-        "model": MODEL, "messages": messages, "max_tokens": max_tokens,
+        "messages": messages, "max_tokens": max_tokens,
         "temperature": 0,
         "chat_template_kwargs": {"enable_thinking": False},
     }

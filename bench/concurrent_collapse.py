@@ -22,7 +22,6 @@ LABEL = sys.argv[1]
 TRIALS = int(sys.argv[2]) if len(sys.argv) > 2 else 30
 LONG = int(sys.argv[3]) if len(sys.argv) > 3 else 9000
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
-MODEL = os.environ.get("MODEL", "qwen3.8-27b")
 # Filler from the repo's own docs, so the script needs nothing but a checkout.
 DOCS = "\n\n".join(open(os.path.join(REPO, f)).read() for f in sorted(os.listdir(REPO)) if f.endswith(".md"))
 DOCS += "\n\n" + "\n\n".join(open(os.path.join(REPO, "docs", f)).read()
@@ -32,7 +31,7 @@ BANG = re.compile(r"!{8,}")
 
 def post(messages, max_tokens):
     r = harness.post("/v1/chat/completions",
-                     {"model": MODEL, "messages": messages, "max_tokens": max_tokens, "temperature": 0,
+                     {"messages": messages, "max_tokens": max_tokens, "temperature": 0,
                       "chat_template_kwargs": {"enable_thinking": False}}, timeout=1800)
     return r["choices"][0]["message"].get("content") or "", r["usage"]["prompt_tokens"]
 

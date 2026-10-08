@@ -40,7 +40,6 @@ def prompt(salt):
 def ttft(salt):
     """Time to the first streamed content chunk, plus the prompt length the server saw."""
     payload = {
-        "model": "qwen3.8-27b",
         "messages": [{"role": "user", "content": prompt(salt)}],
         "temperature": 0, "max_tokens": 32, "stream": True,
         "stream_options": {"include_usage": True},

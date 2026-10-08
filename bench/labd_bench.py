@@ -68,8 +68,7 @@ TASKS = [t for t in ALL_TASKS if not want or t[0] in want.split(",")]
 # Warm-up: the first long-block step JIT-compiles Triton kernels, and those seconds would
 # otherwise land inside the first task's decode window (worth 30% on it).
 for warm in (64, 64):
-    payload = {"model": "qwen3.8-27b",
-               "messages": [{"role": "user", "content": "Dokument:\n\n" + doc[:4000] +
+    payload = {"messages": [{"role": "user", "content": "Dokument:\n\n" + doc[:4000] +
                              "\n\nGengiv ordret de første 10 linjer af dokumentet."}],
                "max_tokens": warm, "temperature": 0,
                "chat_template_kwargs": {"enable_thinking": False}}
@@ -78,8 +77,7 @@ for warm in (64, 64):
 tot = {"steps": 0.0, "acc": 0.0, "out": 0.0, "dec": 0.0}
 rows = []
 for name, q in TASKS:
-    payload = {"model": "qwen3.8-27b",
-               "messages": [{"role": "user", "content": "Dokument:\n\n" + doc + "\n\n" + q}],
+    payload = {"messages": [{"role": "user", "content": "Dokument:\n\n" + doc + "\n\n" + q}],
                "max_tokens": MAXTOK, "temperature": 0, "stream": True,
                "stream_options": {"include_usage": True},
                "chat_template_kwargs": {"enable_thinking": False}}

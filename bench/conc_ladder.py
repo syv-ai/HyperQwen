@@ -108,7 +108,6 @@ def metrics():
 
 def stream(i, salt, res, first_tok):
     payload = {
-        "model": "qwen3.8-27b",
         "messages": [{"role": "user", "content": make_prompt(i, salt)}],
         "max_tokens": NOUT, "temperature": 0.0, "stream": True,
         "stream_options": {"include_usage": True},

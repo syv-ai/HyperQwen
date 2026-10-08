@@ -40,6 +40,10 @@ PORT=${PORT:-18020}
 # model works.
 source "$REPO/single-user/select_model.sh"
 
+curl -sf -o /dev/null "http://$HOST:$PORT/health" || { echo "[warmup] no server on $HOST:$PORT" >&2; exit 1; }
+# The served name: the one the server lists first on /v1/models, or VLLM_MODEL (bench/harness.py).
+NAME=$(VLLM_API="http://$HOST:$PORT" python3 "$HERE/harness.py" model) || exit 1
+
 # Build the command as an array, not a string: an unquoted "$B" re-splits and
 # re-globs, so a path with a space or glob character would break, and a
 # quoted "$B" would not word-split at all. "${BENCH[@]}" expands each element
@@ -47,9 +51,7 @@ source "$REPO/single-user/select_model.sh"
 # --model is the served name (the bench client's /tokenize probe posts it as
 # the request's model; a checkpoint path 404s the model check there); the
 # checkpoint dir rides --tokenizer, which is all the warmup needs from it.
-BENCH=(venv/bin/vllm bench serve --host "$HOST" --port "$PORT" --model qwen3.8-27b --tokenizer "$MODEL" --served-model-name qwen3.8-27b)
-
-curl -sf -o /dev/null "http://$HOST:$PORT/health" || { echo "[warmup] no server on $HOST:$PORT" >&2; exit 1; }
+BENCH=(venv/bin/vllm bench serve --host "$HOST" --port "$PORT" --model "$NAME" --tokenizer "$MODEL" --served-model-name "$NAME")
 echo "[warmup] server ready, warming the serving path"
 "${BENCH[@]}" --dataset-name random --random-input-len 128 --random-output-len 128 --num-prompts 2 --max-concurrency 1 --ignore-eos --temperature 0 > /dev/null 2>&1 \
   || { echo "[warmup] small-batch pass failed" >&2; exit 1; }

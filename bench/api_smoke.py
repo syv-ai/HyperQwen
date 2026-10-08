@@ -11,7 +11,7 @@ import harness
 
 
 def chat(msg, **kw):
-    p = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": msg}], "max_tokens": 64,
+    p = {"messages": [{"role": "user", "content": msg}], "max_tokens": 64,
          "chat_template_kwargs": {"enable_thinking": False}}
     p.update(kw)
     return harness.post("/v1/chat/completions", p, timeout=600)
@@ -57,7 +57,7 @@ def t_min_tokens_penalty():
     r = chat("Sig hej.", temperature=0.7, min_tokens=30, presence_penalty=1.2, frequency_penalty=0.3, max_tokens=48)
     return r["usage"]["completion_tokens"] >= 30, r["usage"]
 def t_stream():
-    n = sum(1 for _ in harness.stream("/v1/chat/completions", {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "Skriv to sætninger om vejret."}],
+    n = sum(1 for _ in harness.stream("/v1/chat/completions", {"messages": [{"role": "user", "content": "Skriv to sætninger om vejret."}],
                                          "max_tokens": 48, "stream": True, "chat_template_kwargs": {"enable_thinking": False}}, timeout=600))
     return n > 5, f"{n} chunks"
 def t_thinking():
@@ -65,7 +65,7 @@ def t_thinking():
     m = r["choices"][0]["message"]
     return ("391" in (m.get("content") or "")) and bool(m.get("reasoning_content") or m.get("reasoning")), (m.get("content") or "")[:60]
 def t_completions_echo_logprobs():
-    r = harness.post("/v1/completions", {"model": "qwen3.8-27b", "prompt": "København er hovedstaden i", "max_tokens": 4,
+    r = harness.post("/v1/completions", {"prompt": "København er hovedstaden i", "max_tokens": 4,
                                          "temperature": 0, "echo": True, "logprobs": 1}, timeout=600)
     lp = r["choices"][0]["logprobs"]
     return len(lp["tokens"]) > 4 and lp["token_logprobs"][0] is None, lp["tokens"][:6]

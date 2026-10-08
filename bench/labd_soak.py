@@ -67,8 +67,7 @@ TASKS = [
 
 def ask(task):
     name, q = task
-    payload = {"model": "qwen3.8-27b",
-               "messages": [{"role": "user", "content": "Dokument:\n\n" + doc + "\n\n" + q}],
+    payload = {"messages": [{"role": "user", "content": "Dokument:\n\n" + doc + "\n\n" + q}],
                "max_tokens": MAXTOK, "temperature": 0,
                "chat_template_kwargs": {"enable_thinking": False}}
     t0 = time.time()

@@ -37,7 +37,6 @@ prompt = context + "\n\nQuestion: what is the secret passcode? Reply with the pa
 
 t0 = time.perf_counter()
 resp = harness.post("/v1/chat/completions", {
-    "model": "qwen3.8-27b",
     "messages": [{"role": "user", "content": prompt}],
     "max_tokens": 32,
     "chat_template_kwargs": {"enable_thinking": False},
