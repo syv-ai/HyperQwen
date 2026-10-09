@@ -73,6 +73,9 @@ source "$REPO/resolve_config.sh" \
 resolve_effective_config batch
 source "$REPO/launcher_common.sh" \
   || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
+# KV_OFFLOAD_GB=N: the CPU KV tier as a flag, ahead of everything below that reads EXTRA_ARGS.
+qwen_kv_offload_args
+qwen_kv_offload_shm_check
 
 MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}
 PORT=${PORT:-18020}
