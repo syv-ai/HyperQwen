@@ -53,9 +53,10 @@ venv/bin/pip install vllm==0.31.0 huggingface_hub hf_transfer ninja \
 # it because a venv host may have no usable nvcc.
 #
 # It does NOT cover everything. No cubin release carries the vocab-wide top-k, so
-# the DFlash2 candidate selector still JITs on first use, and that JIT needs a
-# working nvcc (see below). SPEC=dflash2 is the only line that reaches it, which is
-# why SPEC=off and SPEC=mtp boot on a box where dflash2 does not.
+# with VLLM_USE_FLASHINFER_SAMPLER=1 the DFlash2 candidate selector JITs on first
+# use, and that JIT needs a working nvcc (see below). All three launchers export it
+# as 0, so no shipped launcher reaches the sampler or selector JIT: a native
+# SPEC=dflash2 boot of 0.31.0 from this file built no FlashInfer kernels.
 #
 # If you have no usable nvcc, set VLLM_USE_FLASHINFER_SAMPLER=0 (the launchers
 # already do): it now covers the selector as well as the sampler and falls back to
@@ -69,8 +70,9 @@ venv/bin/pip install vllm==0.31.0 huggingface_hub hf_transfer ninja \
 # nvcc older than 13.0 rejects outright ("nvcc fatal : Unknown option"); 0.6.16.post3
 # does not emit it, which is why the 0.28 line is unaffected.
 #
-# On the venv path you also want the CUDA curand *headers*. vLLM's DFlash2
-# sampling path JIT-compiles a FlashInfer kernel that includes curand.h; without
+# If you set VLLM_USE_FLASHINFER_SAMPLER=1, the venv path also wants the CUDA
+# curand *headers*. vLLM's DFlash2 sampling path then JIT-compiles a FlashInfer
+# kernel that includes curand.h; without
 # the headers the build fails with "fatal error: curand.h: No such file or
 # directory" and it *silently falls back* -- you get correct output at a lower
 # rate, not an error. A 4x 5060 Ti reporter measured 192.9 -> 202.1 tok/s
