@@ -11,7 +11,9 @@ set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO="$(dirname "$HERE")"
 [ -f /.dockerenv ] && { echo "skip: /.dockerenv exists, the container default is 0.0.0.0 by design"; exit 0; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-(cd "$REPO" && tar --exclude=.git --exclude=docs/media --exclude=bench/demo --exclude=models -cf - .) | tar -xf - -C "$T"
+# The checkout's own venv stays out: copying it costs gigabytes, and a symlinked venv would carry the stub
+# below into the real venv/bin/vllm.
+(cd "$REPO" && tar --exclude=.git --exclude=./venv --exclude=docs/media --exclude=bench/demo --exclude=models -cf - .) | tar -xf - -C "$T"
 # The stub vllm prints the two INT8 exports for int8_of, and no real vllm starts. A launcher that ignores
 # PRINT_ARGV=1 reaches it too, prints no --host line, and fails its host_of rows.
 mkdir -p "$T/venv/bin"
