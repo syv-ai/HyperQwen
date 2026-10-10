@@ -40,7 +40,7 @@ little perplexity, mostly on code, and buys throughput. The default takes the
 middle row; `INT8_LAYERS=gate_up` and `INT8_ACT=` (off) are one env var away,
 and `INT8_LAYERS=.` gives you the last row.
 
-*The all-layers row needs `GPU_UTIL=0.95`: quantizing the activations of every
+*The all-layers row needs a `GPU_UTIL` below 0.972 (batch's default, 0.94 on 0.31, is enough): quantizing the activations of every
 linear (not just the MLP) adds enough transient scratch that batch mode's 0.972
 runs out of memory inside the GDN chunk kernel once ~17 requests are resident.
 The throughput columns were re-measured on the current stack (two passes each);

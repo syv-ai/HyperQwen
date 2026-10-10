@@ -371,7 +371,7 @@ serve` random dataset:
 | + lm_head / embed_tokens int8 | 2.6 GB of cache pages back | 516 | ~585 (37 requests resident) |
 | + fp16 recurrent state | 64 requests resident, half the state traffic | 707 | ~830 |
 | + int8 activations, MLP (default) | int8 tensor cores on 74% of the FLOPs | 942 | ~1,094 |
-| + int8 activations, everything (`INT8_LAYERS=.`, needs `GPU_UTIL=0.95`) | | 1,042 | ~1,222 |
+| + int8 activations, everything (`INT8_LAYERS=.`, needs `GPU_UTIL` below 0.972; batch's default is enough) | | 1,042 | ~1,222 |
 
 And single-stream on realistic prompts (single-user mode, T = model default /
 greedy):

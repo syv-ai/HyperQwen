@@ -197,7 +197,8 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     runner also answered `thinking_token_budget` with 400 (on vLLM 0.30 it enforces the budget instead), and the first request
     after a cold start JIT-compiles four Triton kernels (~5 s once; cached in
     `~/.triton`).
-16. **`INT8_LAYERS=.` needs `GPU_UTIL=0.95`.** Quantizing the activations of every linear
+16. **`INT8_LAYERS=.` needs a `GPU_UTIL` below 0.28's 0.972.** On 0.31 it runs at batch's default 0.94, where
+    the worst prefill step (64 new prompts in one step) clears by 134-176 MiB on a native 3090; do not raise it. Quantizing the activations of every linear
     layer (rather than just the MLP) is worth ~11% throughput — 1,042 vs 942 tok/s at 64
     concurrent — but the extra per-layer scratch no longer fits batch mode's 0.972: the
     engine dies with `torch.OutOfMemoryError` inside `chunk_fwd_o` once ~17 requests are

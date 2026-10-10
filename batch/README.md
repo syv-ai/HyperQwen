@@ -21,8 +21,8 @@ config (fp16 recurrent state, int8 activations on the MLP GEMMs):
 (Baseline measured on vLLM 0.27.1; re-run after the v0.30.0 upgrade -- these figures now predate three pins. Two passes each were
 within 0.4% of one another. The 128/512 row read 876 when this repo was first published — the difference is everything that landed
 since. `INT8_LAYERS=.` — int8 activations on every linear, not just the MLP — reaches
-**1,042 tok/s** e2e and ~1,222 steady-state decode, but needs `GPU_UTIL=0.95`: it OOMs inside
-the GDN chunk kernel at the 0.972 default. Quality cost of that row: +3.7% perplexity,
+**1,042 tok/s** e2e and ~1,222 steady-state decode, but needs a `GPU_UTIL` below 0.972 (batch's default, 0.94 on
+0.31, clears its worst prefill step by 134-176 MiB): it OOMs inside the GDN chunk kernel at 0.28's 0.972. Quality cost of that row: +3.7% perplexity,
 [docs/quality.md](../docs/quality.md).)
 
 *TTFT at saturation is queue time — the bench fires all requests at once.
