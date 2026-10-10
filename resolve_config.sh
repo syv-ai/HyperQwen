@@ -65,7 +65,7 @@ resolve_effective_config() {
 
   # 2. EXTRA_ARGS shadow warnings. The launchers expand EXTRA_ARGS after their
   # own flags, so any of these in EXTRA_ARGS silently wins; say so.
-  local _shadow="--port | --host | --max-model-len | --max-num-seqs | --gpu-memory-utilization | --kv-cache-dtype | --attention-backend | --served-model-name | --api-server-count | --block-size | --mamba-ssm-cache-dtype "
+  local _shadow="--port | --host | --max-model-len | --max-num-seqs | --gpu-memory-utilization | --kv-cache-dtype | --attention-backend | --served-model-name | --api-server-count | --block-size | --mamba-ssm-cache-dtype | --tool-strict-level "
   local _f
   for _f in $_shadow; do
     case " ${EXTRA_ARGS:-} " in
