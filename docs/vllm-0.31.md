@@ -117,7 +117,7 @@ card's Shared Usage counter, sampled about every 3 s, as in `docs/wsl2-4090.md`:
 Tool calls on every row: `tool_choice=auto` with thinking on and off, and `required` on a tool with no parameters
 returns `{}` (one call per row). 0 tracebacks and 0 out-of-memory lines in any log.
 
-## A regression: the CPU KV tier stores and never reads back
+## A regression from upstream: a full CPU KV tier serves nothing
 
 `alternative.sh` with `EXTRA_ARGS="--kv-offloading-size 8"` (dense retention, which the launcher picks beside a tier),
 two ~59.9K conversations at once, the WSL2 4090, one boot per row:
@@ -128,15 +128,17 @@ two ~59.9K conversations at once, the WSL2 4090, one boot per row:
 | 0.31.0 | 0 and 0, 45-62 s | 9.60 GB | 0 |
 | 0.31.0, repeated | 0 and 0 | 9.48 GB | 0 |
 
-0.31.0 stores, but the tier's usage gauge (`vllm:kv_offload_cpu_cache_usage_perc`) stays at 0 through the whole run and
-the lookups find nothing, where 0.30.0's rises and its lookup loads. No transfer error is logged. A native 3090
-reproduces it: 0.31.0 reuses 0 and 0, reads nothing back and stores the same 9.60 GB, where 0.30.0 on the same card
-reuses 96.3% for both and reads 2.16 GB back. So it is not WSL2's. Reversing `offload-dflash-eagle-groups`, the one
-series patch inside the offload scheduler, changes nothing (0 and 0 again), and stock 0.31.0 cannot load this
-checkpoint's quantized embedding, so whether the cause is upstream or elsewhere in the series is not settled. No other
-profile was run with a tier. Until this is fixed, a tier on `alternative.sh` does worse than none on 0.31.0: beside a
-tier the launcher picks dense retention for the tier to serve from, so the two conversations get 0 and 0, where without
-one its default (retention 0) keeps 93.5% for both (above).
+A native 3090 shows the same: 0.31.0 reuses 0 and 0 and reads nothing back, where 0.30.0 on that card reuses 96.3% for
+both and reads 2.16 GB back. The cause is upstream #51787 ("Track cache recency once per request"), which no patch here
+touches. Since it, the tier ranks a request's chunks for eviction in the order they were stored, head first and every
+KV-cache group at each chunk, until the request finishes; only then does it re-rank them so the head is kept. With two
+long conversations in flight, one's prefill fills the tier while the other is still decoding, so the evictions take
+chunk 0 of every group from the request that has not finished, and each turn-2 lookup, which starts at chunk 0, finds
+nothing. 0.30.0 evicts one Mamba group's chunks tail-first and keeps every head (eviction logs on both pins, 3090, 8 GiB
+tier). It takes eviction to show: with a 16 GiB tier, 0.31.0 on the 3090 reuses 96.3% for both and reads 1.08 GB back.
+So until upstream changes it, size the tier above what the conversations hold. At 8 GB on `alternative.sh` a tier does
+worse than none on 0.31.0: beside a tier the launcher picks dense retention for the tier to serve from, so the two
+conversations get 0 and 0, where without one its default (retention 0) keeps 93.5% for both (above).
 
 ## What is still unproven
 
