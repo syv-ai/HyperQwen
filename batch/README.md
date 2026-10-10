@@ -202,7 +202,7 @@ All overridable as env vars, defaults in the script:
 | `KV_OFFLOAD_GB` | unset | N = a CPU tier of N GiB of pinned RAM behind the GPU prefix cache (`--kv-offloading-size N`, vLLM's OffloadingConnector): a prefix the GPU pool evicted comes back by a PCIe load instead of a recomputed prefill, and a preempted request resumes from it. Pinned in full at boot, in a file in `/dev/shm` that must fit there (gotcha 62). Size it in tokens, not GiB: a tier token costs ~2.3x a pool token under MTP because each block carries a recurrent-state snapshot (gotcha 38). Check it works on `/metrics`: `vllm:kv_offload_*_bytes_total` grow both ways. Measured with `PREFIX_CACHE=1` (align mode). An explicit flag in `EXTRA_ARGS` wins |
 | `PORT` | 18020 | |
 | `PRINT_ARGV` | 0 | 1 = print the `vllm serve` argv, one argument per line, and exit 0 instead of starting the server. Every profile check, default and warning runs first, so it is a dry run that needs no GPU |
-| `GPU_UTIL` | 0.95 | do not raise: 0.972, the 0.28 default, OOMs in warmup on vLLM 0.29 (#182; the ladder is in `docs/vllm-0.29.md`). Use 0.93 when you want `prompt_logprobs` (quality checks) |
+| `GPU_UTIL` | 0.94 | do not raise: on 0.31, 0.95 runs out of memory when 64 new prompts land in one step (the launcher comment has the measurement); 0.972, the 0.28 default, OOMs in warmup on vLLM 0.29 (#182; the ladder is in `docs/vllm-0.29.md`). Use 0.93 when you want `prompt_logprobs` (quality checks) |
 
 ## Verify you're getting the numbers
 

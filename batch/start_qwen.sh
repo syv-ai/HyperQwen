@@ -17,7 +17,7 @@
 #    checkpoint); VISION=1 keeps it for a client that sends images
 #  - expandable_segments is required: the DeltaNet prefill kernels allocate
 #    transient workspace and fragment the allocator, OOMs at util >= 0.978 without it
-#  - gpu-memory-utilization 0.95 on vLLM 0.29 (0.972 on 0.28): see the KV=fp8
+#  - gpu-memory-utilization 0.94 on vLLM 0.31 (0.95 on 0.29-0.30, 0.972 on 0.28): see the KV=fp8
 #    branch below for why the default moved with the pin
 #  - max-num-batched-tokens 2048 beats 8192 here: bigger chunks inflate the
 #    profiled activation peak, which shrinks the KV/state page pool
@@ -94,8 +94,8 @@ API_SERVERS=${API_SERVERS:-1}
 # up to 0.92, while at 0.93 its first sampled batch needed ~250 MB more than the card had: Windows moved it to system
 # RAM (the adapter's Shared Usage counter stepped 382 -> 632 MB) and 64-way decode fell to 25-40% for the rest of the
 # run. kvarn spills above 0.89 as soon as its KV cache is allocated at boot, and 262144 tokens fit at no setting that
-# stays on the card. fp8 and kvarn each keep one 0.01 step below their highest clean value, the margin 0.95 keeps
-# natively; int4pth, whose default 0.93 did not spill under WSL2 either, takes fp8's.
+# stays on the card. fp8 and kvarn each keep one 0.01 step below their highest clean value; int4pth, whose default
+# 0.93 did not spill under WSL2 either, takes fp8's.
 # Native Linux is unchanged, and an explicit GPU_UTIL or MAX_LEN always wins.
 WSL=0
 if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then WSL=1; fi
@@ -123,7 +123,16 @@ elif [ "$KV" = "kvarn" ]; then
   export KVARN_POOL_MEM_FRAC=${KVARN_POOL_MEM_FRAC:-0.25}
 else
   MAX_LEN=${MAX_LEN:-150000}
-  # 0.95, not 0.28's 0.972. 0.29 with memory-profile-after-warmup and
+  # 0.94 on 0.31, not 0.30's 0.95. The profiling run skips the GDN layers, so the
+  # worst prefill step is never budgeted: 64 new short prompts in one step (one
+  # /v1/completions request carrying 64 prompts forces it) needed ~624 MiB over rest
+  # on 0.30 and ~650 on 0.31, and 0.31 also rests ~40 MiB higher (FlashInfer 0.7).
+  # On a native 3090 at 0.95 that step left ~12-17 MiB on 0.30 and ran out of memory
+  # on 0.31, whose 64-way burst failed on all 5 boots run without a memory hook. At
+  # 0.94 the step clears by ~174 MiB on 0.31 and ~232 on 0.30 (nvidia-smi peaks at
+  # 50 ms, so upper bounds) and the burst serves 128/128, for a pool of 217,268 tokens
+  # against 225,000 at 0.95 (-3.4%). 0.945 survives by ~54 MiB, too thin to ship.
+  # On 0.29 and 0.30: 0.95, not 0.28's 0.972. 0.29 with memory-profile-after-warmup and
   # cudagraph-memory-from-allocator stops over-reserving ~1.5 GiB (KV 6.09 GiB at
   # 0.972 on 0.28, 7.63 on 0.29, same box and settings), and at 0.972 that ~1.5 GiB
   # was the headroom batch's unprofiled warmup transients lived in: 0.972 OOMs in
@@ -132,7 +141,7 @@ else
   # boot and serve with VISION=0 and 1, 0.972 does not. 0.95 keeps one 0.01 step
   # below the highest value that passed, boots cold to the same pool as warm
   # (219,587 tokens with the tower), and holds at least the pool 0.28 had at 0.972.
-  GPU_UTIL=${GPU_UTIL:-0.95}
+  GPU_UTIL=${GPU_UTIL:-0.94}
   KV_ARGS="--kv-cache-dtype fp8"
 fi
 # int8 activations: "int8" (default) or empty for W4A16; layers: regex on the
