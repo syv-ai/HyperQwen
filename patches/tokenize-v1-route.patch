@@ -12,10 +12,10 @@ Kind: feature
 What: /tokenize and /detokenize also served under /v1 for OpenAI-SDK base_urls; operation ids stay
   unique (name+path+method)
 Upstream: none (vllm #59891 was closed: upstream keeps `/v1` for the official OpenAI endpoints)
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: stays
 
---- exported from 2253bf700 (tokenize-v1-route); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 243b65fb5 (tokenize-v1-route); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/serve/tokenize/api_router.py b/entrypoints/serve/tokenize/api_router.py
 index 9cdd82fee..8eabf6f1f 100644

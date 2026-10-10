@@ -42,13 +42,13 @@ What: `vllm bench serve`'s /tokenize alignment probe sends the API key (Bearer f
   (`fetch_spec_decode_metrics`, `fetch_diffusion_metrics`) send the benchmark's headers too, so a
   keyed server no longer reports the spec-decode block as absent
 Upstream: vllm #59888
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstream PR
 
---- exported from 39ed548b3 (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 93e79ce29 (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/serve.py b/benchmarks/serve.py
-index 0292ff939..b5cce35ca 100644
+index 19130716f..932917e93 100644
 --- a/benchmarks/serve.py
 +++ b/benchmarks/serve.py
 @@ -82,6 +82,7 @@
@@ -173,7 +173,7 @@ index 0292ff939..b5cce35ca 100644
              if response.status != 200:
                  return None
              text = await response.text()
-@@ -967,8 +1011,12 @@
+@@ -972,8 +1016,12 @@
      else:
          print("Self timing is set, using the timestamps from the trace file.")
  
@@ -188,7 +188,7 @@ index 0292ff939..b5cce35ca 100644
  
      pbar = None if disable_tqdm else tqdm(total=len(input_requests))
  
-@@ -1095,7 +1143,9 @@
+@@ -1100,7 +1148,9 @@
  
      benchmark_duration = time.perf_counter() - benchmark_start_time
  
@@ -199,7 +199,7 @@ index 0292ff939..b5cce35ca 100644
      spec_decode_stats: dict[str, Any] | None = None
      if spec_decode_metrics_before is not None and spec_decode_metrics_after is not None:
          delta_drafts = (
-@@ -1137,7 +1187,9 @@
+@@ -1142,7 +1192,9 @@
                  "per_position_acceptance_rates": per_pos_rates,
              }
  
@@ -210,7 +210,7 @@ index 0292ff939..b5cce35ca 100644
      diffusion_stats: dict[str, Any] | None = None
      if diffusion_metrics_before is not None and diffusion_metrics_after is not None:
          delta_steps = (
-@@ -2181,7 +2233,7 @@
+@@ -2186,7 +2238,7 @@
  
      if args.dataset_name in ("random", "prefix_repetition"):
          input_requests = await _align_prompts_to_server_tokenizer(

@@ -11,19 +11,20 @@ What: with `kv_cache_memory_bytes` pinned (the launchers' `KV_MEM`), synchronize
   GPU memory to system RAM and slows the KVarN kernels; `memory-profile-after-warmup` does the same
   on the measured path only
 Upstream: vllm #59893
-Cut-against: 0.30.0
+Cut-against: 0.31.0: adjacency with #58411's randomize_inputs; 0.31's pinned path still has no
+  release
 Retires-when: upstream empties the cache on the pinned path
 
---- exported from 55a5da817 (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from d7ead9c02 (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
-index f7412e837..6b2c67912 100644
+index 178271100..51d1e687a 100644
 --- a/v1/worker/gpu_worker.py
 +++ b/v1/worker/gpu_worker.py
-@@ -543,6 +543,15 @@
+@@ -587,6 +587,15 @@
              # still need a profile run which compiles the model for
              # max_num_batched_tokens
-             self.model_runner.profile_run()
+             self.model_runner.profile_run(randomize_inputs=self.randomize_dummy_inputs)
 +            # The KV cache is allocated right after this return, on top of
 +            # whatever the profile run left in the allocator's cache. On a
 +            # cold compile cache that is the torch.compile and Triton

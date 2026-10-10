@@ -3,16 +3,17 @@ lookup-augmented drafting for DFlash2 (n-gram search over the context)
 Kind: feature
 What: lookup-augmented drafting for DFlash2 (n-gram search over the context)
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0: re-implemented onto upstream's shared CandidateSampler (#57934), which gains
+  cache_steps and optional per-request top-p/top-k, both defaulting to upstream's behaviour
 Retires-when: upstreamed
 
---- exported from d0888e930 (dflash2-lookup-drafting); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 6079ea8b3 (dflash2-lookup-drafting); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index 5504304c7..d77132b67 100644
+index 36a6c4c2c..cb6f07f47 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -356,6 +356,37 @@
+@@ -391,6 +391,37 @@
          return hidden_states, residual
  
  
@@ -50,20 +51,41 @@ index 5504304c7..d77132b67 100644
  @support_torch_compile
  class DFlashQwen3Model(nn.Module):
      decoder_layer_cls = DFlashQwen3DecoderLayer
-@@ -470,7 +501,7 @@
-         self._hidden_norm_weight = self.hidden_norm.weight.data
+@@ -511,22 +542,14 @@
+         self._context_qkv_projs = [a.qkv_proj for a in layers_attn]
+         self._context_q_sizes = [a.q_size for a in layers_attn]
  
-         # KV projection weights: [num_layers * 2 * kv_size, hidden_size]
--        kv_weights = [a.qkv_proj.weight[a.q_size :] for a in layers_attn]
+-        if all(
+-            isinstance(proj.quant_method, UnquantizedLinearMethod)
+-            for proj in self._context_qkv_projs
+-        ):
+-            # KV projection weights: [num_layers * 2 * kv_size, hidden_size]
+-            kv_weights = [a.qkv_proj.weight[a.q_size :] for a in layers_attn]
+-            self._fused_kv_weight: torch.Tensor | None = torch.cat(kv_weights, dim=0)
+-            if has_bias:
+-                kv_biases = [a.qkv_proj.bias[a.q_size :] for a in layers_attn]
+-                self._fused_kv_bias: torch.Tensor | None = torch.cat(kv_biases, dim=0)
+-            else:
+-                self._fused_kv_bias = None
++        # KV projection weights: [num_layers * 2 * kv_size, hidden_size]. _dense_kv_rows unpacks a
++        # compressed-tensors W4A16 qkv_proj, so a quantized drafter keeps the one fused GEMM as well.
 +        kv_weights = [_dense_kv_rows(a) for a in layers_attn]
-         self._fused_kv_weight = torch.cat(kv_weights, dim=0)
-         if has_bias:
-             kv_biases = [a.qkv_proj.bias[a.q_size :] for a in layers_attn]
++        self._fused_kv_weight: torch.Tensor | None = torch.cat(kv_weights, dim=0)
++        if has_bias:
++            kv_biases = [a.qkv_proj.bias[a.q_size :] for a in layers_attn]
++            self._fused_kv_bias: torch.Tensor | None = torch.cat(kv_biases, dim=0)
+         else:
+-            # Quantized linear weights may use packed storage that cannot be
+-            # consumed by F.linear. Run each projection through its quant method.
+-            self._fused_kv_weight = None
+             self._fused_kv_bias = None
+ 
+         # K-norm weights stacked into one contiguous [num_layers, head_dim]
 diff --git a/model_executor/models/qwen3_dflash2.py b/model_executor/models/qwen3_dflash2.py
-index cb027293f..9aec93037 100644
+index 861a7c541..f8bc81f3d 100644
 --- a/model_executor/models/qwen3_dflash2.py
 +++ b/model_executor/models/qwen3_dflash2.py
-@@ -127,8 +127,15 @@
+@@ -252,8 +252,15 @@
              hidden_size=config.hidden_size,
              taps=int(draft_config["conv_kernel_size"]),
              group_size=int(draft_config["conv_group_size"]),
@@ -79,10 +101,10 @@ index cb027293f..9aec93037 100644
 +                int(draft_config.get("block_size", 1 << 30)),
 +            ),
              params_dtype=vllm_config.model_config.dtype,
+             quant_config=quant_config,
          )
-         self.attention_conv = DFlashGroupedConv(
 diff --git a/v1/worker/gpu/cudagraph_utils.py b/v1/worker/gpu/cudagraph_utils.py
-index 9657c28fe..962f1f908 100644
+index fa1dc4a04..8ba622c7e 100644
 --- a/v1/worker/gpu/cudagraph_utils.py
 +++ b/v1/worker/gpu/cudagraph_utils.py
 @@ -45,6 +45,7 @@
@@ -93,7 +115,7 @@ index 9657c28fe..962f1f908 100644
  
  if TYPE_CHECKING:
      from vllm.v1.worker.gpu.model_runner import GPUModelRunner
-@@ -289,6 +290,31 @@
+@@ -290,6 +291,31 @@
              )
          else:
              decode_query_lens = [self.decode_query_len]
@@ -126,10 +148,10 @@ index 9657c28fe..962f1f908 100644
          capture_varlen_decode = (
              separate_decode_routine and bool(decode_mode) and self.varlen_decode
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index b66d552cb..a614760fd 100644
+index c2f29972a..9100bcef5 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -319,6 +319,9 @@
+@@ -306,6 +306,9 @@
              num_prefill_lookahead=num_prefill_lookahead,
          )
          self.adaptive_verification: AdaptiveVerificationManager | None = None
@@ -139,7 +161,7 @@ index b66d552cb..a614760fd 100644
          self.input_buffers = InputBuffers(
              max_num_reqs=self.max_num_reqs,
              max_num_tokens=self.max_num_tokens,
-@@ -499,6 +502,9 @@
+@@ -493,6 +496,9 @@
                          self.vllm_config.watermark_config
                      ),
                  )
@@ -148,8 +170,8 @@ index b66d552cb..a614760fd 100644
 +                self.speculator.set_sampling_states(self.sampler.sampling_states)
              self.prompt_logprobs_worker = PromptLogprobsWorker(
                  self.max_num_reqs,
-                 logprobs_mode=self.model_config.logprobs_mode,
-@@ -2164,9 +2170,18 @@
+                 self.device,
+@@ -2225,9 +2231,18 @@
          if self.num_speculative_steps > 0:
              # Spec-decode and diffusion LLMs both use draft tokens but the latter does
              # not have a speculator (i.e. self.speculator is None)
@@ -169,7 +191,7 @@ index b66d552cb..a614760fd 100644
              if self.pp_handler is not None:
                  self.pp_handler.broadcast_drafts(
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
-index a5710829e..d6055d026 100644
+index 57110e0b0..2536bc47e 100644
 --- a/v1/worker/gpu/spec_decode/dflash/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
 @@ -6,6 +6,7 @@
@@ -180,7 +202,7 @@ index a5710829e..d6055d026 100644
  from vllm.config import VllmConfig, replace
  from vllm.config.compilation import CUDAGraphMode
  from vllm.forward_context import BatchDescriptor, set_forward_context
-@@ -52,8 +53,36 @@
+@@ -58,8 +59,36 @@
          # Multimodal inputs not currently supported.
          self.supports_mm_inputs = False
  
@@ -218,7 +240,7 @@ index a5710829e..d6055d026 100644
  
          self.parallel_drafting_token_id = get_parallel_drafting_token_id(
              self.draft_model_config.hf_config
-@@ -87,7 +116,7 @@
+@@ -91,7 +120,7 @@
          )
  
          # Per-mask-token sampling buffers. Flattened from (num_reqs, num_spec_tokens).
@@ -227,7 +249,7 @@ index a5710829e..d6055d026 100644
          self.sample_indices = torch.zeros(
              max_num_sampled_tokens, dtype=torch.int64, device=device
          )
-@@ -103,7 +132,7 @@
+@@ -107,7 +136,7 @@
          # [0, 1, ..., N-1, 0, 1, ..., N-1, ...] -> the per-token column index into
          # draft_logits[req, step, :].
          self.sample_col = torch.arange(
@@ -236,7 +258,7 @@ index a5710829e..d6055d026 100644
          ).repeat(self.max_num_reqs)
  
          self.query_cudagraph_manager: DFlashCudaGraphManager | None = None
-@@ -280,7 +309,7 @@
+@@ -289,7 +318,7 @@
              num_tokens_across_dp,
              cudagraph_runtime_mode,
          )
@@ -245,7 +267,7 @@ index a5710829e..d6055d026 100644
          sample_hidden_states = last_hidden_states[self.sample_indices[:num_sample]]
          # sample_pos is the predicted token's position P. Sampling keys a draw
          # by the position before the sampled token, P-1.
-@@ -293,8 +322,8 @@
+@@ -302,8 +331,8 @@
              self.sample_col[:num_sample],
              self.draft_logits,
          )
@@ -255,8 +277,8 @@ index a5710829e..d6055d026 100644
 +            num_reqs, self.draft_block
          )
  
-     @torch.inference_mode()
-@@ -326,6 +355,11 @@
+     def _num_graph_context_tokens(self, num_reqs: int) -> int:
+@@ -362,6 +391,11 @@
          is_profile: bool = False,
      ) -> torch.Tensor:
          num_reqs = input_batch.num_reqs
@@ -268,7 +290,7 @@ index a5710829e..d6055d026 100644
          num_target_tokens = input_batch.num_tokens
          num_query_tokens = num_reqs * self.num_query_per_req
          max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
-@@ -400,7 +434,7 @@
+@@ -437,7 +471,7 @@
                  self.block_tables.cp_interleave,
                  self.parallel_drafting_token_id,
                  self.num_query_per_req,
@@ -614,7 +636,7 @@ index 000000000..0315b6ecb
 +        num_warps=1,
 +    )
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 7db528449..b6e04d4a0 100644
+index bb1462112..2121031ed 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,16 +1,26 @@
@@ -734,7 +756,73 @@ index 7db528449..b6e04d4a0 100644
      old_token_ids = tl.load(cached_candidate_ptr + cache_base + offsets, mask=mask)
      logits_base = (
          draft_logits_ptr
-@@ -109,6 +144,9 @@
+@@ -112,15 +147,23 @@
+     """The shared DFlash2/LiLiCorr candidate walk and realized proposal cache."""
+ 
+     def __init__(
+-        self, max_num_reqs: int, num_steps: int, top_k: int, device: torch.device
++        self,
++        max_num_reqs: int,
++        num_steps: int,
++        top_k: int,
++        device: torch.device,
++        cache_steps: int | None = None,
+     ):
+         self.num_steps = num_steps
++        # The candidate cache can span a longer verify block than the drafter fills
++        # (dflash2/lookup.py fills the rest); by default it matches num_steps.
++        self.cache_steps = num_steps if cache_steps is None else cache_steps
+         self.top_k = top_k
+         self.scores = torch.empty(
+             max_num_reqs, num_steps, top_k, dtype=torch.float32, device=device
+         )
+         self.cached_candidate_ids = torch.zeros(
+-            self.scores.shape, dtype=torch.int64, device=device
++            (max_num_reqs, self.cache_steps, top_k), dtype=torch.int64, device=device
+         )
+ 
+     def sample(
+@@ -135,11 +178,16 @@
+         draft_tokens: torch.Tensor,
+         draft_logits: torch.Tensor | None,
+         use_fp64: bool,
++        req_top_p: torch.Tensor | None = None,
++        req_top_k: torch.Tensor | None = None,
+     ) -> None:
+         candidate_ids = candidate_ids.contiguous()
+         sample_pos = sample_pos.contiguous()
+         idx_mapping = idx_mapping.contiguous()
+         block_k = triton.next_power_of_2(self.top_k)
++        # The request's top-k/top-p applied to the proposal distribution
++        # (VLLM_DFLASH2_DRAFT_TOPK_TOPP); without the buffers the walk is untruncated.
++        truncate = req_top_p is not None and req_top_k is not None
+         _selector_walk_kernel[(num_reqs,)](
+             scores.contiguous(),
+             candidate_ids.contiguous(),
+@@ -149,11 +197,14 @@
+             seeds,
+             draft_tokens,
+             self.scores,
++            req_top_p if truncate else temperature,
++            req_top_k if truncate else idx_mapping,
+             num_steps=self.num_steps,
+             top_k=self.top_k,
+             BLOCK_K=block_k,
+             SAMPLE_PROBABILISTIC=draft_logits is not None,
+             USE_FP64=use_fp64,
++            TRUNCATE=truncate,
+             num_warps=1,
+         )
+ 
+@@ -179,6 +230,7 @@
+             draft_logits.stride(0),
+             draft_logits.stride(1),
+             num_steps=self.num_steps,
++            cache_steps=self.cache_steps,
+             top_k=self.top_k,
+             BLOCK_K=block_k,
+             num_warps=1,
+@@ -186,6 +238,9 @@
  
  
  class DFlash2Speculator(DFlashSpeculator):
@@ -742,29 +830,25 @@ index 7db528449..b6e04d4a0 100644
 +    lookup-augmented drafting (VLLM_DFLASH2_LOOKUP=1)."""
 +
      _speculator_name = "DFlash2"
+     _candidate_top_k_key = "selector_top_k"
  
-     def __init__(self, vllm_config: VllmConfig, device: torch.device):
-@@ -119,23 +157,180 @@
-             torch.arange(self.max_num_reqs, dtype=torch.int64, device=device)
-             * self.num_query_per_req
-         )
+@@ -193,16 +248,177 @@
+         super().__init__(vllm_config, device)
+         draft_config = self.draft_model_config.hf_config.dflash_config
+         self.top_k = int(draft_config[self._candidate_top_k_key])
++        # The drafter fills draft_block rows a step; the candidate cache spans the whole
++        # verify block (num_speculative_steps), whose tail dflash2/lookup.py fills.
+         self.candidate_sampler = CandidateSampler(
+-            self.max_num_reqs, self.num_speculative_steps, self.top_k, device
++            self.max_num_reqs,
++            self.draft_block,
++            self.top_k,
++            device,
++            cache_steps=self.num_speculative_steps,
++        )
 +        self._selector_tokens = torch.empty(
 +            (self.max_num_reqs, self.draft_block),
 +            dtype=self.draft_tokens.dtype,
-+            device=device,
-+        )
-         self._selector_scores = torch.empty(
-             self.max_num_reqs,
--            self.num_speculative_steps,
-+            self.draft_block,
-             self.selector_top_k,
-             dtype=torch.float32,
-             device=device,
-         )
-         self._cached_candidate_ids = torch.zeros(
--            self._selector_scores.shape, dtype=torch.int64, device=device
-+            (self.max_num_reqs, self.num_speculative_steps, self.selector_top_k),
-+            dtype=torch.int64,
 +            device=device,
 +        )
 +        # Request top_p/top_k buffers ([max_num_reqs], indexed by request state), handed
@@ -927,57 +1011,10 @@ index 7db528449..b6e04d4a0 100644
 +        self._req_top_p = sampling_states.top_p.gpu
 +        self._req_top_k = sampling_states.top_k.gpu
 +
-     def _sample_path(
+     def _generate_draft(
          self,
-         candidate_ids: torch.Tensor,
-@@ -143,6 +338,7 @@
          num_reqs: int,
-     ) -> None:
-         block_k = triton.next_power_of_2(self.selector_top_k)
-+        truncate = self._truncate and self._req_top_p is not None
-         _selector_walk_kernel[(num_reqs,)](
-             scores.contiguous(),
-             candidate_ids.contiguous(),
-@@ -150,19 +346,25 @@
-             self.sample_idx_mapping,
-             self.temperature,
-             self.seeds,
--            self.draft_tokens,
-+            self._selector_tokens,
-             self._selector_scores,
--            num_steps=self.num_speculative_steps,
-+            self._req_top_p if truncate else self.temperature,
-+            self._req_top_k if truncate else self.sample_idx_mapping,
-+            num_steps=self.draft_block,
-             top_k=self.selector_top_k,
-             BLOCK_K=block_k,
-             SAMPLE_PROBABILISTIC=self.draft_logits is not None,
-             USE_FP64=self.use_fp64_gumbel,
-+            TRUNCATE=truncate,
-             num_warps=1,
-         )
- 
-     def _cache_draft_logits(self, candidate_ids: torch.Tensor, num_sample: int) -> None:
-         draft_logits = self.draft_logits
--        assert draft_logits is not None
-+        if draft_logits is None:
-+            # Greedy rejection sampling never reads q; the token fusion above is still
-+            # useful because it supplies the proposal handed to the target.
-+            return
-         block_k = triton.next_power_of_2(self.selector_top_k)
-         _cache_draft_logits_kernel[(num_sample,)](
-             draft_logits,
-@@ -172,7 +374,8 @@
-             self.sample_idx_mapping,
-             draft_logits.stride(0),
-             draft_logits.stride(1),
--            num_steps=self.num_speculative_steps,
-+            num_steps=self.draft_block,
-+            cache_steps=self.num_speculative_steps,
-             top_k=self.selector_top_k,
-             BLOCK_K=block_k,
-             num_warps=1,
-@@ -194,15 +397,15 @@
+@@ -219,18 +435,21 @@
              num_tokens_across_dp,
              cudagraph_runtime_mode,
          )
@@ -991,19 +1028,45 @@ index 7db528449..b6e04d4a0 100644
              hidden_states.flatten(0, 1)
          )
          candidate_ids = candidate_ids.view(
--            num_reqs, self.num_speculative_steps, self.selector_top_k
-+            num_reqs, self.draft_block, self.selector_top_k
+-            num_reqs, self.num_speculative_steps, self.top_k
++            num_reqs, self.draft_block, self.top_k
          )
          unary_logits = unary_logits.view_as(candidate_ids)
-         anchor_token_ids = self.input_buffers.input_ids[self._anchor_indices[:num_reqs]]
-@@ -221,3 +424,68 @@
+         scores = self._score_candidates(candidate_ids, unary_logits, hidden_states)
++        # The walk writes the drafter's own block into _selector_tokens; it is copied into
++        # draft_tokens below, where _apply_lookup can fuse it with the lookup.
++        truncate = self._truncate and self._req_top_p is not None
+         self.candidate_sampler.sample(
+             candidate_ids,
+             scores,
+@@ -239,9 +458,11 @@
+             self.sample_idx_mapping,
+             self.temperature,
+             self.seeds,
+-            self.draft_tokens,
++            self._selector_tokens,
+             self.draft_logits,
+             self.use_fp64_gumbel,
++            req_top_p=self._req_top_p if truncate else None,
++            req_top_k=self._req_top_k if truncate else None,
+         )
+         if self.enable_adaptive_verification:
+             self._maybe_predict_acceptance(
+@@ -249,6 +470,10 @@
+                 self.sample_idx_mapping[:num_sample],
+                 self.sample_col[:num_sample],
              )
-         if self.draft_logits is not None:
-             self._cache_draft_logits(candidate_ids, num_sample)
 +        self.draft_tokens[:num_reqs, : self.draft_block].copy_(
 +            self._selector_tokens[:num_reqs]
 +        )
 +        self._apply_lookup(num_reqs)
+ 
+     def _score_candidates(
+         self,
+@@ -263,3 +488,64 @@
+         return self.model.model.candidate_selector(
+             candidate_ids, unary_logits, hidden_states, anchor_token_ids
+         )
 +
 +    def _apply_lookup(self, num_reqs: int) -> None:
 +        """Fuse the drafted block with the continuation of an earlier occurrence of the
@@ -1049,10 +1112,10 @@ index 7db528449..b6e04d4a0 100644
 +        draft_logits = self.draft_logits
 +        if draft_logits is None:
 +            return
-+        block_k = triton.next_power_of_2(self.selector_top_k)
++        block_k = triton.next_power_of_2(self.top_k)
 +        _point_mass_draft_logits_kernel[(num_reqs * self.num_speculative_steps,)](
 +            draft_logits,
-+            self._cached_candidate_ids,
++            self.candidate_sampler.cached_candidate_ids,
 +            self.draft_tokens,
 +            self.draft_tokens.stride(0),
 +            self._lookup_use,
@@ -1061,7 +1124,7 @@ index 7db528449..b6e04d4a0 100644
 +            draft_logits.stride(0),
 +            draft_logits.stride(1),
 +            num_steps=self.num_speculative_steps,
-+            top_k=self.selector_top_k,
++            top_k=self.top_k,
 +            BLOCK_K=block_k,
 +            num_warps=1,
 +        )

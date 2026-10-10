@@ -22,16 +22,16 @@ Validated against vLLM 0.28.0 (issue #25, item 15). Reapply after upgrades.
 Kind: fix
 What: bf16 DSpark drafter beside a quantized target (callable `hf_overrides`)
 Upstream: none yet
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstream PR
 
---- exported from 9ea737d23 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from d1f86fb07 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/utils.py b/model_executor/models/utils.py
-index 6cd21763a..cca8f5339 100644
+index e762ad1c4..2f6f73859 100644
 --- a/model_executor/models/utils.py
 +++ b/model_executor/models/utils.py
-@@ -966,7 +966,7 @@
+@@ -979,7 +979,7 @@
  
      return (
          VllmConfig.get_quantization_config(draft_model_config, draft_load_config)

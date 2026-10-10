@@ -34,13 +34,13 @@ Kind: fix
 What: `VLLM_USE_FLASHINFER_SAMPLER=0` also covers the drafter's candidate top-k, which
   `_flashinfer_topk()` did not gate
 Upstream: none yet (syv-ai #106 B1)
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstream takes it
 
---- exported from 885cc79db (topk-honour-flashinfer-sampler-switch); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from c7b61b035 (topk-honour-flashinfer-sampler-switch); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/logits_processor.py b/model_executor/layers/logits_processor.py
-index 694bb6b03..e5277d581 100644
+index 04541212f..5b1b96829 100644
 --- a/model_executor/layers/logits_processor.py
 +++ b/model_executor/layers/logits_processor.py
 @@ -20,6 +20,7 @@

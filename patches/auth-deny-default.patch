@@ -26,7 +26,7 @@ app and answers any method, so a bare OPTIONS /metrics returned the full
 exposition without the key. Without Origin, CORSMiddleware sends the
 request through to the app, so both headers are necessary.
 
-On v0.30.0: authenticate.py is unchanged from v0.29.0. cli_args.py's help text sits 7 lines lower than on v0.29.0 (#50195, #53353, #55176 moved it), and the hunk is cut there. The routes 0.30 adds (/v1/responses/render, the --enable-scale-out endpoints) fall under the deny-by-default rule with no allowlist change.
+On v0.30.0: authenticate.py is unchanged from v0.29.0 and the patch applies to it as cut; cli_args.py's help-text hunk lands 7 lines lower (#50195, #53353, #55176 moved it). The routes 0.30 adds (/v1/responses/render, the --enable-scale-out endpoints) fall under the deny-by-default rule with no allowlist change.
 
 Kind: fix
 What: --api-key guards every path except /health, /ping, /load and /version (deny by default). The
@@ -37,16 +37,16 @@ What: --api-key guards every path except /health, /ping, /load and /version (den
   Access-Control-Request-Method) skips the token; a bare OPTIONS needs it, because /metrics answers
   any method. The --api-key help text describes the allowlist
 Upstream: vllm #59892
-Cut-against: 0.30.0
+Cut-against: 0.31.0: docstring adjacency only
 Retires-when: upstream PR
 
---- exported from 2404e8b156 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e4c0e1ad1 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/cli_args.py b/entrypoints/launchers/cli_args.py
-index 89af22cdc8..d21c7e6ed5 100644
+index ce6692565..850f824d9 100644
 --- a/entrypoints/launchers/cli_args.py
 +++ b/entrypoints/launchers/cli_args.py
-@@ -298,13 +298,13 @@
+@@ -318,13 +318,13 @@
      """If provided, the server will require one of these keys to be presented in
      the header.
  
@@ -67,15 +67,10 @@ index 89af22cdc8..d21c7e6ed5 100644
      """The file path to the SSL key file."""
      ssl_certfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index e8a61b21ee..7c04269f35 100644
+index 0a0c1daee..94a17b8c9 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
-@@ -4,11 +4,34 @@
- import secrets
- from collections.abc import Awaitable
- 
-+from starlette._utils import get_route_path
- from starlette.datastructures import Headers
+@@ -8,7 +8,29 @@
  from starlette.responses import JSONResponse
  from starlette.types import ASGIApp, Receive, Scope, Send
  
@@ -106,7 +101,7 @@ index e8a61b21ee..7c04269f35 100644
  
  
  class AuthenticationMiddleware:
-@@ -19,8 +42,10 @@
+@@ -18,8 +40,10 @@
      Notes
      -----
      There are two cases in which authentication is skipped:
@@ -116,10 +111,10 @@ index e8a61b21ee..7c04269f35 100644
 +           and an Access-Control-Request-Method header.
 +        2. The request path, ignoring a trailing slash, is one of
 +           UNGUARDED_PATHS (e.g. /health).
+ 
      """
  
-     def __init__(self, app: ASGIApp, tokens: list[str]) -> None:
-@@ -45,18 +70,23 @@
+@@ -45,18 +69,22 @@
          return token_match
  
      def __call__(self, scope: Scope, receive: Receive, send: Send) -> Awaitable[None]:
@@ -131,11 +126,8 @@ index e8a61b21ee..7c04269f35 100644
              # scope["type"] can be "lifespan" or "startup" for example,
              # in which case we don't need to do anything
              return self.app(scope, receive, send)
--        root_path = scope.get("root_path", "")
--        url_path = scope["path"].removeprefix(root_path)
-+        # The path the router matches: removeprefix("/") would turn /health
-+        # into "health" under --root-path /.
-+        url_path = get_route_path(scope)
+         root_path = scope.get("root_path", "")
+         url_path = scope["path"].removeprefix(root_path)
 +        # This middleware runs ahead of the router, so a path that differs from
 +        # an allowlisted one only by a trailing slash never reaches FastAPI's
 +        # redirect_slashes: match on the normalized path, or a liveness probe

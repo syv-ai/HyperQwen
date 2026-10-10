@@ -62,10 +62,10 @@ failed on 0.28 is gone. Mechanisms 2 and 3 below still apply. To be proven by bo
 Kind: feature
 What: int4 per-token-head KV cache with the DFlash2 drafter
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstreamed
 
---- exported from 4bdb0d4bc (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 771270fb5 (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
 index 322d32bb8..6e8de7295 100644

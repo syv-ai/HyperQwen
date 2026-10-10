@@ -13,16 +13,16 @@ Validated against vLLM 0.28.0. Reapply after upgrades.
 Kind: fix
 What: pass `quant_config` to the token embedding (main model and MTP module)
 Upstream: none yet
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstream PR
 
---- exported from 4b609dc9a (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 1afa72741 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
-index f991f05d7..fe960984b 100644
+index ac2729646..bd28d60d5 100644
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -245,6 +245,8 @@
+@@ -247,6 +247,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,
@@ -32,7 +32,7 @@ index f991f05d7..fe960984b 100644
  
          def get_layer(prefix: str):
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 7fb699b18..d424d0c63 100644
+index 421292e88..30f192d86 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
 @@ -85,6 +85,8 @@

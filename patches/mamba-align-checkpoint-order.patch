@@ -79,13 +79,13 @@ Written against vLLM 0.27.1.
 Kind: fix
 What: keep reachable Mamba state snapshots alive until request end (fork #52)
 Upstream: vllm #45238 (not merged)
-Cut-against: 0.30.0: re-cut from the main-track resolution
+Cut-against: 0.31.0
 Retires-when: check against upstream #52789 (internal prefill checkpoints, in 0.29) at each pin
 
---- exported from 19043be9a (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cb1a45d74 (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 40027e71f..0bc3f7343 100644
+index a097c9e92..7c18ea364 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
 @@ -1,7 +1,16 @@
@@ -105,7 +105,7 @@ index 40027e71f..0bc3f7343 100644
  from collections import defaultdict
  from collections.abc import Sequence
  from typing import TYPE_CHECKING, ClassVar
-@@ -1482,6 +1491,13 @@
+@@ -1483,6 +1492,13 @@
              # connector; a request that finishes first hands off this table
              # source directly.
              self._producer_partial_tail_reqs: dict[str, tuple[KVCacheBlock, int]] = {}
@@ -119,7 +119,7 @@ index 40027e71f..0bc3f7343 100644
  
      @classmethod
      def find_longest_cache_hit(
-@@ -1669,8 +1685,37 @@
+@@ -1670,8 +1686,37 @@
                  < cdiv(processed_computed_tokens, self.block_size) - 1
              ):
                  blocks = self.req_to_blocks[request_id]
@@ -159,7 +159,7 @@ index 40027e71f..0bc3f7343 100644
                      blocks[last_state_block_idx] = self._null_block
  
      def get_num_common_prefix_blocks(self, running_request_id: str) -> int:
-@@ -1923,9 +1968,41 @@
+@@ -1932,9 +1977,41 @@
                              # The moved entry is only filled by this step's
                              # copy, so defer same-step hits on it.
                              self.cached_blocks_this_step.add(cow_block.block_hash)
@@ -201,7 +201,7 @@ index 40027e71f..0bc3f7343 100644
                  req_blocks.extend(new_blocks)
                  self._allocated_block_reqs.add(request_id)
                  self._partial_hit_reqs.pop(request_id, None)
-@@ -1976,6 +2053,13 @@
+@@ -1985,6 +2062,13 @@
                  for entry in self._pending_boundary_state_offloads
                  if entry[0] != request_id
              ]

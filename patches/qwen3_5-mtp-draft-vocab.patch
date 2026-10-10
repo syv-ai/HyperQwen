@@ -15,13 +15,13 @@ Validated against vLLM 0.28.0.
 Kind: feature
 What: vocab-truncated draft head for MTP
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstreamed
 
---- exported from 57b5c1a94 (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 56fac5561 (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index d424d0c63..3e4421645 100644
+index 30f192d86..a5471cd9c 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
 @@ -89,6 +89,26 @@

@@ -3,13 +3,13 @@ bounds checks in GDN/KDA spec-decode state lookups
 Kind: backport
 What: bounds checks in GDN/KDA spec-decode state lookups
 Upstream: vllm #50021 (open)
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: the pin that carries #50021
 
---- exported from 21d5776c4 (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 95e480770 (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/mamba/ops/causal_conv1d.py b/model_executor/layers/mamba/ops/causal_conv1d.py
-index 8335c8496..e7387484c 100644
+index e8254e4f3..93ba76492 100644
 --- a/model_executor/layers/mamba/ops/causal_conv1d.py
 +++ b/model_executor/layers/mamba/ops/causal_conv1d.py
 @@ -871,9 +871,21 @@
@@ -38,10 +38,10 @@ index 8335c8496..e7387484c 100644
          conv_state_token_offset = 0
  
 diff --git a/model_executor/layers/mamba/ops/mamba_ssm.py b/model_executor/layers/mamba/ops/mamba_ssm.py
-index af4546788..73c892d67 100644
+index 0f2041d22..969558d12 100644
 --- a/model_executor/layers/mamba/ops/mamba_ssm.py
 +++ b/model_executor/layers/mamba/ops/mamba_ssm.py
-@@ -333,7 +333,15 @@
+@@ -332,7 +332,15 @@
      if HAS_STATE_BATCH_INDICES:
          if IS_SPEC_DECODING:
              num_accepted = tl.load(num_accepted_tokens_ptr + pid_b).to(tl.int64)
@@ -57,7 +57,7 @@ index af4546788..73c892d67 100644
          else:
              init_token_idx = 0
  
-@@ -347,9 +355,17 @@
+@@ -346,9 +354,17 @@
                  dst_state_batch_idx * stride_state_batch + pid_h * stride_state_head
              )
  

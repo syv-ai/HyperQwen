@@ -14,26 +14,26 @@ still exempt a sliding-window block that does not divide the scheduler block.
 Kind: own
 What: KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards)
 Upstream: none
-Cut-against: 0.30.0: re-cut from the main-track resolution, with its #54713 replay_boundaries fixup;
-  #53007 rewrote _largest_kernel_block_within and the SW divisor rule is carried into it by hand
+Cut-against: 0.31.0: attention.py keeps upstream's kv_cache_spec beside our divisor_of; the
+  has_prefill decode-graph guard kept beside #58400 (docs/vllm-0.31.md)
 Retires-when: rides with KVarN
 
---- exported from 4cb7e8125 (kvarn-v2-runner-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3bda92d41 (kvarn-v2-runner-0.31.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index 47a1299c8..bc35fecea 100644
+index e3389d4e1..9ea8e007a 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
-@@ -100,6 +100,7 @@
-     per_token_bytes: int,
+@@ -104,6 +104,7 @@
      page_budget: int,
      fallback: int,
+     kv_cache_spec: KVCacheSpec | None = None,
 +    divisor_of: int | None = None,
  ) -> int:
      """Largest supported kernel block size whose page fits in ``page_budget``.
  
-@@ -114,11 +115,31 @@
-     sizes = attn_backend.get_supported_kernel_block_sizes()
+@@ -118,11 +119,31 @@
+     sizes = attn_backend.get_supported_kernel_block_sizes(kv_cache_spec)
      max_block_size = page_budget // per_token_bytes
      candidates = [s for s in sizes if isinstance(s, int)]
 -    candidates.extend(
@@ -69,7 +69,7 @@ index 47a1299c8..bc35fecea 100644
      if not candidates:
          return fallback
      smallest = min(candidates)
-@@ -633,6 +654,13 @@
+@@ -635,6 +656,13 @@
              # cannot run the primary block start from their smallest block and
              # ``unify`` scales it up by an integer ratio.
              shared_page = vllm_config.cache_config.skip_page_size_padded
@@ -81,26 +81,21 @@ index 47a1299c8..bc35fecea 100644
 +            ).startswith("kvarn"):
 +                shared_page = vllm_config.cache_config.mamba_page_size_padded
              # The backend owns its packing
-             sw_per_token = self.attn_backend.customize_spec(
+             kv_cache_spec = self.attn_backend.customize_spec(
                  SlidingWindowSpec(
-@@ -647,7 +675,11 @@
-             ).real_page_size_bytes
-             page_budget = shared_page or sw_per_token * block_size
-             sw_block_size = _largest_kernel_block_within(
--                self.attn_backend, sw_per_token, page_budget, block_size
-+                self.attn_backend,
-+                sw_per_token,
-+                page_budget,
-+                block_size,
+@@ -655,6 +683,7 @@
+                 page_budget,
+                 block_size,
+                 kv_cache_spec,
 +                divisor_of=block_size if shared_page else None,
              )
              return SlidingWindowSpec(
                  block_size=sw_block_size,
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index d77132b67..eb155de8c 100644
+index cb6f07f47..eee5e378f 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -225,6 +225,15 @@
+@@ -257,6 +257,15 @@
          )
  
          self.sliding_window = sliding_window
@@ -117,10 +112,10 @@ index d77132b67..eb155de8c 100644
              self.num_heads,
              self.head_dim,
 diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
-index afb03ac3e..5dd097388 100644
+index daf0cd12c..7f17af1d9 100644
 --- a/v1/core/kv_cache_coordinator.py
 +++ b/v1/core/kv_cache_coordinator.py
-@@ -89,7 +89,8 @@
+@@ -87,7 +87,8 @@
          # The scheduling granularity (LCM of all group block sizes), must be a multiple
          # of the hash_block_size and the block size of each group.
          assert scheduler_block_size % hash_block_size == 0 and all(
@@ -131,10 +126,10 @@ index afb03ac3e..5dd097388 100644
          )
          self.scheduler_block_size = scheduler_block_size
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 0bc3f7343..ed0c4fe8f 100644
+index 7c18ea364..73968e196 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -1198,6 +1198,31 @@
+@@ -1204,6 +1204,31 @@
          """
          return 0
  
@@ -167,16 +162,16 @@ index 0bc3f7343..ed0c4fe8f 100644
  class CircularBufferManager(FullAttentionManager):
      """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 07c818b22..301952f68 100644
+index 9100bcef5..e1cea17b8 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1290,9 +1290,14 @@
-             is_prefilling_np=is_prefilling_np,
-             has_prefill=bool(is_prefilling_np.any()),
+@@ -1317,9 +1317,14 @@
+             decode_graph_eligible=decode_graph_eligible,
+             max_seq_len_np=max_seq_len_np,
          )
 -        return batch_state, get_uniform_decode_token_count(
 +        uniform_decode_token_count = get_uniform_decode_token_count(
-             num_reqs, num_toks, max_query_len, batch_state.has_prefill
+             num_reqs, num_toks, max_query_len, decode_graph_eligible
          )
 +        # A uniform-looking final prefill chunk is still prefill. Do not route
 +        # it through a captured speculative-decode graph on a prefix-cache hit.
@@ -187,10 +182,10 @@ index 07c818b22..301952f68 100644
      def prepare_inputs(
          self,
 diff --git a/v1/worker/gpu/model_states/mamba_hybrid.py b/v1/worker/gpu/model_states/mamba_hybrid.py
-index 0ac3f2f63..c34f9f44e 100644
+index 32924555b..a4bce2ce2 100644
 --- a/v1/worker/gpu/model_states/mamba_hybrid.py
 +++ b/v1/worker/gpu/model_states/mamba_hybrid.py
-@@ -118,8 +118,13 @@
+@@ -114,8 +114,13 @@
          self.num_accepted_tokens_gpu[req_index].fill_(1)
          if self._align_mode:
              # Seed the running state block from the resumed/prefilled position.
@@ -206,7 +201,7 @@ index 0ac3f2f63..c34f9f44e 100644
  
      def _get_mamba_group_info(
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 83dcac17d..633b8b78e 100644
+index 41ede8286..ba6677a96 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@
@@ -219,20 +214,21 @@ index 83dcac17d..633b8b78e 100644
          # vLLM 0.28.0's rejection sampler expects pre-temperature logits. With TRUNCATE
          # the cached row is the truncated proposal (-inf outside the kept support).
          realized = scores
-@@ -160,7 +163,7 @@
-             torch.arange(self.max_num_reqs, dtype=torch.int64, device=device)
-             * self.num_query_per_req
+@@ -260,7 +263,7 @@
+             device,
+             cache_steps=self.num_speculative_steps,
          )
 -        self._selector_tokens = torch.empty(
 +        self._selector_tokens = torch.zeros(
              (self.max_num_reqs, self.draft_block),
              dtype=self.draft_tokens.dtype,
              device=device,
-@@ -715,6 +718,7 @@
-             hidden_states,
-             anchor_token_ids,
-         )
+@@ -750,6 +753,8 @@
+         scores = self._score_candidates(candidate_ids, unary_logits, hidden_states)
+         # The walk writes the drafter's own block into _selector_tokens; it is copied into
+         # draft_tokens below, where _apply_lookup can fuse it with the lookup.
++        # A degenerate selector can emit NaN/inf scores (kvarn-v2-runner); keep the walk finite.
 +        scores = torch.nan_to_num(scores, nan=-1e30, posinf=1e30, neginf=-1e30)
-         self._sample_path(candidate_ids, scores, num_reqs)
-         if self.enable_adaptive_verification:
-             self._maybe_predict_acceptance(
+         truncate = self._truncate and self._req_top_p is not None
+         self.candidate_sampler.sample(
+             candidate_ids,

@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install the KVarN KV-cache port into this repo's vLLM 0.30.0 venv:
+# Install the KVarN KV-cache port into this repo's vLLM 0.31.0 venv:
 # copies the new modules into site-packages/vllm and applies the upstream hunks.
 # usage: bash kvarn/install.sh            (idempotent: re-copying files is fine, and
 #        patches/apply.sh --kvarn skips a patch whose every hunk is already in the tree)
@@ -10,10 +10,10 @@ PY=${PY:-$REPO/venv/bin/python}
 SP=$("$PY" -c 'import vllm, os; print(os.path.dirname(vllm.__file__))' 2>/dev/null | tail -n1)
 [ -n "$SP" ] && [ -d "$SP" ] || { echo "cannot import vllm with $PY (README: Setup)"; exit 1; }
 cp -r "$HERE/files/vllm/." "$SP/"
-# patches/apply.sh --kvarn applies kvarn-0.30.0, kvarn-v2-runner-0.30.0 (lets SPEC=dflash2 run with
-# CTX=huge: KVarN KV + prefix caching, 240k), kvarn-recycled-pages-0.30.0 (the runner tells KVarN
+# patches/apply.sh --kvarn applies kvarn-0.31.0, kvarn-v2-runner-0.31.0 (lets SPEC=dflash2 run with
+# CTX=huge: KVarN KV + prefix caching, 240k), kvarn-recycled-pages-0.31.0 (the runner tells KVarN
 # which pages moved to another KV-cache group each step, so a late flush never lands on another
-# request's mamba state, #208) and kvarn-fp16-dequant-0.30.0 (registers KVARN_FP16_DEQUANT in
+# request's mamba state, #208) and kvarn-fp16-dequant-0.31.0 (registers KVARN_FP16_DEQUANT in
 # envs.py; the modules above read it through vllm.envs), in that order, at --fuzz 0, after the
 # whole patches/ series. It checks each patch with an exact reverse dry-run first, so a rerun is a
 # no-op, a venv installed before the fp16 patch existed only gets that patch, and a partly applied

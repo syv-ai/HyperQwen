@@ -16,16 +16,16 @@ What: keeps this repo's runtime-only env knobs (`VLLM_ENGINE_STALL_SENTINEL_S`,
   deprecated `VLLM_PREFIX_CACHE_RETENTION_INTERVAL` out of `compile_factors()`, so changing one no
   longer forces a cold torch.compile (#183)
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: stays while the knobs exist
 
---- exported from 6f3bff72a (compile-key-runtime-knobs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 2206e2f28 (compile-key-runtime-knobs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 9bdd6f1ab..a74623e01 100755
+index 0fb6ef537..580492b11 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -2359,6 +2359,16 @@
+@@ -2442,6 +2442,16 @@
          "VLLM_CACHE_ROOT",
          # Runtime memory-plan persistence; does not affect compiled graphs.
          "VLLM_ENABLE_STARTUP_PLAN",

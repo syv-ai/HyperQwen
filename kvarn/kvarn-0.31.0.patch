@@ -11,13 +11,13 @@ per-token [N, C] slots of the runner's 4D view back into one tile per (block, he
 Kind: feature
 What: KVarN cache dtypes, quant mode, backend registration, page size
 Upstream: none (KVarN is Huawei CSL's, Apache-2.0)
-Cut-against: 0.30.0: re-cut from the main-track resolution, with its #54713 replay_boundaries fixup
+Cut-against: 0.31.0
 Retires-when: upstreamed
 
---- exported from 82059afb6 (kvarn-0.30.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 8fe03b0b8 (kvarn-0.31.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/cache.py b/config/cache.py
-index 9bd898731..5eee41e94 100644
+index 3121f4953..d7a405211 100644
 --- a/config/cache.py
 +++ b/config/cache.py
 @@ -50,6 +50,10 @@
@@ -32,10 +32,10 @@ index 9bd898731..5eee41e94 100644
      "int8_per_token_head",
      "fp8_per_token_head",
 diff --git a/envs.py b/envs.py
-index a74623e01..42e23eb6d 100755
+index 1775710cc..1f2c4525d 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -225,6 +225,26 @@
+@@ -227,6 +227,26 @@
      VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
      VLLM_DRAFT_TEMP_SCALE: float = 1.0
      VLLM_MARLIN_REPACK_STAGED: str | None = None
@@ -62,7 +62,7 @@ index a74623e01..42e23eb6d 100755
      # GiB of vision-tower weights to keep in pinned host memory; 0 disables.
      VLLM_VISION_CPU_OFFLOAD_GB: float = 0.0
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
-@@ -1594,6 +1614,28 @@
+@@ -1631,6 +1651,28 @@
      "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
      # Marlin repack staging buffer, opt-in: "1" turns it on (GA100 mining cards); unset or anything else = off
      "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
@@ -92,10 +92,10 @@ index a74623e01..42e23eb6d 100755
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index a001c8c29..47a1299c8 100644
+index bec1856d9..e3389d4e1 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
-@@ -660,6 +660,26 @@
+@@ -667,6 +667,26 @@
                  page_size_padded=shared_page,
              )
          else:
@@ -123,7 +123,7 @@ index a001c8c29..47a1299c8 100644
                  block_size=block_size,
                  num_kv_heads=self.num_kv_heads,
 diff --git a/platforms/cuda.py b/platforms/cuda.py
-index 30eed82cc..91916590d 100644
+index 68c3aa785..0777bb75b 100644
 --- a/platforms/cuda.py
 +++ b/platforms/cuda.py
 @@ -162,6 +162,7 @@
@@ -142,7 +142,7 @@ index 30eed82cc..91916590d 100644
                  AttentionBackendEnum.TURBOQUANT,
              ]
  
-@@ -375,6 +377,70 @@
+@@ -363,6 +365,70 @@
                  "`wsl --shutdown`."
              )
  
@@ -214,10 +214,10 @@ index 30eed82cc..91916590d 100644
      def get_current_memory_usage(
          cls, device: torch.types.Device | None = None
 diff --git a/platforms/interface.py b/platforms/interface.py
-index bd5d98191..33fbbeeeb 100644
+index 5b053c4c7..ffa487ec5 100644
 --- a/platforms/interface.py
 +++ b/platforms/interface.py
-@@ -819,6 +819,23 @@
+@@ -875,6 +875,23 @@
                  cache_dtype_str=cache_config.cache_dtype,
                  kv_quant_mode=kv_quant_mode,
              ).page_size_bytes
@@ -242,7 +242,7 @@ index bd5d98191..33fbbeeeb 100644
              # TQ has a packed K|V layout; the standard FullAttentionSpec
              # formula over-sizes it and trips unify_kv_cache_spec_page_size
 diff --git a/utils/torch_utils.py b/utils/torch_utils.py
-index 0b330edf0..a28007cee 100644
+index 849d0a38f..7a8189ed3 100644
 --- a/utils/torch_utils.py
 +++ b/utils/torch_utils.py
 @@ -50,6 +50,10 @@
@@ -257,10 +257,10 @@ index 0b330edf0..a28007cee 100644
      "nvfp4_4over6": torch.uint8,
  }
 diff --git a/v1/attention/backends/registry.py b/v1/attention/backends/registry.py
-index 571566db1..078eff1c9 100644
+index 32e2fabeb..f2b21f697 100644
 --- a/v1/attention/backends/registry.py
 +++ b/v1/attention/backends/registry.py
-@@ -145,6 +145,7 @@
+@@ -148,6 +148,7 @@
      CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
      CPU_MLA = "vllm.v1.attention.backends.mla.cpu_mla.CPUMLABackend"
      AMX_MLA = "vllm.v1.attention.backends.mla.amx_mla.AMXMLABackend"
@@ -269,7 +269,7 @@ index 571566db1..078eff1c9 100644
      # Placeholder for third-party/custom backends - must be registered before use
      # set to None to avoid alias with other backend, whose value is an empty string
 diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
-index 8cd867eb9..638153d73 100644
+index 3ff0832b1..5e8104b1e 100644
 --- a/v1/kv_cache_interface.py
 +++ b/v1/kv_cache_interface.py
 @@ -55,6 +55,7 @@

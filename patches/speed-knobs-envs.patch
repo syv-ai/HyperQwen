@@ -12,16 +12,16 @@ this a cached graph from a run without the flag fails with
 Kind: local
 What: register this repo's env knobs in `envs.py`
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0: adjacency with upstream's rewritten humming-kernel comment
 Retires-when: stays while the knobs exist
 
---- exported from 82a8cbeee (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ed29c0915 (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 84b00ff3f..1707deec5 100755
+index ee015d6e5..1775710cc 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -194,6 +194,36 @@
+@@ -199,6 +199,36 @@
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
@@ -58,7 +58,7 @@ index 84b00ff3f..1707deec5 100755
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
-@@ -1519,6 +1549,44 @@
+@@ -1566,6 +1596,44 @@
      "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
          os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
      ),
@@ -100,6 +100,6 @@ index 84b00ff3f..1707deec5 100755
 +    "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
 +        os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
 +    ),
-     # The activation dtype config for humming kernel
+     # The activation dtype config for humming kernel. Explicit schemas disable
+     # fallback unless the config includes "allow_fallback": true.
      "VLLM_HUMMING_INPUT_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
-         os.environ.get("VLLM_HUMMING_INPUT_QUANT_CONFIG", None)

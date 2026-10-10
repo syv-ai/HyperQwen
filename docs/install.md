@@ -26,8 +26,8 @@ git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
 
 python3 -m venv venv
-venv/bin/pip install vllm==0.30.0 huggingface_hub hf_transfer ninja \
-  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.6.18.post1 pandas \
+venv/bin/pip install vllm==0.31.0 huggingface_hub hf_transfer ninja \
+  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.7.0.post1 pandas \
   nvidia-cuda-nvcc==13.0.88 nvidia-cuda-crt==13.0.88 nvidia-cuda-cccl==13.0.85 nvidia-nvvm==13.0.88
 # The four nvidia-* pins hold the CUDA 13 compiler at the runtime's 13.0 (see "Any
 # FlashInfer JIT needs nvcc ... to EQUAL" below): unpinned, pip now resolves nvcc 13.4
@@ -102,7 +102,7 @@ venv/bin/python prepare/fetch_dflash2.py
 venv/bin/python prepare/fetch_thirdparty.py
 venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A16
 
-# patch vllm (all compatible patches are written against 0.30.0; reapply after upgrades).
+# patch vllm (all compatible patches are written against 0.31.0; reapply after upgrades).
 # patches/apply.sh applies patches/series in order, with --fuzz 0, and stops at the first
 # patch that does not apply, by name. The order matters: a few patches carry hunk context
 # that an earlier patch adds. A new independent patch goes on the last line of

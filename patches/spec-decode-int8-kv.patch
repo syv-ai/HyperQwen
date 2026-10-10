@@ -42,16 +42,16 @@ Validated against vLLM 0.28.0. Reapply after upgrades.
 Kind: feature
 What: split-KV verify attention over an int8 per-token-head cache
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: rides with spec-decode-attn
 
---- exported from 5c1271db1 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e3400805c (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 2754d357d..10b94c1e0 100755
+index f5f4da8c1..77c35dad2 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -2121,7 +2121,7 @@
+@@ -2191,7 +2191,7 @@
      return _SPEC_ATTN_QMAX
  
  
@@ -60,7 +60,7 @@ index 2754d357d..10b94c1e0 100755
      from vllm.v1.attention.ops.spec_decode_attn import SpecDecodeAttention
  
      key = (impl.num_heads, impl.head_size, q.device)
-@@ -2140,4 +2140,5 @@
+@@ -2210,4 +2210,5 @@
          )
          _SPEC_ATTN[key] = att
      att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
@@ -68,7 +68,7 @@ index 2754d357d..10b94c1e0 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q,
 +            k_scale_cache=k_scale_cache, v_scale_cache=v_scale_cache)
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index b7e2a41d0..98356fd7d 100644
+index 8a2fab4cc..2e5e046d2 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -40,6 +40,11 @@
@@ -83,7 +83,7 @@ index b7e2a41d0..98356fd7d 100644
  from vllm.v1.kv_cache_interface import (
      AttentionSpec,
      KVQuantMode,
-@@ -653,6 +658,44 @@
+@@ -660,6 +665,44 @@
  
          mm_prefix_range_tensor = attn_metadata.mm_prefix_range_tensor
  

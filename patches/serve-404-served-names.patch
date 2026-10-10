@@ -12,16 +12,16 @@ What: the model-not-found 404 lists the served names (`Served models: ...`) so a
   one-read response body
 Upstream: vllm #59889 (merged to main as `7867d6c52d`, not in a release yet; upstream says `Valid
   aliases: ...`)
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: the pin carries vllm #59889
 
---- exported from f2ebcc767 (serve-404-served-names); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 6556a43ec (serve-404-served-names); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/serve/engine/serving.py b/entrypoints/serve/engine/serving.py
-index 23e392720..b65af6117 100644
+index 86ba52494..ee4037c23 100644
 --- a/entrypoints/serve/engine/serving.py
 +++ b/entrypoints/serve/engine/serving.py
-@@ -60,8 +60,14 @@
+@@ -63,8 +63,14 @@
              ):
                  error_response = load_result
  

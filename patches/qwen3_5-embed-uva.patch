@@ -13,16 +13,16 @@ What: `VLLM_EMBED_UVA=1` keeps the quantized token embedding (main model and MTP
   behind a CUDA UVA view, freeing about 1.25 GiB of VRAM for the KV pool (+15.7% tokens on a 3090) at no
   measured decode or prefill cost, for about 2.1 GiB of host RAM; default off
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: stays while the knob exists
 
---- exported from f6299d2 (embed-uva); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 896d13064 (qwen3_5-embed-uva); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 77233f0..085cd90 100755
+index 73d4726d8..27adbb02a 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -182,6 +182,7 @@
+@@ -187,6 +187,7 @@
      # syv patch: split-KV verify attention, registered by the patch that reads it (#114)
      VLLM_SPEC_DECODE_ATTN: bool = False
      VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
@@ -30,7 +30,7 @@ index 77233f0..085cd90 100755
      VLLM_SPEC_ATTN_BLOCK_M: int = 0
      # syv patch: split-KV verify debug print (patches/triton-spec-attn-fp8-kv.patch)
      VLLM_SPEC_ATTN_DEBUG: bool = False
-@@ -1512,6 +1513,8 @@
+@@ -1559,6 +1560,8 @@
      "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
      "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
      "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
@@ -40,10 +40,10 @@ index 77233f0..085cd90 100755
      # split-KV verify kernel: debug print
      "VLLM_SPEC_ATTN_DEBUG": lambda: os.environ.get("VLLM_SPEC_ATTN_DEBUG", "0") == "1",
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
-index fe96098..f5e5c4d 100644
+index bd28d60d5..d17179060 100644
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -29,6 +29,7 @@
+@@ -30,6 +30,7 @@
  import torch
  from torch import nn
  
@@ -51,7 +51,7 @@ index fe96098..f5e5c4d 100644
  from vllm.compilation.decorators import support_torch_compile
  from vllm.config import VllmConfig
  from vllm.distributed import (
-@@ -57,6 +58,7 @@
+@@ -59,6 +60,7 @@
  from vllm.sequence import IntermediateTensors
  from vllm.tokenizers.registry import cached_tokenizer_from_config
  from vllm.transformers_utils.configs.qwen3_5 import Qwen3_5Config, Qwen3_5TextConfig
@@ -59,7 +59,7 @@ index fe96098..f5e5c4d 100644
  from vllm.transformers_utils.configs.qwen3_5_moe import (
      Qwen3_5MoeConfig,
      Qwen3_5MoeTextConfig,
-@@ -103,6 +105,34 @@
+@@ -105,6 +107,34 @@
  logger = init_logger(__name__)
  
  
@@ -94,7 +94,7 @@ index fe96098..f5e5c4d 100644
  class Qwen3_5ProcessingInfo(Qwen3VLProcessingInfo):
      def get_hf_config(self):
          return self.ctx.get_hf_config(Qwen3_5Config)
-@@ -288,7 +318,10 @@
+@@ -290,7 +320,10 @@
                  ckpt_prefix="mlp.shared_expert",
              )
          loader = AutoWeightsLoader(self)
@@ -107,7 +107,7 @@ index fe96098..f5e5c4d 100644
  
  class Qwen3_5ForCausalLMBase(
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 3e44216..95ecb4c 100644
+index a5471cd9c..b12d67da6 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
 @@ -25,6 +25,7 @@

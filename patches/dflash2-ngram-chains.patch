@@ -5,13 +5,15 @@ num_tokens_across_dp from the base.
 Kind: feature
 What: quantized candidate chains for the drafter; `propose` override
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0: follows CandidateSampler's members; the context-parallel arguments as in #261
+  (the CP size now read from dcp_size, #56723), and prepare_context_anchor after the hidden-states
+  copy (#57934)
 Retires-when: upstreamed
 
---- exported from 842dc000b (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e7f63cc76 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index b6e04d4a0..9c5c75ac8 100644
+index 2121031ed..db7379415 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -35,7 +37,7 @@ index b6e04d4a0..9c5c75ac8 100644
  
  logger = init_logger(__name__)
  from vllm.v1.worker.gpu.spec_decode.dflash2.lookup import (
-@@ -259,6 +262,48 @@
+@@ -347,6 +350,48 @@
          self._lookup_sticky = envs.VLLM_DFLASH2_LOOKUP_STICKY
          self._sticky = 0
  
@@ -84,7 +86,7 @@ index b6e04d4a0..9c5c75ac8 100644
          if self._lookup:
              logger.info(
                  "DFlash2 lookup-augmented drafting on (k=%d nmin=%d nmax=%d nstrong=%d "
-@@ -281,6 +326,11 @@
+@@ -369,6 +414,11 @@
          unanimity across the batch. Below CHEAP_CTX tokens of context an extra verify
          position is nearly free (+6% per step at 1.5k against +27% at 25k), so there the
          flag alone is enough."""
@@ -96,7 +98,7 @@ index b6e04d4a0..9c5c75ac8 100644
          if not self._adaptive:
              return None
          emitted = getattr(self, "last_num_emitted", None)
-@@ -318,6 +368,254 @@
+@@ -406,6 +456,255 @@
          self._prev_want = want
          return self.num_speculative_steps if long_block else self.draft_block
  
@@ -256,6 +258,7 @@ index b6e04d4a0..9c5c75ac8 100644
 +        else:
 +            hidden_states = last_hidden_states
 +        self.hidden_states[:num_target_tokens].copy_(hidden_states[:num_target_tokens])
++        self.prepare_context_anchor(input_batch, num_rejected)
 +
 +        # Same input preparation as the base path: the verify side needs slot
 +        # mappings / context positions, and suffix_lookup needs
@@ -282,7 +285,7 @@ index b6e04d4a0..9c5c75ac8 100644
 +                self.block_tables.input_block_tables[gid],
 +                self.block_tables.kernel_block_sizes[gid],
 +                self.block_tables.cp_rank,
-+                self.block_tables.cp_size,
++                self.dcp_size,
 +                self.block_tables.cp_interleave,
 +                self.parallel_drafting_token_id,
 +                self.num_query_per_req,
@@ -330,10 +333,10 @@ index b6e04d4a0..9c5c75ac8 100644
 +        if draft_logits is None:
 +            # Greedy rejection sampling does not consume a proposal distribution.
 +            return self.draft_tokens[:num_reqs]
-+        block_k = triton.next_power_of_2(self.selector_top_k)
++        block_k = triton.next_power_of_2(self.top_k)
 +        _point_mass_draft_logits_kernel[(num_reqs * k,)](
 +            draft_logits,
-+            self._cached_candidate_ids,
++            self.candidate_sampler.cached_candidate_ids,
 +            self.draft_tokens,
 +            self.draft_tokens.stride(0),
 +            self._lookup_use,
@@ -342,7 +345,7 @@ index b6e04d4a0..9c5c75ac8 100644
 +            draft_logits.stride(0),
 +            draft_logits.stride(1),
 +            num_steps=k,
-+            top_k=self.selector_top_k,
++            top_k=self.top_k,
 +            BLOCK_K=block_k,
 +            num_warps=1,
 +        )
@@ -351,7 +354,7 @@ index b6e04d4a0..9c5c75ac8 100644
      def set_req_states(self, req_states) -> None:
          """The token history the lookup matches against (set by the model runner)."""
          self._req_states = req_states
-@@ -330,6 +628,10 @@
+@@ -418,6 +717,10 @@
      def set_sampling_states(self, sampling_states) -> None:
          self._req_top_p = sampling_states.top_p.gpu
          self._req_top_k = sampling_states.top_k.gpu
@@ -360,9 +363,9 @@ index b6e04d4a0..9c5c75ac8 100644
 +            # UVA-backed: .np is the host view of the same memory, no sync.
 +            self._req_temp_np = getattr(temp, "np", None)
  
-     def _sample_path(
+     def _generate_draft(
          self,
-@@ -489,3 +791,16 @@
+@@ -549,3 +852,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )

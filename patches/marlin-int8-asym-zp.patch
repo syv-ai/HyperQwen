@@ -26,16 +26,16 @@ What: the Marlin int8-activation path (`INT8_ACT=int8`) accepts zero-point `uint
   asymmetric AWQ exports (compressed-tensors `symmetric: false`) run W4A8 like the symmetric ones;
   the `kS8 x kU4` kernel is already compiled, only two asserts refused it
 Upstream: none yet
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstream PR
 
---- exported from 744d10c9e (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5a759da90 (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
-index 543563e75..a37420e1c 100644
+index a3200a3d4..6b3f6e6ad 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
-@@ -124,7 +124,10 @@
+@@ -123,7 +123,10 @@
          is_a_8bit = c.act_type is not None and c.act_type.itemsize == 1
  
          if is_a_8bit:
@@ -48,10 +48,10 @@ index 543563e75..a37420e1c 100644
              )
  
 diff --git a/model_executor/layers/quantization/utils/marlin_utils.py b/model_executor/layers/quantization/utils/marlin_utils.py
-index d3fcf3fea..4a5f8858c 100644
+index d28d8b8e1..1fb7e4ef7 100644
 --- a/model_executor/layers/quantization/utils/marlin_utils.py
 +++ b/model_executor/layers/quantization/utils/marlin_utils.py
-@@ -722,7 +722,9 @@
+@@ -789,7 +789,9 @@
  
      a_scales = None
      if input_dtype == torch.int8:

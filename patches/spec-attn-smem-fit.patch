@@ -22,10 +22,10 @@ Kind: fix
 What: the split-KV verify attention sizes its KV tile to the device's shared memory: halve the KV
   tile when Triton reports OutOfResources, so it launches on Turing (sm75, 64 KB per block)
 Upstream: none
-Cut-against: 0.30.0: hunk 1 (the import) re-placed by hand
+Cut-against: 0.31.0
 Retires-when: upstream with spec-decode-attn
 
---- exported from b41abb2dc (spec-attn-smem-fit); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from b93752409 (spec-attn-smem-fit); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
 index 06fa37fa4..9fe6e4845 100644

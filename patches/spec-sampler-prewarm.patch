@@ -23,17 +23,16 @@ Apply with the patches/ set.
 Kind: fix
 What: compile the rejection sampler's Triton kernels at boot (fork #48)
 Upstream: none yet
-Cut-against: 0.30.0, hand-resolved: upstream #56323 warms the V1 sampler's kernels, not the V2
-  runner's this patch warms
+Cut-against: 0.31.0: adjacency with #57428's renamed GEMM warmup
 Retires-when: upstream PR
 
---- exported from 48dfe45bf (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 50fed2fbc (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/warmup/kernel_warmup.py b/model_executor/warmup/kernel_warmup.py
-index bcb2dd779..c01c566e5 100644
+index 33fe7002a..6cdb78911 100644
 --- a/model_executor/warmup/kernel_warmup.py
 +++ b/model_executor/warmup/kernel_warmup.py
-@@ -10,6 +10,7 @@
+@@ -9,6 +9,7 @@
  import time
  from typing import TYPE_CHECKING
  
@@ -41,7 +40,7 @@ index bcb2dd779..c01c566e5 100644
  import torch
  
  import vllm.envs as envs
-@@ -137,6 +138,63 @@
+@@ -136,6 +137,63 @@
      logger.info_once("Warmed up BF16x3 router GEMM configs: %s.", configs)
  
  
@@ -102,9 +101,9 @@ index bcb2dd779..c01c566e5 100644
 +    )
 +
 +
- def _warmup_kimi_k3_gemm_rs_ar() -> None:
-     # Kimi-K3 model construction imports this module only when GEMM-RS/AR is
-     # enabled and initializes its singleton before kernel_warmup runs. Avoid
+ def _warmup_gemm_rs_ar() -> None:
+     # Model construction (Kimi-K3, DeepSeek-V4.1) imports this module only
+     # when GEMM-RS/AR is enabled and initializes its singleton before
 @@ -194,6 +252,10 @@
      compilation_config = worker.vllm_config.compilation_config
      cudagraph_capture_sizes = list(compilation_config.cudagraph_capture_sizes or [])

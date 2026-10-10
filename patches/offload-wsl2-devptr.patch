@@ -3,16 +3,17 @@ CPU offload tier device pointers on WSL2
 Kind: local
 What: CPU offload tier device pointers on WSL2
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0: keeps upstream #51081's chunked cudaHostRegister; the device-pointer
+  translation queries every chunk and refuses to start if they map at different offsets
 Retires-when: stays
 
---- exported from 818149dcb (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from f29c09777 (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/kv_offload/cpu/gpu_worker.py b/v1/kv_offload/cpu/gpu_worker.py
-index 8db9e805f..735777d5d 100644
+index 797abed5e..ae6a9c97f 100644
 --- a/v1/kv_offload/cpu/gpu_worker.py
 +++ b/v1/kv_offload/cpu/gpu_worker.py
-@@ -102,7 +102,9 @@
+@@ -106,7 +106,9 @@
      assert skip_count < blocks_per_chunk
  
      num_sub_blocks = len(output)
@@ -23,77 +24,87 @@ index 8db9e805f..735777d5d 100644
      row_stride = tensor.stride(0)
  
      if blocks_per_chunk == 1:
-@@ -218,6 +220,69 @@
-             region.total_size_bytes / 1e9,
-         )
-         region.is_pinned = True
-+        # (fix 2026-08-28) Host VA == device VA only under true UVA. WSL2
-+        # registers successfully but maps the region at a different device
-+        # address; kernels dereferencing the host VA fault (IMA). Ask the
-+        # API for the device pointer and carry the delta into pointer
-+        # arithmetic. Delta is 0 on native Linux — no behavior change.
-+        import ctypes as _ctypes
-+        import glob as _glob
-+        import os as _os
+@@ -269,6 +271,79 @@
+         len(addresses),
+     )
+ 
++    # (fix 2026-08-28, chunked since vLLM #51081) Host VA == device VA only under
++    # true UVA. WSL2 registers successfully but maps the region at a different
++    # device address, and kernels dereferencing the host VA fault (IMA). Ask the
++    # API for each registered chunk's device pointer and carry the delta into
++    # pointer arithmetic. One delta serves the region only if every chunk maps at
++    # the same offset; a region up to MAX_HOST_REGISTER_CHUNK_BYTES is one chunk.
++    # The delta is 0 on native Linux, so nothing changes there.
++    import ctypes as _ctypes
++    import glob as _glob
++    import os as _os
 +
-+        def _load_cudart():
-+            # The process image first: torch has already dlopen'd cudart, and
-+            # standard pip installs ship ONLY versioned sonames at absolute
-+            # wheel paths never on the loader search path (so a bare
-+            # CDLL("libcudart.so") fails on most native Linux boxes).
-+            candidates = [None, "libcudart.so", "libcudart.so.13",
-+                          "libcudart.so.12"]
-+            import torch as _torch
-+            _sp = _os.path.dirname(_os.path.dirname(_torch.__file__))
-+            candidates += sorted(_glob.glob(
-+                _os.path.join(_sp, "nvidia", "*", "lib", "libcudart.so*")))
-+            for _cand in candidates:
-+                try:
-+                    _lib = _ctypes.CDLL(_cand)
-+                    _lib.cudaHostGetDevicePointer  # symbol must resolve
-+                    return _lib
-+                except (OSError, AttributeError):
-+                    continue
-+            return None
++    def _load_cudart():
++        # The process image first: torch has already dlopen'd cudart, and
++        # standard pip installs ship ONLY versioned sonames at absolute
++        # wheel paths never on the loader search path (so a bare
++        # CDLL("libcudart.so") fails on most native Linux boxes).
++        candidates = [None, "libcudart.so", "libcudart.so.13",
++                      "libcudart.so.12"]
++        import torch as _torch
++        _sp = _os.path.dirname(_os.path.dirname(_torch.__file__))
++        candidates += sorted(_glob.glob(
++            _os.path.join(_sp, "nvidia", "*", "lib", "libcudart.so*")))
++        for _cand in candidates:
++            try:
++                _lib = _ctypes.CDLL(_cand)
++                _lib.cudaHostGetDevicePointer  # symbol must resolve
++                return _lib
++            except (OSError, AttributeError):
++                continue
++        return None
 +
-+        try:
-+            _libcudart = _load_cudart()
-+            if _libcudart is None:
-+                raise RuntimeError(
-+                    "KV offload: cudart with cudaHostGetDevicePointer not "
-+                    "loadable from the process image, system sonames, or the "
-+                    "wheel path — cannot verify device addressability of the "
-+                    "registered mmap; refusing unsafe zero-copy transfers.")
++    try:
++        _libcudart = _load_cudart()
++        if _libcudart is None:
++            raise RuntimeError(
++                "KV offload: cudart with cudaHostGetDevicePointer not "
++                "loadable from the process image, system sonames, or the "
++                "wheel path; cannot verify device addressability of the "
++                "registered mmap, refusing unsafe zero-copy transfers.")
++        _deltas = set()
++        for _address in addresses:
 +            _devptr = _ctypes.c_void_p()
 +            _rc = _libcudart.cudaHostGetDevicePointer(
-+                _ctypes.byref(_devptr), _ctypes.c_void_p(base_ptr), 0)
-+            if _rc == 0 and _devptr.value:
-+                region.device_delta = _devptr.value - base_ptr
-+                if region.device_delta != 0:
-+                    logger.warning(
-+                        "KV offload mmap: device VA differs from host VA "
-+                        "(delta=%d) — non-UVA platform (e.g. WSL2); "
-+                        "translating kernel addresses.", region.device_delta)
-+            else:
-+                # Fail LOUD: proceeding with host VAs on a platform where the
-+                # device pointer is unavailable is exactly the silent-unsafe
-+                # shape this fix exists to remove. Refuse; the operator can
-+                # disable offload or use a staged-DMA build.
++                _ctypes.byref(_devptr), _ctypes.c_void_p(_address), 0)
++            if _rc != 0 or not _devptr.value:
++                # Fail loud: host VAs on a platform where the device pointer is
++                # unavailable is the silent-unsafe shape this fix removes.
 +                raise RuntimeError(
 +                    "KV offload: cudaHostGetDevicePointer failed "
 +                    f"(rc={_rc}) for the registered mmap. Zero-copy kernels "
 +                    "would dereference unmapped host addresses (illegal "
 +                    "memory access). Refusing to start with the "
 +                    "OffloadingConnector on this platform.")
-+        except OSError as _e:
++            _deltas.add(_devptr.value - _address)
++        if len(_deltas) != 1:
 +            raise RuntimeError(
-+                "KV offload: could not query the device pointer for the "
-+                f"registered mmap ({_e}); refusing unsafe zero-copy "
-+                "transfers.") from _e
- 
++                "KV offload: the registered chunks map at different device "
++                f"offsets ({sorted(_deltas)}), so one translation cannot "
++                "serve the region. Keep the CPU tier at or below "
++                f"{MAX_HOST_REGISTER_CHUNK_BYTES / 1024**3:.0f} GiB on this "
++                "platform, or disable offload.")
++        region.device_delta = _deltas.pop()
++        if region.device_delta != 0:
++            logger.warning(
++                "KV offload mmap: device VA differs from host VA "
++                "(delta=%d), a non-UVA platform (e.g. WSL2); "
++                "translating kernel addresses.", region.device_delta)
++    except OSError as _e:
++        raise RuntimeError(
++            "KV offload: could not query the device pointer for the "
++            f"registered mmap ({_e}); refusing unsafe zero-copy "
++            "transfers.") from _e
++
  
  def _new_descriptor_buffers(
-@@ -787,6 +852,9 @@
+     num_copy_ops: int,
+@@ -843,6 +918,9 @@
                  )
              elif mmap_region is not None:
                  cpu_tensor = mmap_region.create_next_worker_view(cpu_page_size_bytes)

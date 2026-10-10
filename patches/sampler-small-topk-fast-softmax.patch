@@ -22,10 +22,10 @@ Apply from the repo root:
 Kind: feature
 What: sort-free top-k/top-p for small k, multi-block row softmax
 Upstream: none
-Cut-against: 0.30.0: re-cut from the main-track resolution
+Cut-against: 0.31.0
 Retires-when: upstreamed or superseded
 
---- exported from b2d8dffad (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 452732f0a (sampler-small-topk-fast-softmax); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/sample/metadata.py b/v1/sample/metadata.py
 index fa4ceac8e..1560b83f9 100644
@@ -119,10 +119,10 @@ index 000000000..f8272f480
 +        return row_softmax_fp32(x)
 +    return x.softmax(dim=-1, dtype=torch.float32)
 diff --git a/v1/sample/ops/topk_topp_sampler.py b/v1/sample/ops/topk_topp_sampler.py
-index aeb82dec4..bbb1c03cd 100644
+index 69ec36830..40d8d3063 100644
 --- a/v1/sample/ops/topk_topp_sampler.py
 +++ b/v1/sample/ops/topk_topp_sampler.py
-@@ -147,25 +147,38 @@
+@@ -260,24 +260,37 @@
          # Every accelerator backend can fall back to native sampling at runtime.
          register_top_k_top_p_warmups()
  
@@ -144,8 +144,7 @@ index aeb82dec4..bbb1c03cd 100644
          p: torch.Tensor | None,
 +        k_max: int | None = None,
      ) -> tuple[torch.Tensor, torch.Tensor | None]:
-         """
-         PyTorch-native implementation of top-k and top-p sampling.
+         """PyTorch-native implementation of top-k and top-p sampling.
  
          The logits tensor may be updated in-place.
          """
@@ -163,7 +162,7 @@ index aeb82dec4..bbb1c03cd 100644
          return (
              random_sample(probs, generators, self.use_fp64_gumbel),
              logits_to_return,
-@@ -365,12 +378,55 @@
+@@ -446,12 +459,55 @@
      return probs.div(q).argmax(dim=-1).view(-1)
  
  
@@ -221,10 +220,10 @@ index aeb82dec4..bbb1c03cd 100644
          return apply_top_k_top_p_triton(logits, k, p)
  
 diff --git a/v1/sample/rejection_sampler.py b/v1/sample/rejection_sampler.py
-index 85b623bd8..765243597 100644
+index d5f01f0fb..9f687a675 100644
 --- a/v1/sample/rejection_sampler.py
 +++ b/v1/sample/rejection_sampler.py
-@@ -481,7 +481,9 @@
+@@ -484,7 +484,9 @@
              return output_token_ids
  
      # Compute probability distribution from target logits.
@@ -235,7 +234,7 @@ index 85b623bd8..765243597 100644
      assert target_probs.is_contiguous()
  
      # Sample recovered tokens for each position.
-@@ -571,7 +573,7 @@
+@@ -575,7 +577,7 @@
  
      # NOTE(woosuk): `apply_top_k_top_p` uses sorting to calculate the mask,
      # which is slow for large vocab sizes. This may cause performance issues.
@@ -245,10 +244,10 @@ index 85b623bd8..765243597 100644
  
  def expand_batch_to_tokens(
 diff --git a/v1/sample/sampler.py b/v1/sample/sampler.py
-index 3efaf33d9..2c7487edf 100644
+index 7e8d597d8..af78a9fea 100644
 --- a/v1/sample/sampler.py
 +++ b/v1/sample/sampler.py
-@@ -289,6 +289,7 @@
+@@ -288,6 +288,7 @@
              sampling_metadata.generators,
              sampling_metadata.top_k,
              sampling_metadata.top_p,
@@ -257,10 +256,10 @@ index 3efaf33d9..2c7487edf 100644
  
          if greedy_sampled is None:
 diff --git a/v1/spec_decode/llm_base_proposer.py b/v1/spec_decode/llm_base_proposer.py
-index 1bd1bdc45..044855c5b 100644
+index e4718bb3d..ff7de5bbd 100644
 --- a/v1/spec_decode/llm_base_proposer.py
 +++ b/v1/spec_decode/llm_base_proposer.py
-@@ -1845,6 +1845,11 @@
+@@ -1832,6 +1832,11 @@
  # Refer to https://github.com/vllm-project/vllm/pull/16899 for the details.
  # FIXME(woosuk): The logic here is duplicated with the main sampling code.
  # We should refactor this to reuse the same sampling implementation.
@@ -272,7 +271,7 @@ index 1bd1bdc45..044855c5b 100644
  def compute_probs_and_sample_next_token(
      logits: torch.Tensor,
      sampling_metadata: SamplingMetadata,
-@@ -1867,7 +1872,29 @@
+@@ -1854,7 +1859,29 @@
          is_greedy = temperature < _SAMPLING_EPS
          temperature = torch.where(is_greedy, 1.0, temperature)
      logits.div_(temperature.view(-1, 1))
@@ -304,10 +303,10 @@ index 1bd1bdc45..044855c5b 100644
      # NOTE(woosuk): Currently, we ignore most of the sampling parameters in
      # generating the draft tokens. We only use the temperature. While this
 diff --git a/v1/worker/gpu_input_batch.py b/v1/worker/gpu_input_batch.py
-index 01b6b5b0c..77ceec79a 100644
+index 4707e4f2c..8973bdeb8 100644
 --- a/v1/worker/gpu_input_batch.py
 +++ b/v1/worker/gpu_input_batch.py
-@@ -942,6 +942,7 @@
+@@ -939,6 +939,7 @@
              all_random=self.all_random,
              top_p=None if self.no_top_p else self.top_p[:num_reqs],
              top_k=None if self.no_top_k else self.top_k[:num_reqs],

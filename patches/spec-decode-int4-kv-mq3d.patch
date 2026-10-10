@@ -3,10 +3,10 @@ multi-query 3D int4 verify path
 Kind: feature
 What: multi-query 3D int4 verify path
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: rides with int4-kv-per-token-head
 
---- exported from 80095fc19 (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5f14d0d07 (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
 index 6e8de7295..58b73d569 100644

@@ -32,17 +32,16 @@ Apply from the repo root:
 Kind: feature
 What: split-KV verify attention on FLASH_ATTN with query-row tiling
 Upstream: none
-Cut-against: 0.30.0: main-track resolution, envs.py from the 0.29 line (#114), flash_attn.py
-  hand-resolved against #55768
+Cut-against: 0.31.0
 Retires-when: upstreamed
 
---- exported from dc94813d4 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 51f2da425 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index f4bddb0e7..84b00ff3f 100755
+index f2eef140e..ee015d6e5 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -178,6 +178,10 @@
+@@ -183,6 +183,10 @@
      VLLM_USE_BREAKABLE_CUDAGRAPH: bool = False
      VLLM_DP_MASTER_IP: str = ""
      VLLM_DP_MASTER_PORT: int = 0
@@ -53,7 +52,7 @@ index f4bddb0e7..84b00ff3f 100755
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
      VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
      VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
-@@ -1445,6 +1449,9 @@
+@@ -1492,6 +1496,9 @@
      "VLLM_DP_MASTER_IP": lambda: os.getenv("VLLM_DP_MASTER_IP", "127.0.0.1"),
      # Port of the master node in the data parallel setting
      "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
@@ -64,10 +63,10 @@ index f4bddb0e7..84b00ff3f 100755
      "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
          os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index eb2268cc6..2754d357d 100755
+index 603567839..f5f4da8c1 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1378,6 +1378,37 @@
+@@ -1447,6 +1447,37 @@
                      block_table = block_table[:, :num_pages]
                      num_splits = 1
  
@@ -105,7 +104,7 @@ index eb2268cc6..2754d357d 100755
                  _FA4_DENSE_ATTENTION_KERNEL(
                      q=query[:num_actual_tokens],
                      k=key_cache,
-@@ -2054,3 +2085,59 @@
+@@ -2124,3 +2155,59 @@
  
  
  _FA4_DENSE_ATTENTION_KERNEL = FA4DenseAttentionKernel()

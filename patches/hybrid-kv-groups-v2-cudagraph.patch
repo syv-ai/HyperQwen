@@ -39,16 +39,16 @@ reserve knob is a no-op there; only the kv_cache_utils hunks remain.
 Kind: fix
 What: KV group sizing when the smallest bucket is the drafter's sliding-window layers
 Upstream: none yet
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: upstream PR
 
---- exported from 36f3b7d31 (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 05a33fe05 (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index 28478b69f..4f720299b 100644
+index 8fc327f3e..5ac97ea67 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1432,6 +1432,51 @@
+@@ -1450,6 +1450,51 @@
      return not kv_cache_spec
  
  
@@ -100,7 +100,7 @@ index 28478b69f..4f720299b 100644
  def _get_kv_cache_groups_uniform_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> list[KVCacheGroupSpec]:
-@@ -1549,6 +1594,10 @@
+@@ -1567,6 +1612,10 @@
          # layers while accommodating speculative decoding drafters that add
          # extra layers to one attention type.
          group_size = max_num_layers

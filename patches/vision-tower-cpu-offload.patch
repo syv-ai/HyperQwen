@@ -5,13 +5,13 @@ VLLM_VISION_CPU_OFFLOAD_GB is a dedicated tower-only budget. It uses UVAOffloade
 Kind: local
 What: Qwen3 vision tower bulk weights in host RAM
 Upstream: none
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: stays
 
---- exported from b6206a2e2 (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from c9a640013 (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_vl.py b/model_executor/models/qwen3_vl.py
-index 644fd134a..7289d4b04 100644
+index c9aa0d206..6cfcb317a 100644
 --- a/model_executor/models/qwen3_vl.py
 +++ b/model_executor/models/qwen3_vl.py
 @@ -48,6 +48,7 @@
@@ -22,7 +22,7 @@ index 644fd134a..7289d4b04 100644
  from vllm.compilation.decorators import (
      should_torch_compile_mm_encoder,
      support_torch_compile,
-@@ -622,6 +623,17 @@
+@@ -624,6 +625,17 @@
              rope_parameters={"partial_rotary_factor": 0.5},
          )
  
@@ -40,7 +40,7 @@ index 644fd134a..7289d4b04 100644
          self.merger = Qwen3_VisionPatchMerger(
              d_model=vision_config.out_hidden_size,
              context_dim=self.hidden_size,
-@@ -630,6 +642,8 @@
+@@ -632,6 +644,8 @@
              quant_config=quant_config,
              prefix=f"{prefix}.merger",
          )
@@ -49,7 +49,7 @@ index 644fd134a..7289d4b04 100644
  
          self.deepstack_merger_list = nn.ModuleList(
              [
-@@ -651,19 +665,22 @@
+@@ -653,19 +667,22 @@
              dtype=torch.get_default_dtype(),
          )
  

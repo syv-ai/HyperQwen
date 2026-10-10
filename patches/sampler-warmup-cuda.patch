@@ -22,29 +22,36 @@ What: registers the V2 runner's top-k/top-p sampler JIT warmups on CUDA too (vll
   #58465's ROCm-only gate): 0 in-request compiles, ~71-78 s of warmup once per cold cache volume,
   ~0.2 s warm
 Upstream: vllm #58092 (merged after 0.30.0)
-Cut-against: 0.30.0
+Cut-against: 0.31.0: #58092 is in the pin, still gated to ROCm by #58465; the patch removes the gate
 Retires-when: the pin that carries #58092 with CUDA registration (upstream gates it to ROCm; an
   opt-in is the ask)
 
---- exported from b433a4f79 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 9dc21e090 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index cc59a227b..07c818b22 100644
+index 2235296c1..d5c5e1c7e 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -461,6 +461,15 @@
- 
-         # Initialize samplers. Model states may override via custom_sampler().
+@@ -444,15 +444,14 @@
+             self.vllm_config, self.req_states, self.is_pooling_model, config_processors
+         )
          if self.is_last_pp_rank and not self.is_pooling_model:
+-            # V2 bypasses TopKTopPSampler, which registers native warmups.
+-            # ROCm only: on CUDA these warmups add ~2 min to every engine start.
+-            if current_platform.is_rocm():
+-                from vllm.v1.sample.ops.topk_topp_sampler import (
+-                    register_top_k_top_p_warmups,
+-                )
 +            from vllm.v1.sample.ops.topk_topp_sampler import (
 +                register_top_k_top_p_warmups,
 +            )
-+
+ 
+-                with self.jit_warmup_registry.activate():
+-                    register_top_k_top_p_warmups()
 +            # V2 bypasses TopKTopPSampler, which registers native warmups.
 +            # CUDA also needs these for its FlashInfer fallback paths.
 +            with self.jit_warmup_registry.activate():
 +                register_top_k_top_p_warmups()
-+
+ 
              sampler_kwargs: dict[str, Any] = {
-                 "max_num_reqs": self.max_num_reqs,
-                 "vocab_size": self.vocab_size,
+                 "vllm_config": self.vllm_config,

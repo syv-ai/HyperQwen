@@ -1,5 +1,5 @@
 # Same stack as the README's venv install, frozen: Python 3.12 venv at /app/venv,
-# vLLM 0.30.0 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in
+# vLLM 0.31.0 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in
 # patches/ applied,
 # the KVarN KV cache installed, verify.sh --install and the scratch-pool test run at
 # build time.
