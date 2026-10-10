@@ -10,7 +10,7 @@
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO="$(dirname "$HERE")"
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
-(cd "$REPO" && tar --exclude=.git --exclude=docs/media --exclude=bench/demo --exclude=models -cf - .) | tar -xf - -C "$T"
+(cd "$REPO" && tar --exclude=.git --exclude=./venv --exclude=docs/media --exclude=bench/demo --exclude=models -cf - .) | tar -xf - -C "$T"
 mkdir -p "$T/venv/bin"
 printf '#!/bin/sh\necho "ALLOC=${PYTORCH_CUDA_ALLOC_CONF-unset}"\nprintf "%%s\\n" "$@"\n' > "$T/venv/bin/vllm"; chmod +x "$T/venv/bin/vllm"
 FAILS=0
