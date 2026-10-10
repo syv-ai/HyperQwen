@@ -31,6 +31,8 @@ jobs:
         run: python bench/test_harness.py
       - name: Check a launcher with no API key binds 127.0.0.1
         run: bash bench/test_no_key_bind.sh
+      - name: Check KV_OFFLOAD_GB becomes one --kv-offloading-size in every launcher
+        run: bash bench/test_kv_offload_knob.sh
 
   kvarn-torch-gate:
     runs-on: ubuntu-latest

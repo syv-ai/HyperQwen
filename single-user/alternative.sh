@@ -9,6 +9,11 @@
 # Needs patches/int4-kv-per-token-head.patch (applied by setup like the
 # rest of patches/). Profile contributed in PR #42 (@lachhabw).
 set -e
+# KV_OFFLOAD_GB=N has to become --kv-offloading-size before the allocator default below reads EXTRA_ARGS.
+# shellcheck disable=SC1091
+source "$(dirname "$(cd "$(dirname "$0")" && pwd)")/launcher_common.sh" \
+  || { echo "[alternative] cannot source launcher_common.sh - refusing to boot" >&2; exit 1; }
+qwen_kv_offload_args
 
 if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then
   ALLOC_DEFAULT=expandable_segments:False
@@ -66,6 +71,7 @@ if [ "${VLLM_OFFLOAD_KEEP_SHM:-0}" != 1 ]; then
     grep -lqs "$f" /proc/[0-9]*/maps 2>/dev/null || { echo "[alternative] removing stale offload region $f"; rm -f "$f"; }
   done
 fi
+qwen_kv_offload_shm_check
 
 MODEL=${MODEL:-models/Qwen3.8-27B-W4A16-AutoRound}
 DRAFT=${DRAFT:-models/Qwen3.8-27B-DFlash2-W4A16}

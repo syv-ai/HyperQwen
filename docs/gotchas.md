@@ -1456,3 +1456,22 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     The shipped list and the default head are untouched; a variant is a second
     run with `--ids`. Numbers and caveats: gotcha 61 above, and the
     syv-ai/HyperQwen#196 thread.
+
+62. **A KV offload tier larger than `/dev/shm` allows fails at boot, and there
+    are two limits, not one: the tmpfs size and a per-user quota.** vLLM backs
+    the CPU tier (`KV_OFFLOAD_GB`, `--kv-offloading-size`) with a file,
+    `/dev/shm/vllm_offload_<engine_id>.mmap`, and pins all of it at boot
+    (36 GiB asked = a 38.65 GB file). A default `/dev/shm` is half the RAM, so
+    on a 64 GB host a tier past ~30 GiB does not fit until the tmpfs grows
+    (`/etc/fstab`: `tmpfs /dev/shm tmpfs defaults,nosuid,nodev,size=52G 0 0`,
+    then `mount -o remount /dev/shm`). Recent systemd also mounts it with
+    `usrquota` and gives each user 80% of the size (seen on Fedora 44,
+    systemd 259: `size=52G`, quota 42,599 MiB); a remount with a bigger size
+    does not raise the quota, and a `setquota` does not survive a reboot.
+    Over the quota the failure is not "no space" but an `EFAULT` from
+    `madvise` inside the region's constructor. Check both before sizing:
+    `df -h /dev/shm` and `quota -s -f /dev/shm`. The launchers warn when `df`
+    shows less room than the tier (`qwen_kv_offload_shm_check`), but `df`
+    cannot see the quota. Leave room for anything else in `/dev/shm`:
+    `--mm-processor-cache-type shm` puts the multimodal processor cache there
+    too.
