@@ -36,7 +36,8 @@ venv/bin/pip install vllm==0.31.0 huggingface_hub hf_transfer ninja \
 # bench/prefill_ab.sh's decode guard dies with "Please install vllm[bench] for
 # bench support" after the prefill rows have already run.
 # flashinfer-python is NOT listed above on purpose: the vllm wheel pins it exactly
-# (Requires-Dist: flashinfer-python==0.6.18.post1 on 0.30.0, ==0.6.18 on 0.29.0), so
+# (Requires-Dist: flashinfer-python==0.7.0.post1 on 0.31.0, ==0.6.18.post1 on 0.30.0,
+# ==0.6.18 on 0.29.0), so
 # naming it here can only fight that pin. Do not downgrade it to fix a cubin version
 # mismatch: that drags torch back and breaks vLLM's C extension.
 #

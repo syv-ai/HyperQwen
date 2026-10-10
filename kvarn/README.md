@@ -1,10 +1,10 @@
-# KVarN KV cache, ported to vLLM 0.30.0
+# KVarN KV cache, ported to vLLM 0.31.0
 
 [KVarN](https://github.com/huawei-csl/KVarN) (Huawei CSL, Apache-2.0) is a
 KV-cache compression scheme — Hadamard rotation, iterative variance
 normalization, 4-bit keys / 2-bit values per 128-token tile — shipped as a
 native vLLM attention backend inside a fork of vLLM 0.23.0. This directory is
-that backend ported onto the vLLM 0.30.0 this repo runs, dense (non-MLA) path
+that backend ported onto the vLLM 0.31.0 this repo runs, dense (non-MLA) path
 only, and tuned for the Qwen3.8-27B / RTX 3090 setup here.
 
 What's in it:
@@ -12,20 +12,20 @@ What's in it:
 - `files/vllm/...` — the KVarN modules (backend, Triton kernels, config,
   Sinkhorn reference), copied from KVarN and adapted to the 0.28.0 backend API
   (the original adaptation markers are retained in the source files).
-- `kvarn-0.30.0.patch` — the small hunks upstream vLLM needs to know the
+- `kvarn-0.31.0.patch` — the small hunks upstream vLLM needs to know the
   new `kvarn_*` cache dtypes (cache dtype literals, dtype map, backend registry
   + priority, a `KVQuantMode.KVARN`, the KV-cache spec branch in the attention
   layer, and the hybrid-model page alignment branch).
-- `kvarn-v2-runner-0.30.0.patch` — the V2 runner, sliding-cache, and DFlash2
+- `kvarn-v2-runner-0.31.0.patch` — the V2 runner, sliding-cache, and DFlash2
   correctness fixes layered on top of the base port.
-- `kvarn-recycled-pages-0.30.0.patch` — both runners hand KVarN each step's
+- `kvarn-recycled-pages-0.31.0.patch` — both runners hand KVarN each step's
   block ids (`note_scheduled_blocks` in `kvarn_attn.py`), and KVarN releases
   without flushing whatever it still holds for a page another KV-cache group
   has taken. Without it a finished request's last block, or an evicted retired
   sink, could be flushed to int4 into a page that was already another
   request's mamba state, which reads back as NaN: the request then prints `!`
   (token 0) forever (#208).
-- `kvarn-fp16-dequant-0.30.0.patch` — registers `KVARN_FP16_DEQUANT` in
+- `kvarn-fp16-dequant-0.31.0.patch` — registers `KVARN_FP16_DEQUANT` in
   `envs.py`, so the modules read it through `vllm.envs` and it is part of the
   torch.compile cache key (see "Environment knobs" below).
 - `install.sh` — copies the modules into the venv's `site-packages/vllm` (found by asking the venv's python, so any Python version)
@@ -34,6 +34,12 @@ What's in it:
   sits after the whole `patches/` series, so their hunks are never edited by hand.
 
 Port notes, for whoever bumps vLLM next:
+
+- 0.31.0 (from 0.30.0): `KVQuantMode.KVARN` stays 11. #53175 gives `_largest_kernel_block_within` a
+  `kv_cache_spec` argument, and `divisor_of` follows it. The v2-runner's `has_prefill` decode-graph guard is kept
+  beside #58400 (FULL decode graphs for one-token prompt tails); on the drafter profiles it is never reached.
+  `kvarn-fp16-dequant` moves beside #41074's `VLLM_SKIP_VERSION_SUFFIX` in `envs.py`. The
+  `CTX=huge SPEC=dflash2 PREFIX_CACHE=1` pool is 268,169 tokens on both pins.
 
 - 0.30.0 (from 0.29.0): `KVQuantMode.KVARN` is value 11, because upstream inserted `NVFP4_DS_MLA` at 10 (every
   use is by name). #54713 threads `replay_boundaries` through `cache_blocks`, and the v2-runner override forwards

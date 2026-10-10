@@ -11,7 +11,7 @@ Exits 1 if any trial collapsed or a request errored.
 
   venv/bin/python bench/concurrent_collapse.py <label> [trials=30] [long_tokens=9000]
 
-On CTX=huge SPEC=dflash2 PREFIX_CACHE=1. With kvarn/kvarn-recycled-pages-0.30.0.patch applied the
+On CTX=huge SPEC=dflash2 PREFIX_CACHE=1. With kvarn/kvarn-recycled-pages-0.31.0.patch applied the
 engine log says "KVarN: dropped the pending tiles of N block(s)" the first time the fix fires.
 """
 import os, re, secrets, sys, threading

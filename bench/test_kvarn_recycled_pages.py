@@ -1,4 +1,4 @@
-"""CPU check of KVarN's recycled-page drop (#208, kvarn/kvarn-recycled-pages-0.30.0.patch).
+"""CPU check of KVarN's recycled-page drop (#208, kvarn/kvarn-recycled-pages-0.31.0.patch).
 
 note_scheduled_blocks must hand each KVarN builder the pages that went to OTHER KV-cache groups
 (never its own, never the null block), and _drop_recycled_pages must release what the pool holds
