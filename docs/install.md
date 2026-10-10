@@ -58,6 +58,14 @@ venv/bin/pip install vllm==0.31.0 huggingface_hub hf_transfer ninja \
 # as 0, so no shipped launcher reaches the sampler or selector JIT: a native
 # SPEC=dflash2 boot of 0.31.0 from this file built no FlashInfer kernels.
 #
+# The fp8-KV attention kernel is the JIT the shipped launchers do reach. No cubin
+# release carries FlashInfer's fp8-KV batch_prefill either, so the profiles that run
+# FlashInfer attention on an fp8 KV cache (batch, whose KV=fp8 is the default, and
+# single-user CTX=long) build it once per cold cache, ~31-36 s inside the first
+# CUDA-graph capture, on 0.30.0 and 0.31.0 alike. The launchers point CUDA_HOME at
+# the venv's nvcc 13.0.88 (the pins above) when the system nvcc is older, and that
+# is the nvcc that builds it.
+#
 # If you have no usable nvcc, set VLLM_USE_FLASHINFER_SAMPLER=0 (the launchers
 # already do): it now covers the selector as well as the sampler and falls back to
 # torch.topk. Measured cost of that fallback on a 3090, dflash2 CTX=fast,
