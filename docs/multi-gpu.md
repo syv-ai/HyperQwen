@@ -137,6 +137,12 @@ NVLink**, 275 W):
   decode step ([#254](https://github.com/syv-ai/HyperQwen/issues/254), one box;
   the numbers are in [reproductions](reproductions/README.md)). When you A/B
   P2P yourself, read the transport out of the log for each arm.
+  On 4x RTX 3090 (Threadripper 1950X, Gen3 x8/x16, two NUMA nodes, the same
+  patched driver, custom all-reduce off, vLLM 0.29) TP4 stayed on SHM until
+  `NCCL_P2P_LEVEL=SYS`, which then gave +40.7% at C64, +10.8% at C1, +18.9% at
+  C4 and -38.7% cold 16K TTFT
+  ([#135](https://github.com/syv-ai/HyperQwen/issues/135), cross-boot on one
+  box, every rank's log showing P2P/CUMEM).
 
 ```bash
 NCCL_P2P_LEVEL=SYS SPEC=dflash2 PREFIX_CACHE=1 \
