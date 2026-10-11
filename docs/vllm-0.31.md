@@ -14,11 +14,15 @@ transformers below 5.18 and pins `xgrammar==0.2.7`; `docker/requirements.txt`'s 
 
 ## Patch series
 
-All 52 files (48 in the series, 4 KVarN) are re-exported from a vLLM branch that carries the series as one commit per
+All 53 files (49 in the series, 4 KVarN) are re-exported from a vLLM branch that carries the series as one commit per
 topic on v0.31.0. Each keeps its preamble and table headers unchanged except `Cut-against`. They apply to v0.31.0 at
 `--fuzz 0`, 10 hunks in 8 patches at an offset, and the series plus the KVarN files and patches reproduce that branch's
 `vllm/` tree with 0 differing files. Nothing retires: `sampler-warmup-cuda`'s #58092 is in 0.31.0 but still gated to
 ROCm by #58465, which the patch removes.
+
+Two topics landed on main while this port was in review and were cut against 0.31.0 when it was rebased:
+`auth-deny-default` now matches the path the router matches (#290), and `vllm-pr40371-prompt-progress` (#296) is
+new; its `outputs.py`, scheduler and `output_processor.py` hunks follow 0.31's moved code, with the logic unchanged.
 
 Re-implemented, because upstream rewrote the code under them:
 
@@ -136,7 +140,7 @@ long conversations in flight, one's prefill fills the tier while the other is st
 chunk 0 of every group from the request that has not finished, and each turn-2 lookup, which starts at chunk 0, finds
 nothing. 0.30.0 evicts one Mamba group's chunks tail-first and keeps every head (eviction logs on both pins, 3090, 8 GiB
 tier). It takes eviction to show: with a 16 GiB tier, 0.31.0 on the 3090 reuses 96.3% for both and reads 1.08 GB back.
-So until upstream changes it, size the tier above what the conversations hold. At 8 GB on `alternative.sh` a tier does
+So until upstream changes it, size the tier above what the conversations hold. `KV_OFFLOAD_GB=N` (#298) sets the same flag, so the same sizing applies to it. At 8 GB on `alternative.sh` a tier does
 worse than none on 0.31.0: beside a tier the launcher picks dense retention for the tier to serve from, so the two
 conversations get 0 and 0, where without one its default (retention 0) keeps 93.5% for both (above).
 

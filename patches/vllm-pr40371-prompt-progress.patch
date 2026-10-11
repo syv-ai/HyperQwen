@@ -1,4 +1,4 @@
-Ports upstream PR vllm-project/vllm#40371 (open) to 0.30.0.
+Ports upstream PR vllm-project/vllm#40371 (open) to this pin.
 
 Adds an opt-in return_progress flag to the OpenAI-compatible chat and
 completion endpoints. While a request is still prefilling (chunked
@@ -18,16 +18,20 @@ the PR targets no longer exists after the entrypoints reorganisation),
 and the scheduler condition lands in the pre-computed
 should_emit_output flag.
 
+On 0.31.0: re-cut. outputs.py, the scheduler's output block (its should_emit_output
+now also gates the aux-output connector) and output_processor.py moved, and the
+hunks follow them; the logic is unchanged.
+
 Kind: feature
 What: opt-in return_progress on streaming chat/completions; SSE chunks carry prompt_progress (total/cache/processed/time_ms) while the prompt prefills
 Upstream: vllm #40371 (open)
-Cut-against: 0.30.0
+Cut-against: 0.31.0
 Retires-when: the pin that carries #40371
 
---- exported from 1b1f6c0 (vllm-pr40371-prompt-progress); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ee56f3f (vllm-pr40371-prompt-progress); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/chat_completion/protocol.py b/entrypoints/openai/chat_completion/protocol.py
-index badd5a0..74e2b15 100644
+index 5c1bc59..4a95f70 100644
 --- a/entrypoints/openai/chat_completion/protocol.py
 +++ b/entrypoints/openai/chat_completion/protocol.py
 @@ -37,7 +37,11 @@
@@ -59,7 +63,7 @@ index badd5a0..74e2b15 100644
      temperature: float | None = None
      top_p: float | None = None
      tools: list[ChatCompletionToolsParam] | None = None
-@@ -759,6 +765,7 @@
+@@ -729,6 +735,7 @@
              skip_clone=True,  # Created fresh per request, safe to skip clone
              repetition_detection=self.repetition_detection,
              routed_experts_prompt_start=self.routed_experts_prompt_start,
@@ -68,7 +72,7 @@ index badd5a0..74e2b15 100644
  
      @model_validator(mode="before")
 diff --git a/entrypoints/openai/chat_completion/serving.py b/entrypoints/openai/chat_completion/serving.py
-index 06e7315..870e3d6 100644
+index f22fed1..a7c3d76 100644
 --- a/entrypoints/openai/chat_completion/serving.py
 +++ b/entrypoints/openai/chat_completion/serving.py
 @@ -46,6 +46,7 @@
@@ -79,7 +83,7 @@ index 06e7315..870e3d6 100644
      PromptTokenUsageInfo,
      UsageInfo,
  )
-@@ -520,6 +521,37 @@
+@@ -525,6 +526,37 @@
                      if res.encoder_prompt_token_ids is not None:
                          num_prompt_tokens += len(res.encoder_prompt_token_ids)
  
@@ -118,7 +122,7 @@ index 06e7315..870e3d6 100644
                  # the result_generator, it needs to be sent as the FIRST
                  # response (by the try...catch).
 diff --git a/entrypoints/openai/completion/protocol.py b/entrypoints/openai/completion/protocol.py
-index bf0a94e..40eed54 100644
+index a0974cb..ceb0021 100644
 --- a/entrypoints/openai/completion/protocol.py
 +++ b/entrypoints/openai/completion/protocol.py
 @@ -20,7 +20,11 @@
@@ -142,7 +146,7 @@ index bf0a94e..40eed54 100644
      suffix: str | None = None
      temperature: float | None = None
      top_p: float | None = None
-@@ -404,6 +409,7 @@
+@@ -387,6 +392,7 @@
              repetition_detection=self.repetition_detection,
              thinking_token_budget=self.thinking_token_budget,
              routed_experts_prompt_start=self.routed_experts_prompt_start,
@@ -150,7 +154,7 @@ index bf0a94e..40eed54 100644
          )
  
      @model_validator(mode="before")
-@@ -701,6 +707,7 @@
+@@ -684,6 +690,7 @@
      model: str
      choices: list[CompletionResponseStreamChoice]
      usage: UsageInfo | None = Field(default=None)
@@ -159,7 +163,7 @@ index bf0a94e..40eed54 100644
      # without the per-chunk serialization overhead.
      system_fingerprint: str | None = None
 diff --git a/entrypoints/openai/completion/serving.py b/entrypoints/openai/completion/serving.py
-index 2fa0147..e46ef28 100644
+index d7e235d..0e08ae7 100644
 --- a/entrypoints/openai/completion/serving.py
 +++ b/entrypoints/openai/completion/serving.py
 @@ -32,6 +32,7 @@
@@ -170,7 +174,7 @@ index 2fa0147..e46ef28 100644
      PromptTokenUsageInfo,
      UsageInfo,
  )
-@@ -310,6 +311,41 @@
+@@ -308,6 +309,41 @@
                  prompt_token_ids = res.prompt_token_ids
                  prompt_logprobs = res.prompt_logprobs
  
@@ -242,18 +246,18 @@ index 704d6b2..7f9a4f6 100644
      message: str
      type: str
 diff --git a/outputs.py b/outputs.py
-index 84b9fcc..d7deb85 100644
+index 049d795..d1bddc8 100644
 --- a/outputs.py
 +++ b/outputs.py
-@@ -144,6 +144,7 @@
+@@ -151,6 +151,7 @@
          encoder_prompt_token_ids: list[int] | None = None,
          num_cached_tokens: int | None = None,
          num_cache_creation_tokens: int | None = None,
 +        num_computed_tokens: int | None = None,
          *,
+         prompt_token_id_logprobs: np.ndarray | None = None,
          kv_transfer_params: dict[str, Any] | None = None,
-         ec_transfer_params: dict[str, Any] | None = None,
-@@ -167,6 +168,7 @@
+@@ -176,6 +177,7 @@
          self.encoder_prompt_token_ids = encoder_prompt_token_ids
          self.num_cached_tokens = num_cached_tokens
          self.num_cache_creation_tokens = num_cache_creation_tokens
@@ -262,10 +266,10 @@ index 84b9fcc..d7deb85 100644
          self.ec_transfer_params = ec_transfer_params
  
 diff --git a/sampling_params.py b/sampling_params.py
-index c0ab45c..80a7ba6 100644
+index 1565799..7dae6f2 100644
 --- a/sampling_params.py
 +++ b/sampling_params.py
-@@ -317,6 +317,9 @@
+@@ -319,6 +319,9 @@
      include_stop_str_in_output: bool = False
      """Whether to include the stop strings in output text."""
      output_kind: RequestOutputKind = RequestOutputKind.CUMULATIVE
@@ -275,7 +279,7 @@ index c0ab45c..80a7ba6 100644
      stream_interval: int | None = None
      """Number of newly generated tokens to batch into each streamed
      `RequestOutput`. Raises the interval above the engine-level
-@@ -417,6 +420,7 @@
+@@ -421,6 +424,7 @@
          routed_experts_prompt_start: int = 0,
          # Debugging / RL-specific parameters.
          trace_decode_token_ids: list[int] | None = None,
@@ -283,7 +287,7 @@ index c0ab45c..80a7ba6 100644
      ) -> "SamplingParams":
          if logit_bias is not None:
              # Fast path uses a dict comprehension; on failure we iterate once
-@@ -482,6 +486,7 @@
+@@ -488,6 +492,7 @@
              repetition_detection=repetition_detection,
              routed_experts_prompt_start=routed_experts_prompt_start,
              trace_decode_token_ids=trace_decode_token_ids,
@@ -292,13 +296,13 @@ index c0ab45c..80a7ba6 100644
  
      def __post_init__(self) -> None:
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index daf2b31..f36ebad 100644
+index ab701c3..45c3459 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
-@@ -2104,8 +2104,18 @@
-                         # Normal decode / re-prefill: token(s) at the END.
-                         routed_experts = routing_data[end - len(new_token_ids) : end]
+@@ -2138,8 +2138,18 @@
+                 stopped = True
  
+             routed_experts = None
 +            # Requests that opted into prefill-progress reporting get an output
 +            # on every prefill chunk; ``num_computed_tokens`` is only carried
 +            # for them so other requests pay no extra serialization cost.
@@ -313,9 +317,9 @@ index daf2b31..f36ebad 100644
 +                or stopped
 +                or (request.is_prefill_chunk and wants_progress)
              )
-             if should_emit_output:
-                 prefill_stats = request.take_prefill_stats()
-@@ -2172,10 +2182,15 @@
+             if self.aux_output_connector is not None and should_emit_output:
+                 routed_experts = self.aux_output_connector.take_output(
+@@ -2238,10 +2248,15 @@
                          trace_headers=request.trace_headers,
                          routed_experts=routed_experts,
                          num_nans_in_logits=request.num_nans_in_logits,
@@ -330,13 +334,13 @@ index daf2b31..f36ebad 100644
 +                # except for requests that opted into progress reporting
 +                # (handled by the is_prefill_chunk branch above).
                  assert not prompt_logprobs_tensors
+                 assert prompt_token_id_logprobs is None
  
-         # Remove the stopped requests from the running and waiting queues.
 diff --git a/v1/engine/__init__.py b/v1/engine/__init__.py
-index 5ae9ee0..7084402 100644
+index effe8d2..14ea2e9 100644
 --- a/v1/engine/__init__.py
 +++ b/v1/engine/__init__.py
-@@ -216,6 +216,7 @@
+@@ -219,6 +219,7 @@
      trace_headers: Mapping[str, str] | None = None
  
      prefill_stats: PrefillStats | None = None
@@ -345,10 +349,10 @@ index 5ae9ee0..7084402 100644
      routed_experts: np.ndarray | None = None
      # The number of NaNs in logits.
 diff --git a/v1/engine/output_processor.py b/v1/engine/output_processor.py
-index 2572872..ae974bb 100644
+index 5ab5636..b66de2b 100644
 --- a/v1/engine/output_processor.py
 +++ b/v1/engine/output_processor.py
-@@ -291,6 +291,7 @@
+@@ -304,6 +304,7 @@
          stop_reason: int | str | None,
          kv_transfer_params: dict[str, Any] | None = None,
          ec_transfer_params: dict[str, Any] | None = None,
@@ -356,7 +360,7 @@ index 2572872..ae974bb 100644
      ) -> RequestOutput | PoolingRequestOutput | None:
          finished = finish_reason is not None
          final_only = self.output_kind == RequestOutputKind.FINAL_ONLY
-@@ -329,6 +330,7 @@
+@@ -342,6 +343,7 @@
                  external_req_id,
                  [self._new_pooling_output(pooling_output)],
                  finished,
@@ -364,7 +368,7 @@ index 2572872..ae974bb 100644
              )
  
          output = self._new_completion_output(new_token_ids, finish_reason, stop_reason)
-@@ -347,6 +349,7 @@
+@@ -360,6 +362,7 @@
              finished,
              kv_transfer_params,
              ec_transfer_params,
@@ -372,7 +376,7 @@ index 2572872..ae974bb 100644
          )
  
      def _new_request_output(
-@@ -356,6 +359,7 @@
+@@ -369,6 +372,7 @@
          finished: bool,
          kv_transfer_params: dict[str, Any] | None = None,
          ec_transfer_params: dict[str, Any] | None = None,
@@ -380,7 +384,7 @@ index 2572872..ae974bb 100644
      ) -> RequestOutput | PoolingRequestOutput:
          # If prompt embeds were used, put placeholder prompt token ids
          prompt_token_ids = self.prompt_token_ids
-@@ -392,6 +396,7 @@
+@@ -410,6 +414,7 @@
              ec_transfer_params=ec_transfer_params,
              num_cached_tokens=self.num_cached_tokens,
              num_cache_creation_tokens=self.num_cache_creation_tokens,
@@ -388,17 +392,17 @@ index 2572872..ae974bb 100644
              metrics=self.stats,
          )
  
-@@ -687,7 +692,8 @@
-                     req_state.num_cache_creation_tokens = (
-                         engine_core_output.prefill_stats.num_cache_creation_tokens
+@@ -704,7 +709,8 @@
                      )
+                 if req_state.remote_prefill_cached_tokens is not None:
+                     req_state.num_cached_tokens = req_state.remote_prefill_cached_tokens
 -                req_state.is_prefilling = False
 +                if len(new_token_ids) > 0 or finish_reason is not None:
 +                    req_state.is_prefilling = False
  
              if engine_core_output.spec_decode_metrics is not None:
                  req_state.spec_decode_metrics = engine_core_output.spec_decode_metrics
-@@ -719,6 +725,7 @@
+@@ -736,6 +742,7 @@
                  stop_reason,
                  kv_transfer_params,
                  ec_transfer_params,
@@ -407,10 +411,10 @@ index 2572872..ae974bb 100644
                  if req_state.streaming_input:
                      request_output.finished = False
 diff --git a/v1/metrics/stats.py b/v1/metrics/stats.py
-index 24e07e5..9df1bfd 100644
+index da88c93..db66c95 100644
 --- a/v1/metrics/stats.py
 +++ b/v1/metrics/stats.py
-@@ -468,9 +468,10 @@
+@@ -470,9 +470,10 @@
              if output.prefill_stats is not None:
                  self.prompt_token_stats.update_from_output(output.prefill_stats)
  

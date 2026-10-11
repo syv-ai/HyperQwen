@@ -26,7 +26,10 @@ app and answers any method, so a bare OPTIONS /metrics returned the full
 exposition without the key. Without Origin, CORSMiddleware sends the
 request through to the app, so both headers are necessary.
 
-On v0.30.0: authenticate.py is unchanged from v0.29.0 and the patch applies to it as cut; cli_args.py's help-text hunk lands 7 lines lower (#50195, #53353, #55176 moved it). The routes 0.30 adds (/v1/responses/render, the --enable-scale-out endpoints) fall under the deny-by-default rule with no allowlist change.
+On v0.31.0: cut against 0.31.0 with the series. The middleware matches the request path with
+starlette's get_route_path, the function the router matches with, so --root-path / keeps /health
+open (#290). The routes 0.30 added (/v1/responses/render, the --enable-scale-out endpoints) fall
+under the deny-by-default rule with no allowlist change.
 
 Kind: fix
 What: --api-key guards every path except /health, /ping, /load and /version (deny by default). The
@@ -40,10 +43,10 @@ Upstream: vllm #59892
 Cut-against: 0.31.0: docstring adjacency only
 Retires-when: upstream PR
 
---- exported from e4c0e1ad1 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from f2531f9 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/cli_args.py b/entrypoints/launchers/cli_args.py
-index ce6692565..850f824d9 100644
+index ce66925..850f824 100644
 --- a/entrypoints/launchers/cli_args.py
 +++ b/entrypoints/launchers/cli_args.py
 @@ -318,13 +318,13 @@
@@ -67,10 +70,15 @@ index ce6692565..850f824d9 100644
      """The file path to the SSL key file."""
      ssl_certfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index 0a0c1daee..94a17b8c9 100644
+index 0a0c1da..7327529 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
-@@ -8,7 +8,29 @@
+@@ -4,11 +4,34 @@
+ import secrets
+ from collections.abc import Awaitable
+ 
++from starlette._utils import get_route_path
+ from starlette.datastructures import Headers
  from starlette.responses import JSONResponse
  from starlette.types import ASGIApp, Receive, Scope, Send
  
@@ -101,7 +109,7 @@ index 0a0c1daee..94a17b8c9 100644
  
  
  class AuthenticationMiddleware:
-@@ -18,8 +40,10 @@
+@@ -18,8 +41,10 @@
      Notes
      -----
      There are two cases in which authentication is skipped:
@@ -114,7 +122,7 @@ index 0a0c1daee..94a17b8c9 100644
  
      """
  
-@@ -45,18 +69,22 @@
+@@ -45,18 +70,23 @@
          return token_match
  
      def __call__(self, scope: Scope, receive: Receive, send: Send) -> Awaitable[None]:
@@ -126,8 +134,11 @@ index 0a0c1daee..94a17b8c9 100644
              # scope["type"] can be "lifespan" or "startup" for example,
              # in which case we don't need to do anything
              return self.app(scope, receive, send)
-         root_path = scope.get("root_path", "")
-         url_path = scope["path"].removeprefix(root_path)
+-        root_path = scope.get("root_path", "")
+-        url_path = scope["path"].removeprefix(root_path)
++        # The path the router matches: removeprefix("/") would turn /health
++        # into "health" under --root-path /.
++        url_path = get_route_path(scope)
 +        # This middleware runs ahead of the router, so a path that differs from
 +        # an allowlisted one only by a trailing slash never reaches FastAPI's
 +        # redirect_slashes: match on the normalized path, or a liveness probe
