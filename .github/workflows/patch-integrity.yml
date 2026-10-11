@@ -33,6 +33,8 @@ jobs:
         run: bash bench/test_no_key_bind.sh
       - name: Check KV_OFFLOAD_GB becomes one --kv-offloading-size in every launcher
         run: bash bench/test_kv_offload_knob.sh
+      - name: Check each launcher refuses a boolean knob that is neither 0 nor 1 (#310)
+        run: bash bench/test_bool_knobs.sh
 
   kvarn-torch-gate:
     runs-on: ubuntu-latest

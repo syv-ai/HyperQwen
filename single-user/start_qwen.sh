@@ -101,6 +101,7 @@ source "$REPO/resolve_config.sh" \
 resolve_effective_config single
 source "$REPO/launcher_common.sh" \
   || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
+qwen_check_bool_knobs
 # KV_OFFLOAD_GB=N: the CPU KV tier as a flag, ahead of everything below that reads EXTRA_ARGS.
 qwen_kv_offload_args
 qwen_kv_offload_shm_check

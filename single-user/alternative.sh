@@ -13,6 +13,7 @@ set -e
 # shellcheck disable=SC1091
 source "$(dirname "$(cd "$(dirname "$0")" && pwd)")/launcher_common.sh" \
   || { echo "[alternative] cannot source launcher_common.sh - refusing to boot" >&2; exit 1; }
+qwen_check_bool_knobs
 qwen_kv_offload_args
 
 if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null || [ -n "${WSL_DISTRO_NAME:-}" ]; then

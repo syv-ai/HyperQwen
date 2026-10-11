@@ -28,6 +28,13 @@
 #                       feature off. That is the documented way to disable it
 #                       (issue #20), so export only when non-empty.
 #
+#   qwen_check_bool_knobs  refuses to start when one of the series' boolean knobs is set
+#                       to anything but 0 or 1 (empty counts as unset). The patches read them
+#                       as os.environ.get(X) == "1", so "true", "yes" or "2" silently mean
+#                       off, and for a knob that defaults to on they turn it off (#310).
+#                       QWEN_BOOL_KNOBS lists them; bench/test_bool_knobs.sh checks that the
+#                       list matches what the patches register.
+#
 #   qwen_kv_offload_args  KV_OFFLOAD_GB=N becomes --kv-offloading-size N at the front of
 #                       EXTRA_ARGS: a CPU tier of N GiB of pinned RAM behind the GPU
 #                       prefix cache (vLLM's OffloadingConnector). An evicted prefix comes
@@ -84,6 +91,25 @@ qwen_exec() {
     exit 0
   fi
   exec "$@"
+}
+
+QWEN_BOOL_KNOBS="KVARN_DBG_LAYERS KVARN_FAST_FLUSH KVARN_FP16_DEQUANT KVARN_FUSED_DECODE \
+  KVARN_FUSED_VERIFY KVARN_POW2_SLOT KVARN_QUANT_SLIDING KVARN_SHARED_VERIFY KVARN_SPEC_DEBUG \
+  VLLM_DFLASH2_CHAIN VLLM_DFLASH2_CHAIN_GREEDY_ONLY VLLM_DFLASH2_DRAFT_TOPK_TOPP \
+  VLLM_DFLASH2_GRAPH_BOTH VLLM_DFLASH2_LOOKUP VLLM_DFLASH2_LOOKUP_ADAPTIVE VLLM_DRAFT_TOPK_TOPP \
+  VLLM_EMBED_UVA VLLM_INT4_MQ_3D VLLM_INT4_MQ_3D_DEBUG VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS \
+  VLLM_MARLIN_TUNE VLLM_SPEC_ATTN_DEBUG VLLM_SPEC_DECODE_ATTN"
+
+qwen_check_bool_knobs() {
+  local k v bad=0
+  for k in $QWEN_BOOL_KNOBS; do
+    v=${!k-}
+    case "$v" in
+      ""|0|1) ;;
+      *) echo "$k=$v: this knob is read as 1 = on and anything else = off, so set it to 0 or 1 (#310)" >&2; bad=1 ;;
+    esac
+  done
+  [ "$bad" = 0 ] || { echo "refusing to boot with a boolean knob that is neither 0 nor 1" >&2; exit 1; }
 }
 
 qwen_kv_offload_args() {
