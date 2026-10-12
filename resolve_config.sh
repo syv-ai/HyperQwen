@@ -54,6 +54,19 @@ resolve_effective_config() {
       *) _refuse "unknown SPEC=$spec (want mtp|dflash2|off|none)" ;;
     esac
     [ -z "${KV:-}" ] || _warn "KV=$KV is set but single-user mode ignores it (KV is a batch-mode control)"
+    # FA2_FP8KV=1 (fp8 KV on the FA2 plugin, fa2/) is one arm. The offload tier is refused because
+    # the plugin's backend supports only the LBNHC KV layout, vLLM 0.31's OffloadingConnector
+    # needs LBHNC or BLHNC (offloading_connector.py:225-228), and the CPU tier on it is untested.
+    if [ "${FA2_FP8KV:-0}" = 1 ]; then
+      [ "$spec" = dflash2 ] && [ "$ctx" = long ] \
+        || _refuse "FA2_FP8KV=1 runs only on SPEC=dflash2 CTX=long (got SPEC=$spec CTX=$ctx)"
+      { [ -z "${KV_OFFLOAD_GB:-}" ] || [ "$KV_OFFLOAD_GB" = 0 ]; } \
+        || _refuse "FA2_FP8KV=1 with KV_OFFLOAD_GB=$KV_OFFLOAD_GB: the FA2 backend supports only the LBNHC KV layout and vLLM's OffloadingConnector needs LBHNC or BLHNC; the CPU tier is untested on it (FA2_FP8KV=0 or KV_OFFLOAD_GB=0)"
+      case " ${EXTRA_ARGS:-} " in
+        *"--kv-offloading-size"*|*"--kv-transfer-config"*)
+          _refuse "FA2_FP8KV=1 with a KV connector in EXTRA_ARGS (--kv-offloading-size/--kv-transfer-config): the FA2 backend supports only the LBNHC KV layout and vLLM's OffloadingConnector needs LBHNC or BLHNC; the CPU tier is untested on it" ;;
+      esac
+    fi
   else
     kv=${kv:-fp8}
     case "$kv" in fp8|kvarn|int4pth) ;;
@@ -88,7 +101,7 @@ resolve_effective_config() {
   {
     echo "[effective-config] MODE=$mode"
     [ "$mode" = "single" ] \
-      && echo "[effective-config] CTX=$ctx SPEC=$spec" \
+      && echo "[effective-config] CTX=$ctx SPEC=$spec FA2_FP8KV=${FA2_FP8KV:-0}" \
       || echo "[effective-config] KV=$kv"
     echo "[effective-config] MODEL=$_model PORT=$_port"
     echo "[effective-config] MAX_LEN=${MAX_LEN:-<profile default>} MAX_SEQS=${MAX_SEQS:-<profile default>}"
