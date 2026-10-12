@@ -17,6 +17,10 @@ marlin-tune/build
 marlin-tune/*.so
 marlin-tune/csrc*
 marlin-tune/cuda13-home
+# fa2/build.py run in place, instead of through fa2/install.sh
+fa2/build-*
+fa2/third_party
+fa2/python/**/*.so
 # the README film and its renderer's npm tree are not needed at runtime
 docs/media
 bench/demo/node_modules

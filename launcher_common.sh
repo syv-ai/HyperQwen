@@ -33,7 +33,12 @@
 #                       as os.environ.get(X) == "1", so "true", "yes" or "2" silently mean
 #                       off, and for a knob that defaults to on they turn it off (#310).
 #                       QWEN_BOOL_KNOBS lists them; bench/test_bool_knobs.sh checks that the
-#                       list matches what the patches register.
+#                       list matches what the patches register, plus FA2_FP8KV, which the
+#                       fa2/ plugin reads (not a patch).
+#
+#   qwen_fa2_fp8kv_single_only  <launcher>, for the launchers that have no FA2 arm (batch,
+#                       alternative.sh). Refuses FA2_FP8KV=1: the variable is also the plugin's
+#                       gate (fa2/), and it would reach the server's environment from a shared .env.
 #
 #   qwen_kv_offload_args  KV_OFFLOAD_GB=N becomes --kv-offloading-size N at the front of
 #                       EXTRA_ARGS: a CPU tier of N GiB of pinned RAM behind the GPU
@@ -98,7 +103,7 @@ QWEN_BOOL_KNOBS="KVARN_DBG_LAYERS KVARN_FAST_FLUSH KVARN_FP16_DEQUANT KVARN_FUSE
   VLLM_DFLASH2_CHAIN VLLM_DFLASH2_CHAIN_GREEDY_ONLY VLLM_DFLASH2_DRAFT_TOPK_TOPP \
   VLLM_DFLASH2_GRAPH_BOTH VLLM_DFLASH2_LOOKUP VLLM_DFLASH2_LOOKUP_ADAPTIVE VLLM_DRAFT_TOPK_TOPP \
   VLLM_EMBED_UVA VLLM_INT4_MQ_3D VLLM_INT4_MQ_3D_DEBUG VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS \
-  VLLM_MARLIN_TUNE VLLM_SPEC_ATTN_DEBUG VLLM_SPEC_DECODE_ATTN"
+  VLLM_MARLIN_TUNE VLLM_SPEC_ATTN_DEBUG VLLM_SPEC_DECODE_ATTN FA2_FP8KV"
 
 qwen_check_bool_knobs() {
   local k v bad=0
@@ -110,6 +115,14 @@ qwen_check_bool_knobs() {
     esac
   done
   [ "$bad" = 0 ] || { echo "refusing to boot with a boolean knob that is neither 0 nor 1" >&2; exit 1; }
+}
+
+# if, not &&: alternative.sh runs under set -e.
+qwen_fa2_fp8kv_single_only() {
+  if [ "${FA2_FP8KV:-0}" = 1 ]; then
+    echo "$1: refusing: FA2_FP8KV=1 runs only on single-user/start_qwen.sh SPEC=dflash2 CTX=long" >&2
+    exit 1
+  fi
 }
 
 qwen_kv_offload_args() {

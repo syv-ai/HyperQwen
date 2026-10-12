@@ -38,6 +38,8 @@
 #   the KV pool and decays hard past 25k (-34% decode / -44% prefill at 60k);
 #   SPEC=dflash2 CTX=fast is +31% over it at C1. Use it as the #34 fallback,
 #   not as the fast path. Numbers in gotcha 40.
+# FA2_FP8KV=1 (experimental, default off): SPEC=dflash2 CTX=long on fp8 KV with the FA2 plugin
+#   (fa2/, bash fa2/install.sh) instead of int8 + Triton. See the arm below.
 # CTX=huge: KVarN 4/2-bit KV cache (kvarn/), 200k context with MTP, at roughly
 #   half the decode rate past 100k — see below and docs/long-context.md.
 #
@@ -195,6 +197,7 @@ USER_MAX_LEN=${MAX_LEN:-}
 # CTX validation lives in resolve_config.sh (called above), which refuses
 # unknown values before anything boots — so every arm here is reachable and
 # no silent else-fallthrough exists.
+FA2_SPEC_ATTN=   # set by the FA2_FP8KV arm below
 if [ "$CTX" = "fast" ]; then
   MAX_LEN=${MAX_LEN:-65536}
   DRAFT_TOKENS=${DRAFT_TOKENS:-4}
@@ -222,6 +225,27 @@ if [ "$SPEC" = "dflash2" ] && [ "$CTX" = "long" ]; then
   # mode for a RAG or coding front-end that loads a document once, not for general chat.
   ATTN_ARGS="--attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head"
   export VLLM_SPEC_DECODE_ATTN=${SPEC_ATTN:-1}
+  # FA2_FP8KV=1 (experimental, default off): fp8 KV on FLASH_ATTN through the fa2/ plugin
+  # instead of the int8 + Triton arm above. The kernel is not vLLM's: FA2 does not read fp8 KV
+  # on sm86 and the plugin supplies it, with its own split-KV for the verify block. Needs
+  # `bash fa2/install.sh`; the issue tracker's T4 and #153 hold the evidence. The drafter must
+  # select FLASH_ATTN too (SPEC_CFG below), or it stays on the default backend. Exporting
+  # FA2_FP8KV is the plugin's gate: its register() replaces FLASH_ATTN only when it is 1.
+  # resolve_config.sh has already refused any other SPEC/CTX and the KV offload tier.
+  if [ "${FA2_FP8KV:-0}" = 1 ]; then
+    "$REPO/venv/bin/python" -c 'import fa2_fp8kv_vllm.paths as p; p.check()' >/dev/null 2>&1 \
+      || { echo "start_qwen: refusing: FA2_FP8KV=1 but the FA2 fp8 plugin is not installed in venv (run: bash fa2/install.sh, or set FA2_FP8KV=0)" >&2; exit 1; }
+    ATTN_ARGS="--attention-backend FLASH_ATTN --kv-cache-dtype fp8"
+    FA2_SPEC_ATTN=',"attention_backend":"FLASH_ATTN"'
+    export FA2_FP8KV=1
+    # The split-KV verify (patches/spec-decode-attn.patch:76-93) and the int8 prefill
+    # (patches/prefill-attn-int8.patch:73-75) hook FlashAttentionImpl.forward, which the plugin's
+    # impl replaces, and both are gated `not is_quantized_kv_cache`, which fp8 is. The env cannot
+    # reach them on this arm, so say 0 rather than leave the 1 above to mean something.
+    export VLLM_SPEC_DECODE_ATTN=0
+    [ -z "${SPEC_ATTN:-}" ] || [ "$SPEC_ATTN" = 0 ] \
+      || echo "[start_qwen] FA2_FP8KV=1: SPEC_ATTN=$SPEC_ATTN has no effect, the plugin brings its own split-KV verify" >&2
+  fi
 elif [ "$SPEC" = "dflash2" ] && [ "$CTX" = "huge" ]; then
   # KVarN 4/2-bit KV on the V2 runner (kvarn/, with kvarn-v2-runner-0.28.0.patch as its
   # second stage): the pinned pool holds 268k tokens at 245760 max-model-len.
@@ -276,7 +300,7 @@ if [ "$SPEC" = "dflash2" ]; then
   # DRAFT_METHOD=dspark runs a DSpark drafter (RadixArk/Qwen3.8-27B-DSpark, seven drafts per
   # step like the shipped head) through the same profile; it needs
   # patches/dspark-draft-quant-config.patch and the architecture rename in the README.
-  SPEC_CFG="{\"method\":\"${DRAFT_METHOD:-dflash}\",\"model\":\"$DRAFT\",\"num_speculative_tokens\":$DRAFT_TOKENS,\"draft_sample_method\":\"${DRAFT_SAMPLE:-probabilistic}\"}"
+  SPEC_CFG="{\"method\":\"${DRAFT_METHOD:-dflash}\",\"model\":\"$DRAFT\",\"num_speculative_tokens\":$DRAFT_TOKENS,\"draft_sample_method\":\"${DRAFT_SAMPLE:-probabilistic}\"${FA2_SPEC_ATTN}}"
   # The split-KV verify attention (patches/spec-decode-attn.patch) sizes its partial
   # buffers once for the longest query block it will see -- a captured CUDA graph holds
   # their addresses, so they must not be grown later.

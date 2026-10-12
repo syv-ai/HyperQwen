@@ -93,6 +93,10 @@ all — batch ignores `SPEC` and says so on startup. Every knob, and what each c
 [single-user/README.md](single-user/README.md#if-you-are-the-only-user-do-this) ·
 [batch/README.md](batch/README.md).
 
+Experimental, off by default: `FA2_FP8KV=1` puts `SPEC=dflash2 CTX=long` on fp8 KV with the FlashAttention-2
+plugin in `fa2/` instead of int8 + Triton. It needs `bash fa2/install.sh`, and refuses `KV_OFFLOAD_GB` and any other
+`SPEC`/`CTX`. The tracker's T4 and issue #153 hold the evidence.
+
 ### The numbers behind that
 
 | | **batch** → [batch/](batch/) | **single** → [single-user/](single-user/) |
@@ -238,6 +242,7 @@ Everything that used to be in this README, in the folder it belongs to.
 | [prepare/](prepare/) | The one-time model-preparation scripts (also `docker compose run --rm prepare`). |
 | [drafter/](drafter/) | How the draft vocabulary, the int4 drafters and the DFlash2 requantization were built — including what did not work. |
 | [kvarn/](kvarn/) | The KVarN 4/2-bit KV cache port. |
+| [fa2/](fa2/) | The fp8-KV FlashAttention-2 source port (optional; `bash fa2/install.sh` builds it, `FA2_FP8KV=1` selects it). |
 
 ## License
 

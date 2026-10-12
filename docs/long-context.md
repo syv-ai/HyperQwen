@@ -165,6 +165,18 @@ Two patches make that work, and neither changes anything at bf16:
   tracked separately): do not stack the two until the memory-pressure question behind it is
   understood.
 
+### Experimental: fp8 KV on FlashAttention-2 (`FA2_FP8KV=1`)
+
+`FA2_FP8KV=1 SPEC=dflash2 CTX=long` swaps the int8 + Triton arm for fp8 KV on `FLASH_ATTN`, with
+the fp8 kernels from the `fa2/` plugin (`bash fa2/install.sh` builds and installs it once; the
+launcher refuses to start without it). It is off by default, and the build targets sm86 only.
+The drafter also selects `FLASH_ATTN`, `SPEC_ATTN` does nothing on this arm (the plugin has its
+own split-KV verify), and `MAX_LEN` and `KV_MEM` keep the defaults above. The launcher refuses it
+with any other `SPEC` or `CTX`, and with `KV_OFFLOAD_GB` or a KV connector in `EXTRA_ARGS`: the
+plugin's backend supports only the LBNHC KV layout, vLLM's CPU-tier connector asks for LBHNC or
+BLHNC, and the CPU tier on this backend is untested. The tracker's T4 and issue #153 hold the
+measurements and what is still open.
+
 ### What it is actually good for
 
 Measured against the option that already covers this context, on 112,655-token prompts

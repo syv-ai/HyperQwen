@@ -1,0 +1,10 @@
+# Sourced by the CI job and read by check_upstream.py. KEY=value lines only.
+PLUGIN_REPO=https://github.com/AntonProkopyev/fa2-fp8kv-sm86
+PLUGIN_COMMIT=5c3a7d881a4eb8f20f484d599bf93c5d854fdb2a
+# The flash-attention commit vLLM $VLLM_VERSION pins (cmake/external_projects/vllm_flash_attn.cmake).
+FA_REPO=https://github.com/vllm-project/flash-attention
+FA_COMMIT=9cd61de38763d712bb6ce56e2a02cc2bf718c89f
+# The commit the plugin's patch was cut against. csrc/flash_attn/src is identical at FA_COMMIT.
+FA_PLUGIN_BASE=28e862d21806bc3580207aa0ad4e2759151e9827
+CUTLASS_COMMIT=62750a2b75c802660e4894434dc55e839f322277
+VLLM_VERSION=0.31.0
