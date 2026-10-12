@@ -93,7 +93,8 @@ all — batch ignores `SPEC` and says so on startup. Every knob, and what each c
 [single-user/README.md](single-user/README.md#if-you-are-the-only-user-do-this) ·
 [batch/README.md](batch/README.md).
 
-`SPEC=dflash2 CTX=long` runs on fp8 KV with the FlashAttention-2 plugin in `fa2/` by default (`FA2_FP8KV=1`);
+`SPEC=dflash2 CTX=long` runs on fp8 KV with the FlashAttention-2 plugin in `fa2/` by default (`FA2_FP8KV=1`) on an RTX 3090-class
+GPU (compute capability 8.6); on any other GPU the default stays on int8 + Triton with a note, and `FA2_FP8KV=1` opts in on a 4090;
 `FA2_FP8KV=0` restores the int8 + Triton arm. Native installs need `bash fa2/install.sh` once, and the launcher refuses
 to start without it rather than fall back (the Docker image has it). `KV_OFFLOAD_GB` turns the default off with a note;
 an explicit `FA2_FP8KV=1` refuses it, and refuses any other `SPEC`/`CTX`. The evidence is the T4 battery on the native

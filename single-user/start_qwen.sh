@@ -37,9 +37,9 @@
 #   the KV pool and decays hard past 25k (-34% decode / -44% prefill at 60k);
 #   SPEC=dflash2 CTX=fast is +31% over it at C1. Use it as the #34 fallback,
 #   not as the fast path. Numbers in gotcha 40.
-# FA2_FP8KV (default 1 on SPEC=dflash2 CTX=long): fp8 KV with the FA2 plugin (fa2/, bash
-#   fa2/install.sh) instead of int8 + Triton. FA2_FP8KV=0 restores int8 + Triton, and KV_OFFLOAD_GB
-#   turns the default off. See the arm below.
+# FA2_FP8KV (default 1 on SPEC=dflash2 CTX=long on a compute capability 8.6 GPU): fp8 KV with the
+#   FA2 plugin (fa2/, bash fa2/install.sh) instead of int8 + Triton. FA2_FP8KV=0 restores int8 +
+#   Triton, and KV_OFFLOAD_GB or another GPU turns the default off. See the arm below.
 # CTX=huge: KVarN 4/2-bit KV cache (kvarn/), 200k context with MTP, at roughly
 #   half the decode rate past 100k — see below and docs/long-context.md.
 #
@@ -229,7 +229,7 @@ if [ "$SPEC" = "dflash2" ] && [ "$CTX" = "long" ]; then
   # not for general chat.
   ATTN_ARGS="--attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head"
   export VLLM_SPEC_DECODE_ATTN=${SPEC_ATTN:-1}
-  # FA2_FP8KV=1 (the default on this arm, FA2_FP8KV=0 restores the int8 + Triton line above): fp8
+  # FA2_FP8KV=1 (the default on this arm on an 8.6 GPU, FA2_FP8KV=0 restores the int8 + Triton line above): fp8
   # KV on FLASH_ATTN through the fa2/ plugin. The kernel is not vLLM's: FA2 does not read fp8 KV
   # on sm86 and the plugin supplies it, with its own split-KV for the verify block. Needs
   # `bash fa2/install.sh` (the Docker image has it); the T4 battery and #153 hold the evidence.

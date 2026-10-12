@@ -55,11 +55,12 @@ resolve_effective_config() {
     esac
     [ -z "${KV:-}" ] || _warn "KV=$KV is set but single-user mode ignores it (KV is a batch-mode control)"
     # FA2_FP8KV (fp8 KV on the FA2 plugin, fa2/) is one arm, and this is the one place that resolves
-    # it. Unset or empty means on for SPEC=dflash2 CTX=long and off everywhere else (left unset, so
+    # it. Unset or empty means on for SPEC=dflash2 CTX=long on an 8.6 GPU and off everywhere else (left unset, so
     # every other arm's environment is untouched). The FA2 backend supports only the LBNHC
     # KV layout and vLLM 0.31's OffloadingConnector needs LBHNC or BLHNC
     # (offloading_connector.py:225-228), and the CPU tier on it is untested, so a KV offload tier
-    # turns the default off with a note and an explicit 1 into a refusal.
+    # turns the default off with a note and an explicit 1 into a refusal. So does a GPU that is not
+    # compute capability 8.6 (or no answer from nvidia-smi); an explicit 1 there is the user's call.
     local _fa2_tier=
     if [ -n "${KV_OFFLOAD_GB:-}" ] && [ "$KV_OFFLOAD_GB" != 0 ]; then _fa2_tier="KV_OFFLOAD_GB=$KV_OFFLOAD_GB"
     else case " ${EXTRA_ARGS:-} " in
@@ -73,7 +74,20 @@ resolve_effective_config() {
           FA2_FP8KV_SRC="default, off: $_fa2_tier"
           echo "resolve_config: FA2_FP8KV defaults to 0 with $_fa2_tier: the FA2 arm's LBNHC KV layout does not fit the OffloadingConnector, so this stays on int8 + Triton (set FA2_FP8KV=0 to silence this)" >&2
         else
-          export FA2_FP8KV=1
+          # The fa2/ build is sm_86 only and measured only on an RTX 3090, so the default is on only
+          # when the GPU the server gets is compute capability 8.6. nvidia-smi ignores
+          # CUDA_VISIBLE_DEVICES and orders GPUs differently from CUDA, so with no selection every GPU
+          # it lists must be 8.6.
+          local _fa2_cap
+          _fa2_cap=$(nvidia-smi ${CUDA_VISIBLE_DEVICES:+-i "${CUDA_VISIBLE_DEVICES%%,*}"} \
+            --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | tr -d ' \r' | sort -u)
+          if [ "$_fa2_cap" = 8.6 ]; then
+            export FA2_FP8KV=1
+          else
+            _fa2_cap=$(printf %s "${_fa2_cap:-unknown}" | tr '\n' /)
+            FA2_FP8KV_SRC="default, off: compute capability $_fa2_cap"
+            echo "resolve_config: FA2_FP8KV defaults to 0 on compute capability $_fa2_cap: the FA2 arm is built for and measured on 8.6 (RTX 3090) only, so this stays on int8 + Triton (FA2_FP8KV=1 opts in on 8.9; set FA2_FP8KV=0 to silence this)" >&2
+          fi
         fi
       fi
     fi

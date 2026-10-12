@@ -166,12 +166,15 @@ Two patches make that work, and neither changes anything at bf16:
   tracked separately): do not stack the two until the memory-pressure question behind it is
   understood.
 
-### fp8 KV on FlashAttention-2 (`FA2_FP8KV`, default on)
+### fp8 KV on FlashAttention-2 (`FA2_FP8KV`, default on for the 3090)
 
 `SPEC=dflash2 CTX=long` runs on fp8 KV on `FLASH_ATTN` by default, with the fp8 kernels from the
 `fa2/` plugin (`bash fa2/install.sh` builds and installs it once, the Docker image has it, and the
 launcher refuses to start without it instead of falling back). `FA2_FP8KV=0` restores the int8 +
-Triton arm described above. The build targets sm86 only.
+Triton arm described above. The build targets sm86 only, so the default is on only when
+`nvidia-smi` reports compute capability 8.6 (an RTX 3090-class GPU); any other GPU, or no answer
+from `nvidia-smi`, resolves an unset knob to 0 with a note. The sm86 build also runs on sm89, and
+`FA2_FP8KV=1` opts in on a 4090 (unmeasured); on sm120 it fails at boot.
 The drafter also selects `FLASH_ATTN`, `SPEC_ATTN` does nothing on this arm (the plugin has its
 own split-KV verify), and `MAX_LEN` and `KV_MEM` keep the defaults above. An unset `FA2_FP8KV`
 resolves to 0, with a note, when `KV_OFFLOAD_GB` or a KV connector in `EXTRA_ARGS` is set: the
