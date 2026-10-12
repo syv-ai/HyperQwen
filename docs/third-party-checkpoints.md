@@ -204,11 +204,12 @@ reserved 5.2 GiB memory for KV Cache as specified by kv_cache_memory_bytes confi
 torch.OutOfMemoryError: Tried to allocate 960.00 MiB ... 926.44 MiB is free
 ```
 
-Hand that gigabyte back and it comes up. `CTX=long` (int8 KV) is the one to spend it
+Hand that gigabyte back and it comes up. `CTX=long` with int8 KV (`FA2_FP8KV=0`; the default is now fp8 on the fa2/ plugin, which
+this run did not measure) is the one to spend it
 on, because it buys roughly twice the context per byte of pool that `CTX=fast` does:
 
 ```bash
-MODEL=$PWD/models/Qwen3.8-27B-Uncensored-W4A16 SPEC=dflash2 CTX=long PREFIX_CACHE=1 \
+MODEL=$PWD/models/Qwen3.8-27B-Uncensored-W4A16 SPEC=dflash2 CTX=long FA2_FP8KV=0 PREFIX_CACHE=1 \
   KV_MEM=4456028569 DFLASH_MAX_LEN=98304 bash single-user/start_qwen.sh
 ```
 

@@ -8,7 +8,8 @@
 # Knobs go in a .env file next to this file (never committed): VLLM_API_KEY=...,
 # and any of the start-script variables (CTX, KV, MAX_LEN, MAX_SEQS, GPU_UTIL, VISION,
 # SPEC_ATTN, DRAFT_TOKENS, FA2_FP8KV, EXTRA_ARGS, ...) — .env is passed straight into the
-# container (FA2_FP8KV=1 is experimental and needs the fa2/ plugin in the image).
+# container (FA2_FP8KV defaults to 1 on SPEC=dflash2 CTX=long, with the fa2/ plugin in the image;
+# FA2_FP8KV=0 restores int8 + Triton).
 # Fastest single-user decode, if the card is yours alone (README,
 # "If you are the only user"; the drafter it needs is already downloaded by
 # prepare):

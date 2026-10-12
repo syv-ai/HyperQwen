@@ -30,16 +30,16 @@
 #   both measured -- so this tier runs FlashInfer with no A/B possible, and
 #   issue #34 tracks a deterministic Xid-31 MMU write-fault seen twice on one
 #   3090 under fp8+MTP+prefix caching at ~28-34k context. The flashinfer-free
-#   fallback is the int8 tier (gotcha 40): what SPEC=dflash2 CTX=long already
-#   ships, or for mtp: VLLM_SPEC_DECODE_ATTN=1 EXTRA_ARGS="--attention-backend
+#   fallback is the int8 tier (gotcha 40): SPEC=dflash2 CTX=long FA2_FP8KV=0, or for mtp: VLLM_SPEC_DECODE_ATTN=1 EXTRA_ARGS="--attention-backend
 #   =TRITON_ATTN --kv-cache-dtype=int8_per_token_head" at ~25% wall cost at
 #   depth (23.7 vs 18.9 s for 17.9k in + 256 out, measured). At chat length
 #   that escape is +2.5% end-to-end and quality-neutral, but it costs 16% of
 #   the KV pool and decays hard past 25k (-34% decode / -44% prefill at 60k);
 #   SPEC=dflash2 CTX=fast is +31% over it at C1. Use it as the #34 fallback,
 #   not as the fast path. Numbers in gotcha 40.
-# FA2_FP8KV=1 (experimental, default off): SPEC=dflash2 CTX=long on fp8 KV with the FA2 plugin
-#   (fa2/, bash fa2/install.sh) instead of int8 + Triton. See the arm below.
+# FA2_FP8KV (default 1 on SPEC=dflash2 CTX=long): fp8 KV with the FA2 plugin (fa2/, bash
+#   fa2/install.sh) instead of int8 + Triton. FA2_FP8KV=0 restores int8 + Triton, and KV_OFFLOAD_GB
+#   turns the default off. See the arm below.
 # CTX=huge: KVarN 4/2-bit KV cache (kvarn/), 200k context with MTP, at roughly
 #   half the decode rate past 100k — see below and docs/long-context.md.
 #
@@ -217,7 +217,7 @@ elif [ "$CTX" = "long" ]; then
   ATTN_ARGS="--kv-cache-dtype fp8"
 fi
 if [ "$SPEC" = "dflash2" ] && [ "$CTX" = "long" ]; then
-  # int8 per-token-head KV on the Triton backend: the same 5.2 GiB pool holds 136,429
+  # int8 per-token-head KV on the Triton backend (the FA2_FP8KV=0 arm; see below): the same 5.2 GiB pool holds 136,429
   # tokens instead of 69,758, because patches/hybrid-sw-block-promote.patch stops the
   # drafter's 5 sliding-window layers from taking 385 nearly-empty blocks, and
   # patches/spec-decode-int8-kv.patch lets the split-KV verify kernel read the quantized
@@ -229,16 +229,18 @@ if [ "$SPEC" = "dflash2" ] && [ "$CTX" = "long" ]; then
   # not for general chat.
   ATTN_ARGS="--attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head"
   export VLLM_SPEC_DECODE_ATTN=${SPEC_ATTN:-1}
-  # FA2_FP8KV=1 (experimental, default off): fp8 KV on FLASH_ATTN through the fa2/ plugin
-  # instead of the int8 + Triton arm above. The kernel is not vLLM's: FA2 does not read fp8 KV
+  # FA2_FP8KV=1 (the default on this arm, FA2_FP8KV=0 restores the int8 + Triton line above): fp8
+  # KV on FLASH_ATTN through the fa2/ plugin. The kernel is not vLLM's: FA2 does not read fp8 KV
   # on sm86 and the plugin supplies it, with its own split-KV for the verify block. Needs
-  # `bash fa2/install.sh`; the issue tracker's T4 and #153 hold the evidence. The drafter must
-  # select FLASH_ATTN too (SPEC_CFG below), or it stays on the default backend. Exporting
-  # FA2_FP8KV is the plugin's gate: its register() replaces FLASH_ATTN only when it is 1.
-  # resolve_config.sh has already refused any other SPEC/CTX and the KV offload tier.
+  # `bash fa2/install.sh` (the Docker image has it); the T4 battery and #153 hold the evidence.
+  # The drafter must select FLASH_ATTN too (SPEC_CFG below), or it stays on the default backend.
+  # Exporting FA2_FP8KV is the plugin's gate: its register() replaces FLASH_ATTN only when it is 1.
+  # resolve_config.sh has resolved the default and refused any other SPEC/CTX and the KV offload
+  # tier. A missing install refuses rather than falling back: a fallback would make the default
+  # arm depend on whether a build step happened.
   if [ "${FA2_FP8KV:-0}" = 1 ]; then
     "$REPO/venv/bin/python" -c 'import fa2_fp8kv_vllm.paths as p; p.check()' >/dev/null 2>&1 \
-      || { echo "start_qwen: refusing: FA2_FP8KV=1 but the FA2 fp8 plugin is not installed in venv (run: bash fa2/install.sh, or set FA2_FP8KV=0)" >&2; exit 1; }
+      || { echo "start_qwen: refusing: FA2_FP8KV=1 (${FA2_FP8KV_SRC:-explicit}) but the FA2 fp8 plugin is not installed in venv (run: bash fa2/install.sh, or set FA2_FP8KV=0 for the int8 + Triton arm)" >&2; exit 1; }
     ATTN_ARGS="--attention-backend FLASH_ATTN --kv-cache-dtype fp8"
     FA2_SPEC_ATTN=',"attention_backend":"FLASH_ATTN"'
     export FA2_FP8KV=1
