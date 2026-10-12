@@ -9,6 +9,8 @@ them in the order of `patches/series` onto the installed vLLM wheel; `verify.sh`
 - **local**: this hardware or environment (WSL2, sm80, a tuned build, env knobs). Stays.
 - **own**: a fix to a feature this repo introduced. Rides with that feature.
 
+`fa2/` carries a diff against another repository (the fp8-KV FA2 kernel against vllm-project/flash-attention at the commit vLLM pins), so it is not in `patches/` or this table. `fa2/README.md` has its provenance, and the `fa2-upstream` job in `patch-integrity.yml` checks it against that commit.
+
 Cut against: the pin the current hunks were generated on. The files are the source. Each contributor keeps the topics as commits (subject `[qwen38] <topic>`) in any vLLM 0.30.0 checkout, and `scripts/export-patch.sh` turns a commit into a file whose `--- exported from` line names that commit, so the series applies to the 0.30.0 tree with exact context; `patches/apply.sh` (which the Dockerfile and the install pages call),
 `patches/check_vllm_series.sh`, `kvarn/install.sh` and `verify.sh` apply and check with `--fuzz 0`, and a hunk whose context has moved fails the
 build by name instead of landing by guess. Regenerate a file with `bash scripts/export-patch.sh <vllm checkout>

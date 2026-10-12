@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fa2-fp8kv-vllm"
+version = "0.1.0"
+description = "FlashAttention FP8 KV extension for vLLM"
+requires-python = ">=3.10"
+dependencies = ["vllm>=0.29.0"]
+license = {file = "LICENSE"}
+
+[project.entry-points."vllm.general_plugins"]
+fa2_fp8kv = "fa2_fp8kv_vllm:register"
+
+[tool.setuptools]
+packages = ["fa2_fp8kv_vllm"]
+py-modules = ["fa2_prefill", "paged_prefill"]
+
+[tool.setuptools.package-dir]
+"" = "python"
