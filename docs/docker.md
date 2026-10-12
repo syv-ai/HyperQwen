@@ -105,6 +105,9 @@ difference is gotcha 16 below.
 - The image carries an nvcc (CUDA "base" + `cuda-nvcc`, not the 8 GB "devel"
   image) because FlashInfer JIT-compiles its fp8-KV attention kernel on first
   use (batch mode, `CTX=long`) and Triton needs a C compiler for its launchers.
+- The image also compiles `fa2/` (`fa2/install.sh`, optional, used by `FA2_FP8KV=1`) against its own torch
+  with that nvcc: two libraries of a few MB each, built before `COPY . .` so an edit elsewhere does not
+  recompile them. Unset `FA2_FP8KV`, the plugin it installs registers nothing.
 - On WSL2 the batch default may fail vLLM's free-memory gate; put
   `GPU_UTIL=0.93` in `.env` (see the WSL2 notes below, an independent
   containerized reproduction that predates this compose file).

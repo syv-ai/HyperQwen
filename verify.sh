@@ -145,6 +145,39 @@ if [ -f "$SP/v1/attention/backends/kvarn_attn.py" ]; then
     && ok "KVarN backend importable (KV=kvarn / CTX=huge available)" || fail "KVarN files present but backend does not import"
 else warn "KVarN not installed (optional; bash kvarn/install.sh for 262k context)"; fi
 
+echo "== fp8-KV FA2 (optional, fa2/)"
+if $PY -c "import fa2_fp8kv_vllm" 2>/dev/null; then
+  # Each probe runs in its own interpreter: register() replaces a registry entry, which must not leak.
+  $PY -c "import fa2_fp8kv_vllm.paths as p; p.check()" 2>/dev/null \
+    && ok "fa2_fp8kv.so and fa2_fp8kv_prefill.so are in the package" || fail "fa2_fp8kv_vllm is installed without both libraries (bash fa2/install.sh)"
+  $PY - <<'EOF' 2>/dev/null && ok "both libraries load; torch.ops.fa2_fp8kv.forward and fa2_fp8kv_prefill.gather exist" || fail "a fa2 library does not load, or its op is missing (ABI: rebuild with bash fa2/install.sh)"
+import torch, fa2_fp8kv_vllm.paths as p
+torch.ops.load_library(str(p.library())); torch.ops.load_library(str(p.prefill_library()))
+torch.ops.fa2_fp8kv.forward; torch.ops.fa2_fp8kv_prefill.gather
+EOF
+  # FLASH_ATTN's class path as a fresh process sees it: native unless FA2_FP8KV=1.
+  FA2_PATH='from vllm.v1.attention.backends.registry import AttentionBackendEnum as E; import fa2_fp8kv_vllm; fa2_fp8kv_vllm.register(); print(E.FLASH_ATTN.get_path())'
+  P_OFF=$(env -u FA2_FP8KV $PY -c "$FA2_PATH" 2>/dev/null | tail -n1)
+  P_ON=$(FA2_FP8KV=1 $PY -c "$FA2_PATH" 2>/dev/null | tail -n1)
+  [ -n "$P_OFF" ] && [ "$P_OFF" != "fa2_fp8kv_vllm.backend.Fp8FlashAttentionBackend" ] \
+    && ok "register() without FA2_FP8KV=1 leaves FLASH_ATTN native ($P_OFF)" || fail "register() changed FLASH_ATTN without FA2_FP8KV=1 (got '$P_OFF')"
+  [ "$P_ON" = "fa2_fp8kv_vllm.backend.Fp8FlashAttentionBackend" ] \
+    && ok "FA2_FP8KV=1 makes register() replace FLASH_ATTN" || fail "FA2_FP8KV=1 did not replace FLASH_ATTN (got '$P_ON')"
+  $PY - <<'EOF' 2>/dev/null && ok "supported_kv_cache_layouts is None for a non-fp8 cache dtype" || fail "the fa2 backend narrows the KV layout for a non-fp8 cache dtype (it would change CTX=fast)"
+import sys
+from types import SimpleNamespace
+from unittest.mock import patch
+try:
+    import vllm.vllm_flash_attn
+except ImportError:  # no libcuda.so.1 (the image build): the backend only needs the name
+    sys.modules["vllm.vllm_flash_attn"] = SimpleNamespace(flash_attn_varlen_func=None)
+from fa2_fp8kv_vllm import backend
+cfg = SimpleNamespace(cache_config=SimpleNamespace(cache_dtype="auto"))
+with patch.object(backend, "get_current_vllm_config_or_none", return_value=cfg):
+    assert backend.Fp8FlashAttentionBackend.supported_kv_cache_layouts() is None
+EOF
+else printf "  INFO  fa2_fp8kv_vllm not installed (optional; bash fa2/install.sh for FA2_FP8KV=1)\n"; fi
+
 if [ $INSTALL = 0 ]; then
 echo "== model at $MODEL"
 if [ ! -f "$MODEL/config.json" ]; then fail "model not found (README Setup: hf download)"; else

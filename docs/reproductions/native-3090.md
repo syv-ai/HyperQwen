@@ -31,7 +31,7 @@ Within a few percent throughout. **The README's table reproduces on Python 3.14.
 | profile | KV dtype | max_model_len | pool | perplexity¹ |
 |---|---|---:|---:|---:|
 | `CTX=fast` | bf16 | 65,536 | 68,605-72,992² | 3.1174 |
-| `CTX=long` | int8 per-token-head | 131,072 | 136,429 | 3.1100 |
+| `CTX=long` | int8 per-token-head (`SPEC=dflash2 FA2_FP8KV=0`) | 131,072 | 136,429 | 3.1100 |
 | `CTX=huge` | KVarN 4/2-bit | 245,760 | 268,169 | 3.1107 |
 
 ¹ Teacher-forced, identical 12,000-character passage, echo+logprobs. Only the KV dtype

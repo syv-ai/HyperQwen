@@ -792,7 +792,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     prefix caching + chunked prefill at 28-34k context; cause unattributed
     between flashinfer's workspace and the async-scheduling window as of this
     entry. If you hit it, the flashinfer-free fallback is the int8 tier:
-    `SPEC=dflash2 CTX=long` ships it by default, and for `SPEC=mtp` it is
+    `SPEC=dflash2 CTX=long` ships it with `FA2_FP8KV=0` (its default is now the fa2/ fp8 arm), and for `SPEC=mtp` it is
     `VLLM_SPEC_DECODE_ATTN=1 EXTRA_ARGS="--attention-backend=TRITON_ATTN
     --kv-cache-dtype=int8_per_token_head"`. Measured cost on the reference
     box: 17.9k in + 256 out takes 23.7 s against fp8/FlashInfer's 18.9

@@ -75,6 +75,7 @@ source "$REPO/launcher_common.sh" \
   || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
 # KV_OFFLOAD_GB=N: the CPU KV tier as a flag, ahead of everything below that reads EXTRA_ARGS.
 qwen_check_bool_knobs
+qwen_fa2_fp8kv_single_only batch/start_qwen.sh
 qwen_kv_offload_args
 qwen_kv_offload_shm_check
 
