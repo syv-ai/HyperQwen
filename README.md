@@ -238,6 +238,7 @@ Everything that used to be in this README, in the folder it belongs to.
 | [prepare/](prepare/) | The one-time model-preparation scripts (also `docker compose run --rm prepare`). |
 | [drafter/](drafter/) | How the draft vocabulary, the int4 drafters and the DFlash2 requantization were built — including what did not work. |
 | [kvarn/](kvarn/) | The KVarN 4/2-bit KV cache port. |
+| [fa2/](fa2/) | The fp8-KV FlashAttention-2 source port (optional; `bash fa2/install.sh` builds it, `FA2_FP8KV=1` selects it). |
 
 ## License
 

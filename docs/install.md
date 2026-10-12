@@ -125,6 +125,10 @@ SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm.__file__))'
 bash patches/apply.sh "$SP"
 # optional: the KVarN 4/2-bit KV cache for 262k context (docs/long-context.md)
 bash kvarn/install.sh
+# optional: the fp8-KV FlashAttention-2 build for FA2_FP8KV=1 (fa2/README.md). It compiles two CUDA
+# libraries with nvcc 13 (the pip nvcc above is found automatically), needs git and a host C++
+# compiler, and takes ~3-5 minutes. Nothing uses it unless FA2_FP8KV=1.
+bash fa2/install.sh
 
 # api key — optional on one machine: with no key the launchers bind 127.0.0.1 only. To serve other
 # machines, set a key (they then bind 0.0.0.0) or set HOST explicitly.

@@ -15,3 +15,7 @@ venv
 models
 api_key.txt
 bench/results/
+# fa2/build.py run in place, instead of through fa2/install.sh
+fa2/build-*/
+fa2/third_party/
+fa2/python/**/*.so
