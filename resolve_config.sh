@@ -61,6 +61,8 @@ resolve_effective_config() {
     esac
     [ -z "${CTX:-}" ] || _warn "CTX=$CTX is set but batch mode ignores it (CTX is a single-user control)"
     [ -z "${SPEC:-}" ] || _warn "SPEC=$SPEC is set but batch mode ignores it (SPEC is a single-user control)"
+    [ -z "${PTH_FA:-}" ] || [ "$PTH_FA" = 0 ] \
+      || _warn "PTH_FA=$PTH_FA is set but batch mode ignores it (PTH_FA is a single-user control, SPEC=mtp CTX=long)"
   fi
 
   # 2. EXTRA_ARGS shadow warnings. The launchers expand EXTRA_ARGS after their
@@ -90,6 +92,9 @@ resolve_effective_config() {
     [ "$mode" = "single" ] \
       && echo "[effective-config] CTX=$ctx SPEC=$spec" \
       || echo "[effective-config] KV=$kv"
+    if [ "$mode" = "single" ] && [ "${PTH_FA:-0}" = 1 ]; then
+      echo "[effective-config] PTH_FA=1 (int8_per_token_head KV on the CUSTOM backend, pthfa/)"
+    fi
     echo "[effective-config] MODEL=$_model PORT=$_port"
     echo "[effective-config] MAX_LEN=${MAX_LEN:-<profile default>} MAX_SEQS=${MAX_SEQS:-<profile default>}"
     echo "[effective-config] VLLM_API_KEY=$_key_status api_key.txt=$_keyfile"

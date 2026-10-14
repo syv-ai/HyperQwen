@@ -79,6 +79,11 @@ headers in the patch file (the files are the source) and run the script.
 | kvarn/kvarn-fp16-dequant-0.31.0 | own | registers `KVARN_FP16_DEQUANT` (#240's fp16 dequant in the fused KVarN decode kernels, default off) in `envs.py`, so `kvarn/files` reads it through `vllm.envs` and it is in the torch.compile cache key | none | 0.31.0: adjacency with upstream's VLLM_SKIP_VERSION_SUFFIX in envs.py | rides with KVarN |
 <!-- table:end -->
 
+`pthfa/` is not in the table because it is not a patch: it is the source of a separate extension, the pth-flash-attn
+int8 per-token-head attention backend (`PTH_FA=1`, `docs/long-context.md`), which `pthfa/install.sh` builds and installs
+into the venv beside vLLM as a plugin. No vLLM file changes, so the series and `patches/check_vllm_series.sh` are the
+same with or without it. `pthfa/PIN` names the commit it is vendored from; `pthfa/check_vendor.sh` checks the files.
+
 Retired at 0.30.0 and removed from the tree: `offload-mtp-serve` (vllm #52771, #52807 and #54288, all in 0.30.0) and `mamba-align-retire-null-gaps` (vllm #55450, in 0.30.0).
 
 Retired at 0.28.0 and removed from the tree later, with the older KVarN ports: `dflash2-backport` (the DFlash2

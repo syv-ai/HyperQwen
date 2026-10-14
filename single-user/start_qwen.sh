@@ -40,6 +40,8 @@
 #   not as the fast path. Numbers in gotcha 40.
 # CTX=huge: KVarN 4/2-bit KV cache (kvarn/), 200k context with MTP, at roughly
 #   half the decode rate past 100k — see below and docs/long-context.md.
+# PTH_FA=1 (SPEC=mtp CTX=long only, default 0): int8 per-token-head KV read by the pth-flash-attn
+#   kernel (pthfa/) on the target and the MTP drafter, instead of fp8 on FlashInfer — see below.
 #
 # Fast variant: MODEL defaults to models/Qwen3.8-27B-W4A16-AutoRound-fast when it
 # exists (int4-GPTQ lm_head + MTP, own-output draft vocab; drafter/README.md), else
@@ -231,6 +233,47 @@ elif [ "$SPEC" = "dflash2" ] && [ "$CTX" = "huge" ]; then
 elif [ "$SPEC" = "dflash2" ] && [ "$CTX" != "fast" ]; then
   echo "SPEC=dflash2 supports CTX=fast (bf16, 64k), CTX=long (int8, 128k) and CTX=huge (KVarN, 240k; kvarn/install.sh); CTX=$CTX keeps SPEC=mtp" >&2
   SPEC=mtp
+fi
+# PTH_FA=1: SPEC=mtp CTX=long on an int8_per_token_head KV cache read by the pth-flash-attn kernel
+# (pthfa/, built into the image by pthfa/install.sh) instead of fp8 on FlashInfer. The backend is the
+# plugin slot CUSTOM, on the target AND the MTP drafter: a drafter takes its attention backend from the
+# speculative config, so "attention_backend":"CUSTOM" goes in there too -- it is the setting that is easy
+# to drop. Decode and verify batches are captured FULL (the backend supports UNIFORM_BATCH graphs; the
+# mode stays vLLM's default). On 2x RTX 3080 20 GB at TP=2, vLLM 0.30.0, against TRITON_ATTN on the same
+# cache: 128k TTFT 129 s against 250 s, N=1 decode at 128k 85-92 against 46 tok/s, MTP tokens per step
+# and GSM8K unchanged (docs/long-context.md has the table, the hardware and the launch line; gotcha 63 the
+# limits). Default 0: unset, the argv and the environment are those of the arm without it.
+PTH_FA=${PTH_FA:-0}
+PTH_SPEC_BACKEND=
+if [ "$PTH_FA" = 1 ]; then
+  if [ "$SPEC" != mtp ] || [ "$CTX" != long ]; then
+    echo "PTH_FA=1 is a SPEC=mtp CTX=long setting (got SPEC=$SPEC CTX=$CTX); refusing rather than" >&2
+    echo "  booting an arm it was not measured on. Unset PTH_FA, or set SPEC=mtp CTX=long." >&2
+    exit 1
+  fi
+  case " ${EXTRA_ARGS:-} " in
+    *" --attention-backend"*|*" --kv-cache-dtype"*|*" --speculative-config"*)
+      echo "PTH_FA=1 sets --attention-backend, --kv-cache-dtype and the speculative config itself;" >&2
+      echo "  EXTRA_ARGS carries one of them and would override it. Remove it from EXTRA_ARGS." >&2
+      exit 1 ;;
+    *"--kv-offloading-size"*|*"--kv-transfer-config"*)
+      echo "PTH_FA=1 with a KV connector (KV_OFFLOAD_GB, --kv-offloading-size, --kv-transfer-config) is" >&2
+      echo "  untested on this backend; refusing. Use PTH_FA=0 for a CPU KV tier." >&2
+      exit 1 ;;
+  esac
+  "$REPO/venv/bin/python" -c 'import importlib.util as u, os, sys
+s = u.find_spec("pth_flash_attn")
+sys.exit(0 if s and os.path.isfile(os.path.join(s.submodule_search_locations[0], "_C.abi3.so")) else 1)' 2>/dev/null || {
+    echo "PTH_FA=1 needs the pth_flash_attn package and its op library in the venv: bash pthfa/install.sh" >&2
+    echo "  (the Docker image has it), or PTH_FA=0." >&2
+    exit 1
+  }
+  ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head"
+  PTH_SPEC_BACKEND=',"attention_backend":"CUSTOM"'
+  echo "[start_qwen] PTH_FA=1: int8_per_token_head KV on the CUSTOM backend (pth-flash-attn), target and MTP drafter" >&2
+elif [ "$PTH_FA" != 0 ]; then
+  echo "PTH_FA=$PTH_FA: set it to 0 or 1" >&2
+  exit 1
 fi
 # gotcha 51 / #64: KVarN + MTP + prefix caching, all three, corrupts prompt_logprobs --
 # perplexity reads ~23% high and some requests 400 with a NaN. Reproduced on two
@@ -502,7 +545,7 @@ elif [ "$SPEC" = "off" ] || [ "$SPEC" = "none" ]; then
   CG=${CG:-32}
 elif [ "$SPEC" = "mtp" ]; then
   MAX_SEQS=${MAX_SEQS:-8}
-  SPEC_CFG="{\"method\":\"mtp\",\"num_speculative_tokens\":$DRAFT_TOKENS,\"draft_sample_method\":\"${DRAFT_SAMPLE:-probabilistic}\"}"
+  SPEC_CFG="{\"method\":\"mtp\",\"num_speculative_tokens\":$DRAFT_TOKENS,\"draft_sample_method\":\"${DRAFT_SAMPLE:-probabilistic}\"${PTH_SPEC_BACKEND}}"
   CG=${CG:-32}
 else
   echo "SPEC=$SPEC is not a mode: mtp (default), dflash2, off. Refusing rather than" >&2

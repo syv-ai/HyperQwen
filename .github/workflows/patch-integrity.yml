@@ -35,6 +35,8 @@ jobs:
         run: bash bench/test_kv_offload_knob.sh
       - name: Check each launcher refuses a boolean knob that is neither 0 nor 1 (#310)
         run: bash bench/test_bool_knobs.sh
+      - name: Check PTH_FA in the launchers (argv, refusals, unset = unchanged) without a GPU
+        run: bash bench/test_pthfa_knob.sh
 
   kvarn-torch-gate:
     runs-on: ubuntu-latest
@@ -65,6 +67,8 @@ jobs:
           git diff --exit-code PATCHES.md || { echo "::error::PATCHES.md is not current: run python3 scripts/patches_md.py and commit the result"; exit 1; }
       - name: Check that a re-export keeps the file's preamble
         run: bash scripts/test_export_patch.sh
+      - name: Check the vendored pth-flash-attn sources in pthfa/ against pthfa/SHA256SUMS
+        run: bash pthfa/check_vendor.sh
 
   git-apply:
     runs-on: ubuntu-latest

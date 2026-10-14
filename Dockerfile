@@ -1,8 +1,8 @@
 # Same stack as the README's venv install, frozen: Python 3.12 venv at /app/venv,
 # vLLM 0.31.0 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in
 # patches/ applied,
-# the KVarN KV cache installed, verify.sh --install and the scratch-pool test run at
-# build time.
+# the KVarN KV cache installed, the pth-flash-attn op library built (pthfa/, used only
+# with PTH_FA=1), verify.sh --install and the scratch-pool test run at build time.
 #
 # The base image is CUDA "base" + nvcc, not "devel": vLLM's wheels bring their own
 # CUDA libraries, but FlashInfer JIT-compiles its fp8-KV attention kernel with nvcc
@@ -25,17 +25,26 @@ RUN python3.12 -m venv venv && venv/bin/pip install --upgrade pip
 COPY docker/requirements.txt docker/requirements.txt
 RUN venv/bin/pip install -r docker/requirements.txt
 
+# The pth-flash-attn op library (pthfa/, optional, PTH_FA=1) compiles here, ahead of `COPY . .`, so an
+# edit elsewhere does not recompile it: SASS for sm_80/86/89 with the image's nvcc and the venv's torch,
+# installed into the venv with its vllm.general_plugins entry point. install.sh checks the cubins and runs
+# pthfa/tests/gate_test.py against the pristine wheel; the RUN below runs it again on the patched tree.
+COPY pthfa/ pthfa/
+RUN PY=venv/bin/python bash pthfa/install.sh
+
 COPY . .
 # patches/apply.sh reads the apply order from patches/series and applies it with --fuzz 0:
 # a few patches carry hunk context that an earlier patch adds, so the glob order of
 # patches/*.patch is wrong.
 # bench/mq3d_scratch_pool_test.py imports the patched triton_attn.py and runs on CPU
-# tensors, so the build is where CI can run it.
+# tensors, so the build is where CI can run it. pthfa/tests/gate_test.py (the CUSTOM
+# backend's registration, inertness and limits against this vLLM) does the same.
 RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm.__file__))' | tail -n1); \
     bash patches/apply.sh "$SP"; \
     bash kvarn/install.sh; \
     bash verify.sh --install; \
-    venv/bin/python bench/mq3d_scratch_pool_test.py
+    venv/bin/python bench/mq3d_scratch_pool_test.py; \
+    CUDA_VISIBLE_DEVICES= venv/bin/python pthfa/tests/gate_test.py
 
 # HOME is a volume: torch.compile cache (~/.cache/vllm), Triton (~/.triton),
 # FlashInfer JIT (~/.cache/flashinfer), HF hub cache.

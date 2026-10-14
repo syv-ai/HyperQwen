@@ -1481,3 +1481,34 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     (upstream #51787; the series' `vllm-pr61050-lru-running-prefix` keeps the
     first chunks, `docs/vllm-0.31.md` has the numbers), so size it above
     what it holds.
+63. **`PTH_FA=1` is one arm and one cache, and an explicit `CUSTOM` it cannot serve fails at load,
+    not quietly.** The pth-flash-attn backend (`pthfa/`, `docs/long-context.md`) serves exactly
+    `--kv-cache-dtype int8_per_token_head` on compute capability 8.0, 8.6 and 8.9 (A100/A30/CMP
+    170HX, RTX 30xx, RTX 40xx), head sizes 64, 128 and 256, causal decoder self-attention without
+    sliding window, ALiBi, attention sinks or a logits soft cap, and no DCP/PCP. The library carries
+    SASS for those three archs and no PTX, so an sm90 or sm120 card is refused rather than
+    JIT-compiled into something nobody measured. Outside the list, an explicit
+    `--attention-backend CUSTOM` stops at model load with `pth_flash_attn does not support: <what>`
+    (`pthfa/tests/gate_test.py` checks each reason); nothing ever selects `CUSTOM` on its own, so
+    an arm that does not ask for it cannot reach it. That is why the knob is gated to
+    `SPEC=mtp CTX=long`: the DFlash2 drafter's five sliding-window layers are outside the list, and
+    the other arms are not measured. Two settings are refused rather than combined, both untested
+    here: a KV offload tier (`KV_OFFLOAD_GB`), and `--attention-backend`, `--kv-cache-dtype` or
+    `--speculative-config` in `EXTRA_ARGS`, which would silently override what the knob sets; the
+    speculative config is where the drafter's `"attention_backend":"CUSTOM"` lives, and dropping it
+    puts the MTP layer on another backend. There are no tuning knobs: the library reads no
+    environment variables, and its launch shape comes from a planner that is a pure function of the
+    batch descriptor. The numbers so far are from one box, two RTX 3080 20 GB at TP=2, on vLLM 0.30.0
+    and 0.31.0; on any other card they are still owed (`docs/long-context.md` says which).
+64. **On vLLM 0.31.0 at `GPU_UTIL=0.94`, `prompt_logprobs=10` on a 32k prompt kills the engine with a
+    CUDA OOM, whatever the attention backend.** The V2 runner computes prompt logprobs in chunks of
+    1024 tokens and all-gathers each chunk's logits over the full vocabulary
+    (`v1/worker/gpu/sample/prompt_logprob.py`): 486 MiB wanted with 208 MiB free, `torch.OutOfMemoryError`,
+    HTTP 500, engine dead. Seen on two RTX 3080 20 GB at TP=2 with the `SPEC=mtp CTX=long` production
+    shape (`PREFIX_CACHE=1 VISION=1 MAX_SEQS=2 MAX_LEN=262144`), on `PTH_FA=1`, on `TRITON_ATTN` int8 and
+    on a FlashAttention bf16-KV reference alike, on fresh boots, so it is the engine plus the 0.94 sizing,
+    not this branch or a kernel; the same requests ran on 0.30.0 at the same setting. `GPU_UTIL=0.90`
+    served them on all three, with every KV pool still above 128k tokens. Known class upstream: vllm
+    #5424 and #5907 (prompt_logprobs memory spike; leave headroom). Ordinary generation is not affected;
+    a client that asks for prompt logprobs (perplexity scoring, `bench/quality_battery.py`'s PPL half)
+    needs the headroom.

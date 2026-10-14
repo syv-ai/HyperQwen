@@ -1,0 +1,14 @@
+pth-flash-attn
+Copyright (c) 2026 noon-at-cgn
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It contains no third-party source code. Algorithms taken from published work
+(online softmax, FlashAttention tiling, the int8-to-fp16 magic-number
+conversion, split-KV with log-sum-exp combine) are re-implemented from the
+papers, the PTX ISA and the CUDA programming guide; the sources are listed in
+docs/adr/0002-licence-and-third-party-policy.md.
+
+At run time the library links against PyTorch (BSD-3-Clause) through its
+stable C ABI and the CUDA runtime (NVIDIA CUDA EULA), and the vLLM plugin
+imports vLLM (Apache-2.0). None of them is redistributed here.
