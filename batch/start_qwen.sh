@@ -63,6 +63,10 @@ if [ -z "${CUDA_HOME:-}" ]; then
   done
 fi
 
+source "$REPO/launcher_common.sh" \
+  || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
+qwen_normalize_extra_args
+
 # Backlog 6 / F13: one validated resolver — refuses unknown KV, warns on
 # ignored (CTX/SPEC) and EXTRA_ARGS-shadowed controls, prints the redacted
 # effective config. Refusal exits here, before anything boots. The launcher
@@ -71,8 +75,6 @@ fi
 source "$REPO/resolve_config.sh" \
   || { echo "start_qwen: cannot source $REPO/resolve_config.sh - refusing to boot unvalidated" >&2; exit 1; }
 resolve_effective_config batch
-source "$REPO/launcher_common.sh" \
-  || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
 # KV_OFFLOAD_GB=N: the CPU KV tier as a flag, ahead of everything below that reads EXTRA_ARGS.
 qwen_check_bool_knobs
 qwen_kv_offload_args
@@ -277,9 +279,9 @@ esac
 # neither captures a graph buffer to export.
 case " ${EXTRA_ARGS:-} " in
   *"--disable-custom-all-reduce"*|*"--enforce-eager"*) ;;
-  *"--tensor-parallel-size"*|*" -tp "*)
-    ALLOC_TP=$(printf %s " ${EXTRA_ARGS:-}" | sed -En "s/.* (--tensor-parallel-size[= ]|-tp )([0-9]+).*/\2/p")
-    if [ "${ALLOC_TP:-1}" -gt 1 ] 2>/dev/null; then
+  *)
+    ALLOC_TP=$(qwen_tp_size)
+    if [ "$ALLOC_TP" -gt 1 ]; then
       if [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ]; then
         echo "tensor-parallel-size $ALLOC_TP: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (custom all-reduce cannot export a VMM graph buffer over CUDA IPC, #163; set it explicitly to override)"
       fi

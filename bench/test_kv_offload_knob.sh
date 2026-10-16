@@ -30,6 +30,7 @@ for sc in single-user/start_qwen.sh batch/start_qwen.sh single-user/alternative.
   check none "$(tier_of $sc KV_OFFLOAD_GB=0)"                               "KV_OFFLOAD_GB=0"
   check 12   "$(tier_of $sc KV_OFFLOAD_GB=12)"                              "KV_OFFLOAD_GB=12"
   check 4    "$(tier_of $sc KV_OFFLOAD_GB=12 EXTRA_ARGS='--kv-offloading-size 4')" "KV_OFFLOAD_GB=12, flag 4 in EXTRA_ARGS"
+  check 4    "$(tier_of $sc KV_OFFLOAD_GB=12 EXTRA_ARGS='--kv_offloading_size 4')" "KV_OFFLOAD_GB=12, flag 4 spelled --kv_offloading_size"
   check none "$(tier_of $sc KV_OFFLOAD_GB=12 EXTRA_ARGS='--kv-transfer-config {}')" "KV_OFFLOAD_GB=12, --kv-transfer-config in EXTRA_ARGS"
   check expandable_segments:False "$(alloc_of $sc KV_OFFLOAD_GB=12)"        "allocator with KV_OFFLOAD_GB=12"
   [ $NATIVE = 1 ] && check expandable_segments:True "$(alloc_of $sc)"       "allocator with no tier (native)"

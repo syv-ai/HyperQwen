@@ -92,6 +92,10 @@ if [ -z "${CUDA_HOME:-}" ]; then
   done
 fi
 
+source "$REPO/launcher_common.sh" \
+  || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
+qwen_normalize_extra_args
+
 # Backlog 6 / F13: one validated resolver — refuses unknown CTX/SPEC, warns on
 # ignored (KV) and EXTRA_ARGS-shadowed controls, prints the redacted effective
 # config. Refusal exits here, before anything boots. The launcher does not run
@@ -99,8 +103,6 @@ fi
 source "$REPO/resolve_config.sh" \
   || { echo "start_qwen: cannot source $REPO/resolve_config.sh - refusing to boot unvalidated" >&2; exit 1; }
 resolve_effective_config single
-source "$REPO/launcher_common.sh" \
-  || { echo "start_qwen: cannot source $REPO/launcher_common.sh - refusing to boot" >&2; exit 1; }
 qwen_check_bool_knobs
 # KV_OFFLOAD_GB=N: the CPU KV tier as a flag, ahead of everything below that reads EXTRA_ARGS.
 qwen_kv_offload_args
@@ -332,11 +334,7 @@ if [ "$SPEC" = "dflash2" ]; then
   # 2. DFLASH_TOKENS>7 relies on the lookup lane filling the verify tail; at
   #    TP=2 the one datapoint so far (#40) shows the tail accepting nothing and
   #    the wider block costing -27% at C1. Until that is diagnosed, warn.
-  TP_SIZE=1
-  case " ${EXTRA_ARGS:-} " in *"-tensor-parallel-size"*|*" -tp "*)
-    TP_SIZE=$(printf %s " $EXTRA_ARGS" | sed -En "s/.* (--tensor-parallel-size[= ]|-tp )([0-9]+).*/\2/p")
-    TP_SIZE=${TP_SIZE:-1}
-  ;; esac
+  TP_SIZE=$(qwen_tp_size)
   if [ "$TP_SIZE" -gt 1 ]; then
     if [ -z "${KV_MEM+x}" ]; then
       echo "[start_qwen] tensor-parallel-size $TP_SIZE: skipping the single-card KV_MEM" \
@@ -820,9 +818,9 @@ esac
 # neither captures a graph buffer to export.
 case " ${EXTRA_ARGS:-} " in
   *"--disable-custom-all-reduce"*|*"--enforce-eager"*) ;;
-  *"--tensor-parallel-size"*|*" -tp "*)
-    ALLOC_TP=$(printf %s " ${EXTRA_ARGS:-}" | sed -En "s/.* (--tensor-parallel-size[= ]|-tp )([0-9]+).*/\2/p")
-    if [ "${ALLOC_TP:-1}" -gt 1 ] 2>/dev/null; then
+  *)
+    ALLOC_TP=$(qwen_tp_size)
+    if [ "$ALLOC_TP" -gt 1 ]; then
       if [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ]; then
         echo "tensor-parallel-size $ALLOC_TP: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (custom all-reduce cannot export a VMM graph buffer over CUDA IPC, #163; set it explicitly to override)"
       fi
