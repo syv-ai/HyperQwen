@@ -447,20 +447,67 @@ if [ "$SPEC" = "dflash2" ]; then
   # bigger batches run piecewise instead of captured: slower, alive. Set CG explicitly to
   # override.
   CG=${CG:-$((MAX_SEQS * (DRAFT_TOKENS + 1) > 64 ? 64 : MAX_SEQS * (DRAFT_TOKENS + 1)))}
-  # Seats are admissions, not residency. Every RESIDENT request needs 1+k recurrent-state
-  # slots out of the same pool before it stores one token of context: 0.88 GiB at
-  # DFLASH_TOKENS=7 and 1.66 GiB at 15 (gotcha 33), i.e. ~0.098 GiB per (k+2), which the
-  # ramp in bench/conc_ladder.py confirms live (15.8% of the CTX=fast pool per request,
-  # six resident, the seventh preempted). Print what the pool can actually hold so nobody
-  # reads MAX_SEQS as a concurrency setting -- raising it past this queues, and once the
-  # pool is full it preempts and recomputes.
-  if [ -n "$KV_MEM" ]; then
-    RESIDENT=$(( KV_MEM / ((DRAFT_TOKENS + 2) * 104988089) ))
-    [ "$RESIDENT" -lt 1 ] && RESIDENT=1
-    if [ "$MAX_SEQS" -gt "$RESIDENT" ]; then
-      echo "[start_qwen] note: the pinned pool holds about $RESIDENT resident requests at" \
-           "DFLASH_TOKENS=$DRAFT_TOKENS (state pages), fewer with long prompts;" \
-           "MAX_SEQS=$MAX_SEQS admits more than that and the rest queue."
+  # Seats are admissions, not residency. A resident request takes recurrent-state pages out of the
+  # KV pool before it stores a token of context, so the pool holds fewer requests than MAX_SEQS
+  # admits: the rest queue, and once the pool is full the engine preempts and recomputes. Print
+  # how many it holds.
+  #
+  # The engine's geometry is deterministic, so it is computed here, not fitted:
+  #   - one GDN layer's state is conv (10,240 channels x (kernel 4 - 1 + k) x bf16) plus SSM
+  #     (48 x 128 x 128 x the --mamba-ssm-cache-dtype width);
+  #   - vLLM raises the attention block until one layer's attention page covers that state:
+  #     16 * ceil(state / (16 * attention bytes per token)) (vllm/platforms/interface.py);
+  #   - one pool page is 8 layers (the hybrid-kv-groups group size) at that block, in the widest
+  #     per-token layout -- the drafter's sliding-window layers on int8 (2,112 B against 2,080);
+  #   - a request holds 6 GDN groups x (2 + k) state pages (align mode), plus 2 full-attention
+  #     groups x ceil(ctx / block) pages of context. vLLM 0.31.0 turns prefix caching on, and
+  #     with it align mode, by default for this model whether or not PREFIX_CACHE=1 adds the flags
+  #     ("Mamba cache mode is set to 'align' ... by default when prefix caching is enabled"), so
+  #     PREFIX_CACHE=0 measured the same 54 pages at k=7 as PREFIX_CACHE=1.
+  # bench/test_resident_print.sh checks this against eight measured boots: block and pool exact,
+  # resident counts inside the ~1k range, exact at 61k, and exact at 32k where it was measured.
+  # At ~1k the engine charges fewer attention pages than the formula (none on int8), which is
+  # why that end is a range. Unmeasured setups print nothing: KV dtypes other than bf16 and
+  # int8_per_token_head, a wider SSM state, an explicit --block-size, TP or PP > 1 (each rank
+  # holds a share of the heads or layers), a MAX_LEN that is not a plain decimal token count
+  # (vLLM also takes 64k or auto), a Mamba cache mode other than align or prefix caching switched
+  # off in EXTRA_ARGS (never booted here), and other model shapes.
+  RESIDENT_OK=1
+  RESIDENT_ARGS=" $ATTN_ARGS ${EXTRA_ARGS:-} "
+  RESIDENT_KV=$(printf %s "$RESIDENT_ARGS" | sed -En 's/.* --kv-cache-dtype[= ]([^ ]+) .*/\1/p')
+  RESIDENT_SSM=$(printf %s " --mamba-ssm-cache-dtype float16$RESIDENT_ARGS" | sed -En 's/.* --mamba-ssm-cache-dtype[= ]([^ ]+) .*/\1/p')
+  case "$RESIDENT_KV" in
+    bfloat16|auto|"")    RESIDENT_TGT=4096; RESIDENT_DFT=4096 ;;
+    int8_per_token_head) RESIDENT_TGT=2080; RESIDENT_DFT=2112 ;;
+    *)                   RESIDENT_OK=0 ;;
+  esac
+  case "$RESIDENT_SSM" in float16|bfloat16) RESIDENT_SSM_B=2 ;; *) RESIDENT_OK=0 ;; esac
+  case "$RESIDENT_ARGS" in *" --block-size"*) RESIDENT_OK=0 ;; esac
+  case "$MAX_LEN" in ""|*[!0-9]*|0*) RESIDENT_OK=0 ;; esac
+  [ "$TP_SIZE" = 1 ] || RESIDENT_OK=0
+  RESIDENT_PP=$(printf %s "$RESIDENT_ARGS" | sed -En 's/.* (--pipeline-parallel-size|-pp)[= ]([0-9]+) .*/\2/p')
+  case "${RESIDENT_PP:-1}" in 1) ;; *) RESIDENT_OK=0 ;; esac
+  [ -n "$KV_MEM" ] || RESIDENT_OK=0
+  RESIDENT_MODE=$(printf %s "$RESIDENT_ARGS" | sed -En 's/.* --mamba-cache-mode[= ]([^ ]+) .*/\1/p')
+  case "$RESIDENT_MODE" in ""|align) ;; *) RESIDENT_OK=0 ;; esac
+  case "$RESIDENT_ARGS" in *" --no-enable-prefix-caching "*) RESIDENT_OK=0 ;; esac
+  RESIDENT_PER_GROUP=$(( DRAFT_TOKENS + 2 ))
+  if [ "$RESIDENT_OK" = 1 ]; then
+    RESIDENT_STATE_B=$(( 20480 * (3 + DRAFT_TOKENS) + 48 * 128 * 128 * RESIDENT_SSM_B ))
+    RESIDENT_BLOCK=$(( 16 * ((RESIDENT_STATE_B + 16 * RESIDENT_TGT - 1) / (16 * RESIDENT_TGT)) ))
+    RESIDENT_PAGE=$(( 8 * RESIDENT_BLOCK * (RESIDENT_DFT > RESIDENT_TGT ? RESIDENT_DFT : RESIDENT_TGT) ))
+    RESIDENT_POOL=$(( KV_MEM / RESIDENT_PAGE ))
+    RESIDENT_STATE=$(( 6 * RESIDENT_PER_GROUP ))
+    # One page of the pool is the engine's null block, hence POOL - 1.
+    RESIDENT_HI=$(( (RESIDENT_POOL - 1) / RESIDENT_STATE ))
+    RESIDENT_LO=$(( (RESIDENT_POOL - 1) / (RESIDENT_STATE + 2 * ((1024 + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK)) ))
+    RESIDENT_LEN=$(( (RESIDENT_POOL - 1) / (RESIDENT_STATE + 2 * ((MAX_LEN + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK)) ))
+    if [ "$MAX_SEQS" -gt "$RESIDENT_HI" ]; then
+      if [ "$RESIDENT_LO" -eq "$RESIDENT_HI" ]; then RESIDENT_RANGE="$RESIDENT_HI"; else RESIDENT_RANGE="$RESIDENT_LO to $RESIDENT_HI"; fi
+      echo "[start_qwen] note: the pool holds about $RESIDENT_RANGE resident requests on ~1k-token prompts" \
+           "and $RESIDENT_LEN at MAX_LEN=$MAX_LEN -- $RESIDENT_POOL pages of $RESIDENT_BLOCK tokens, and each" \
+           "request reserves $RESIDENT_STATE of them for recurrent state at DFLASH_TOKENS=$DRAFT_TOKENS before" \
+           "any context. MAX_SEQS=$MAX_SEQS admits more than that and the rest queue."
     fi
   fi
   # Above ~12 seats at CTX=huge the seats stop being merely useless and become fatal, and

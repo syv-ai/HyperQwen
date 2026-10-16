@@ -428,7 +428,7 @@ included (`tools` + `tool_choice: "auto"` come back as `tool_calls`).
 | `DRAFT_TOKENS` | 4 (3 for `CTX=long`/`huge`) | speculative depth; 5 and 6 are slower |
 | `SPEC_ATTN` | 1 (`CTX=fast` only) | split-KV Triton attention for the verify step (`patches/spec-decode-attn.patch`); 0 = FlashAttention-2 |
 | `DRAFT_SAMPLE` | `probabilistic` | `greedy` drafts: same speed at T=0, ~15% slower at T>0 |
-| `MAX_SEQS` | 8 | how many requests are *admitted*, not how many the pool can hold: each resident request needs k+1 recurrent-state slots (0.88 GiB at DFlash2 k=7 — seven residents with short prompts, five at 4k, two at 16k), and the launcher prints the number at boot |
+| `MAX_SEQS` | 8 | how many requests are *admitted*, not how many the pool can hold; the rest queue, and once the pool is full the engine preempts and recomputes. A resident request reserves 6·(2+k) recurrent-state pages before any context (vLLM 0.31.0 runs prefix caching in align mode for this model by default, so this holds with `PREFIX_CACHE` 0 or 1), plus 2 pages per attention block of context. At the shipped `CTX=fast` pin and k=7 the pool holds 6 on ~1k-token prompts and 1 at 32k and 64k. With `SPEC=dflash2`, the launcher prints the figures at boot when `MAX_SEQS` is above them |
 | `MAX_LEN` | 65536 (`fast`) / 150000 (`long`) | 150k needs `GPU_UTIL` 0.93 |
 | `GPU_UTIL` | 0.93 | soak-tested with a 100k prompt and 4×6k-token generations; batch mode's 0.972 OOMs in the MTP path (docs/gotchas.md, gotcha 4) |
 | `MTP_DRAFT_VOCAB` | 1 | set 0 to draft with the full lm_head (more acceptance, slower per draft); set 0 for Chinese or other traffic outside the list's English/Danish/code corpus (docs/gotchas.md 61) |

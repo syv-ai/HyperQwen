@@ -35,6 +35,8 @@ jobs:
         run: bash bench/test_kv_offload_knob.sh
       - name: Check each launcher refuses a boolean knob that is neither 0 nor 1 (#310)
         run: bash bench/test_bool_knobs.sh
+      - name: Check the dflash2 seat note against the measured pools and resident counts
+        run: bash bench/test_resident_print.sh
 
   kvarn-torch-gate:
     runs-on: ubuntu-latest
