@@ -44,6 +44,18 @@
 #                       Called before anything reads EXTRA_ARGS, so the allocator and
 #                       retention defaults the launchers pick for a tier see this one.
 #
+#   qwen_prefix_cache   right after qwen_kv_offload_args. PREFIX_CACHE=1 (unset or empty means
+#                       1) puts --enable-prefix-caching --mamba-cache-mode align at the front of
+#                       EXTRA_ARGS, 0 puts --no-enable-prefix-caching, anything else refuses
+#                       to boot. Both states are passed explicitly because vLLM's own default
+#                       moved at 0.28 (on for this hybrid model, off before), and the knob
+#                       must not mean something different on each pin. The last of the two
+#                       flags in EXTRA_ARGS wins, in vLLM and here (either spelling: vLLM reads
+#                       _ as - in flag names): PREFIX_CACHE_ON (0|1) is the state the engine
+#                       gets, and every caching-dependent default in the launchers reads it,
+#                       never PREFIX_CACHE. The state line goes to stderr, so PRINT_ARGV=1
+#                       stdout is the argv alone.
+#
 #   qwen_kv_offload_shm_check  after the stale-region sweep. vLLM backs the tier with a
 #                       file in /dev/shm (vllm_offload_<engine_id>.mmap) and pins all of
 #                       it at boot, so a tmpfs with less room than the tier fails the
@@ -120,6 +132,30 @@ qwen_kv_offload_args() {
       *) EXTRA_ARGS="--kv-offloading-size $KV_OFFLOAD_GB ${EXTRA_ARGS:-}" ;;
     esac
   fi
+}
+
+qwen_prefix_cache() {
+  local knob=${PREFIX_CACHE:-1} w words why
+  case "$knob" in
+    0|1) ;;
+    *) echo "PREFIX_CACHE=$knob: set 1 (prefix caching on, the default) or 0 (off)" >&2; exit 1 ;;
+  esac
+  PREFIX_CACHE_ON=$knob
+  read -r -d '' -a words <<< "${EXTRA_ARGS:-}" || :
+  for w in "${words[@]}"; do
+    case "$w" in
+      --enable[-_]prefix[-_]caching) PREFIX_CACHE_ON=1 ;;
+      --no[-_]enable[-_]prefix[-_]caching) PREFIX_CACHE_ON=0 ;;
+    esac
+  done
+  if [ "$PREFIX_CACHE_ON" = 1 ]; then
+    EXTRA_ARGS="--enable-prefix-caching --mamba-cache-mode align ${EXTRA_ARGS:-}"
+  else
+    EXTRA_ARGS="--no-enable-prefix-caching ${EXTRA_ARGS:-}"
+  fi
+  if [ -z "${PREFIX_CACHE:-}" ]; then why="PREFIX_CACHE unset, the default 1"; else why="PREFIX_CACHE=$knob"; fi
+  if [ "$PREFIX_CACHE_ON" != "$knob" ]; then why="EXTRA_ARGS overrides $why"; fi
+  if [ "$PREFIX_CACHE_ON" = 1 ]; then echo "prefix caching: on ($why)" >&2; else echo "prefix caching: off ($why)" >&2; fi
 }
 
 qwen_kv_offload_shm_check() {

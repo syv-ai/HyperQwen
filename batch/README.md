@@ -88,9 +88,9 @@ the prefix cache partially serve repeated bench prompts, which read one config
 Decode at C1 is unchanged by the int8 path (122±5 vs 121 tok/s over repeats);
 quality is the documented int8 trade
 ([docs/optimizations.md](../docs/optimizations.md), GSM8K 95.0 vs 96.5, PPL
-+4.1%). `SPEC=off` and `PREFIX_CACHE=0` each measure ~20% *slower* prefill
-than the dflash2 defaults — the drafter rides the V2 model runner and the
-prefix-cache path is the fast allocation path — so neither is a "lean" prefill
++4.1%). On vLLM 0.27.1, `SPEC=off` and `PREFIX_CACHE=0` (caching off) each measured
+~20% *slower* prefill than the dflash2 defaults — the drafter rides the V2 model runner and
+the prefix-cache path is the fast allocation path — so neither is a "lean" prefill
 configuration.
 
 Two things to plan capacity around. First, concurrency does nothing for
@@ -101,7 +101,7 @@ waits ~40 s). Second, the falloff with length is mild — ~45% from 1k to 100k
 on the int8 path, ~34% on W4A16 — because just 16 of 64 layers pay quadratic
 attention; this is one of the places the hybrid architecture genuinely helps.
 
-### Raw-engine cells (no speculation, no prefix caching)
+### Raw-engine cells (no speculation, no prefix caching, vLLM 0.27.1)
 
 For apples-to-apples comparison with other 3090 stacks, the standard "raw"
 protocol people ask for: `SPEC=off PREFIX_CACHE=0`, 7,681-token prompts,
@@ -109,7 +109,8 @@ protocol people ask for: `SPEC=off PREFIX_CACHE=0`, 7,681-token prompts,
 requests, distinct seeds per call. PP = total prompt tokens / wall time of
 1-token-output runs at the same concurrency; TG = C × 1000 / mean TPOT
 (true tokens per second — with speculation off every round emits exactly one
-token per request). RTX 3090 at 250 W, this checkpoint (W4A16-AutoRound-fast).
+token per request). RTX 3090 at 250 W, this checkpoint (W4A16-AutoRound-fast), vLLM 0.27.1.
+`PREFIX_CACHE=0` is caching off, as it was on 0.27.1.
 
 | cell | W4A16 raw: PP / TG-agg | + server-side int8 (`INT8_ACT=int8 PREFILL_ATTN=int8`): PP / TG-agg |
 |---|---|---|
@@ -131,20 +132,22 @@ comment), not raw decode. Raw single-stream decode for 16 GB of weights on a
 ## Shared prompts: `PREFIX_CACHE=1`
 
 If every request carries the same system prompt, few-shot block or document — the normal
-shape of an API backend — turn on prefix caching (`--enable-prefix-caching
---mamba-cache-mode align`, opt-in upstream for hybrid models). The attention KV of the shared
-prefix is reused and the recurrent (GDN) state resumes from the last cached block boundary,
-so the prefix is prefilled once instead of once per request:
+shape of an API backend — you want prefix caching (`--enable-prefix-caching
+--mamba-cache-mode align`). `PREFIX_CACHE=1`, the default, passes those flags, and
+`PREFIX_CACHE=0` passes `--no-enable-prefix-caching` and turns it off. The attention KV
+of the shared prefix is reused and the recurrent (GDN) state resumes from the last cached
+block boundary, so the prefix is prefilled once instead of once per request:
 
 | 64 requests sharing a 5,820-token system prompt, concurrency 32 | wall | output | median latency | p90 |
 |---|---|---|---|---|
-| default | 222.2 s | 10.6 tok/s | 94.9 s | 155.3 s |
+| default on vLLM 0.27.1 (caching off) | 222.2 s | 10.6 tok/s | 94.9 s | 155.3 s |
 | `PREFIX_CACHE=1` | **16.9 s** | **133.9 tok/s** | **8.0 s** | **15.2 s** |
 
-It costs ~14% of the KV pool (223,821 → 193,298 tokens, 1.29x concurrency at 150k instead of
-1.49x) — one extra recurrent-state page per request — and nothing on workloads with no shared
-prefix (870 tok/s on the 128 in / 512 out row, i.e. unchanged). Answers are identical; the
-state resume is exact.
+On vLLM 0.27.1 it cost ~14% of the KV pool (223,821 → 193,298 tokens, 1.29x concurrency at
+150k instead of 1.49x) — one extra recurrent-state page per request — and nothing on
+workloads with no shared prefix (870 tok/s on the 128 in / 512 out row, i.e. unchanged).
+Answers are identical; the state resume is exact. On 0.30 (a 4090 under WSL2,
+`GPU_UTIL=0.91`) caching cost 1.5% of the pool (212,041 → 208,762 tokens).
 
 One failure mode to know about on mixed workloads (a long-running conversation
 plus unrelated traffic on the same server): a hybrid cache hit needs the mamba
@@ -192,7 +195,7 @@ All overridable as env vars, defaults in the script:
 
 | var | default | notes |
 |---|---|---|
-| `PREFIX_CACHE` | 0 | 1 = reuse a shared prompt prefix across requests (see above): 13x on shared-prompt workloads, ~14% smaller KV pool |
+| `PREFIX_CACHE` | 1 | 1 = prefix caching on (`--enable-prefix-caching --mamba-cache-mode align`, see above), 13x on shared-prompt workloads against caching off on vLLM 0.27.1. 0 = `--no-enable-prefix-caching`, for raw-engine benchmarks, A/Bs that must not reuse a prefix, quality comparisons and debugging the cache path. It costs every follow-up turn and shared prompt a full prefill. Other values refuse to boot. The last `--enable-prefix-caching` / `--no-enable-prefix-caching` in `EXTRA_ARGS` wins |
 | `KV` | `fp8` | `kvarn` switches to the KVarN 4/2-bit KV cache (run `bash kvarn/install.sh` once): 262k context, ~2× the token pool, slower decode — see the main README's "262k context" section |
 | `INT8_ACT` | `int8` | int8 activations on the Marlin GEMMs (int8 tensor cores, weights stay int4). Empty string = plain W4A16 |
 | `INT8_LAYERS` | `mlp` | regex on the layer name that gets int8 activations. `gate_up` for the gentle variant, `.` for everything, or a hand-picked list from `bench/act_calib.py` |

@@ -33,7 +33,7 @@ What to look for, in order of how much a failure means:
 
 All four requests share one document, so this also exercises several requests resuming from
 the same cached prefix at once -- which is a likelier source of trouble than the lookup, and
-worth ruling in or out with PREFIX_CACHE=0 before blaming the drafter.
+worth ruling in or out with PREFIX_CACHE=0 (caching off) before blaming the drafter.
 """
 
 import os

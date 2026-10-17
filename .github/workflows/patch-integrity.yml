@@ -33,6 +33,8 @@ jobs:
         run: python bench/test_conc_ladder_salt.py
       - name: Check a launcher with no API key binds 127.0.0.1
         run: bash bench/test_no_key_bind.sh
+      - name: Check PREFIX_CACHE sets the engine's prefix caching (unset/1 on, 0 off) and its safeguards follow
+        run: bash bench/test_prefix_cache_knob.sh
       - name: Check KV_OFFLOAD_GB becomes one --kv-offloading-size in every launcher
         run: bash bench/test_kv_offload_knob.sh
       - name: Check DYNAMIC_K reaches --speculative-config in single-user/start_qwen.sh, and its refusals

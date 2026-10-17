@@ -30,9 +30,10 @@ One line each; the rest of this page is the long version.
    block than the drafter can fill (`patches/dflash2-lookup-drafting.patch`):
    **381 tok/s** reproducing a 25k-token document verbatim, against 260 for the
    first version of this and 159 without it, still lossless.
-9. **Prefix caching for a hybrid model** — opt-in upstream; `PREFIX_CACHE=1`
-   makes a follow-up chat turn on a 24k document cost ~1 s instead of ~23 s, and
-   64 requests sharing a system prompt 17 s instead of 222 s.
+9. **Prefix caching for a hybrid model** — on by default since vLLM 0.28. Against
+   caching off on 0.27.1, `PREFIX_CACHE=1` made a follow-up chat turn on a 24k
+   document cost ~1 s instead of ~23 s, and 64 requests sharing a system prompt
+   17 s instead of 222 s.
 10. **int8 prefill for single-user mode** (`INT8_ACT=int8`) — prefill is
    compute-bound at every batch size, so the W4A8 tensor-core path is worth
    +27-30% prefill (+19% at 51k) on the dflash2 stack with decode unchanged;
@@ -112,10 +113,13 @@ One line each; the rest of this page is the long version.
    tokens cost the drafter nothing, the verify block is no longer capped at the drafter's
    own (7 tokens), and the long block is only scheduled while the lookup is firing:
    reproducing a document verbatim goes 7.83 → 15.0 tokens per step, 260 → 381 tok/s.
-9. **Prefix caching for a hybrid model, on purpose.** vLLM keeps it opt-in for
-   mamba/GDN hybrids; `PREFIX_CACHE=1` turns it on in both modes with the recurrent state
-   resumed from the last cached block boundary. Follow-up chat turns on a 24k document:
-   23 s → 1 s. 64 API requests sharing a 5.8k system prompt: 222 s → 17 s.
+9. **Prefix caching for a hybrid model, on purpose.** vLLM 0.27 kept it opt-in for
+   mamba/GDN hybrids, and `PREFIX_CACHE=1` turned it on in both modes with the recurrent
+   state resumed from the last cached block boundary. Since 0.28 vLLM turns it on by
+   default. The launcher passes the flag both ways, on for `PREFIX_CACHE=1` (the default)
+   and off for `PREFIX_CACHE=0`. Against caching off on 0.27.1, follow-up chat turns on a
+   24k document went 23 s → 1 s, and 64 API requests sharing a 5.8k system prompt
+   222 s → 17 s.
 
 ### int8 prefill for single-user mode (`INT8_ACT=int8`)
 
@@ -183,9 +187,11 @@ Things this campaign measured that did NOT pay, so nobody re-walks them:
   fused context-KV precompute. (On 0.30, `SPEC=off` runs the V2 runner too, per its
   boot log on 2026-09-25, so that cause no longer holds there, and 0.29's batch boots,
   which have no drafter, run V2 as well; the ~20% gap itself has not been re-measured.)
-- **`PREFIX_CACHE=0` prefills ~20% slower than `PREFIX_CACHE=1`** on this
-  stack, align mode ruled out as the cause (PC=0 + `--mamba-cache-mode align`
-  measures the same as plain PC=0). Do not turn the cache off "for speed".
+- **`PREFIX_CACHE=0` prefilled ~20% slower than `PREFIX_CACHE=1`** on vLLM 0.27.1, when
+  `PREFIX_CACHE=0` meant caching off. (The control that added `--mamba-cache-mode align` to
+  `PREFIX_CACHE=0` did not test align: with caching off, vLLM resets the mode to `none`.)
+  `PREFIX_CACHE=0` is caching off again, and the gap has not been re-measured since
+  0.27.1. Do not turn caching off "for speed".
 - **Bigger prefill chunks do not boot** under the pinned `KV_MEM`:
   `--max-num-batched-tokens` 4096 and 8192 both inflate the profiled
   activation peak past the transient floor (engine init fails). 2048 stays.
@@ -326,19 +332,19 @@ same server with `LOOKUP=0` (the two that differ are near-tie flips, gotcha 14).
 The mode also costs 4 request slots instead of 8 and 56k context instead of 64k, because
 `--mamba-cache-mode align` reserves recurrent-state pages per slot per speculative block.
 
-Pair it with `PREFIX_CACHE=1` (vLLM's hybrid prefix caching, opt-in upstream): a follow-up
-turn on a 24k-token document costs **~1 s instead of ~23 s** because the attention KV is
-reused and the recurrent state resumes from the last cached block boundary, for one extra
-state page per request (~16% of the KV pool). Prefill stops dominating a chat, and then
+Pair it with prefix caching (`PREFIX_CACHE=1`, the default). Against caching off on
+0.27.1, a follow-up turn on a 24k-token document cost **~1 s instead of ~23 s** because
+the attention KV is reused and the recurrent state resumes from the last cached block
+boundary, for one extra state page per request. Prefill stops dominating a chat, and then
 drafting from the context is what makes the decode fast.
 
-`PREFIX_CACHE=1` works in **batch mode** too, and matters just as much there: 64 requests
-sharing one 5,820-token system prompt take 222 s without it and **16.9 s** with it (median
-latency 94.9 s → 8.0 s), for ~14% of the KV pool and no change on workloads without a shared
-prefix. If your API backend sends the same instructions with every request, this is the
-single biggest thing in this repo for you. (The other three changes on this page —
-lookup drafting, the KV-group fix and the V2 graph accounting — only fire on the DFlash2
-path and are inert in batch mode.)
+`PREFIX_CACHE=1` works in **batch mode** too, and matters just as much there: on 0.27.1, 64
+requests sharing one 5,820-token system prompt took 222 s with caching off and **16.9 s**
+with it (median latency 94.9 s → 8.0 s), for ~14% of the KV pool and no change on
+workloads without a shared prefix. If your API backend sends the same instructions with
+every request, this is the single biggest thing in this repo for you. (The other three
+changes on this page — lookup drafting, the KV-group fix and the V2 graph accounting —
+only fire on the DFlash2 path and are inert in batch mode.)
 
 Its limits are memory- and window-shaped: each *resident* request holds 1+7
 recurrent-state slots — 0.88 GiB, 15.8% of the `CTX=fast` pool, before it stores any

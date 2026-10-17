@@ -150,22 +150,24 @@ happens when the streams are big. Where it is *not* the better choice:
 
 Two things matter once the prompt is long and the same document comes back every turn.
 
-**`PREFIX_CACHE=1`** turns on vLLM's hybrid prefix caching (`--enable-prefix-caching
---mamba-cache-mode align`), which upstream keeps opt-in for hybrid models. The attention
-KV of the shared prefix is reused *and* the recurrent (GDN) state resumes from the last
-cached block boundary, so a follow-up turn does not re-run the document:
+**`PREFIX_CACHE=1`**, the default, passes vLLM's hybrid prefix caching flags
+(`--enable-prefix-caching --mamba-cache-mode align`). `PREFIX_CACHE=0` passes
+`--no-enable-prefix-caching` and turns it off. The attention KV of the shared prefix is
+reused *and* the recurrent (GDN) state resumes from the last cached block boundary, so a
+follow-up turn does not re-run the document:
 
 | 4-turn chat, 24k-token document, greedy | turn 1 | turn 2 | turn 3 | turn 4 |
 |---|---|---|---|---|
-| default | 22.9 s | 23.1 s | 22.8 s | 22.9 s |
+| default on vLLM 0.27.1 (caching off) | 22.9 s | 23.1 s | 22.8 s | 22.9 s |
 | `PREFIX_CACHE=1` | 23.5 s | **1.15 s** | **0.85 s** | **0.89 s** |
 
 Same answers, token for token (the state resume is exact, not approximate); a control run
-that changes the prefix every turn pays the full 23 s again. It costs one extra recurrent
-state page per request — the KV pool goes 86,727 → 72,475 tokens (MTP) / 68,605 (DFlash2) —
-and draft acceptance is unaffected (2.23 / 2.03 / 2.28 tokens per step with the cache vs
-2.27 / 1.80 / 1.96 without). Worth it for anything conversational; leave it off if you serve
-unrelated one-shot prompts and want the pool.
+that changes the prefix every turn pays the full 23 s again. On vLLM 0.27.1 it cost one
+extra recurrent state page per request — the KV pool went 86,727 → 72,475 tokens (MTP) /
+68,605 (DFlash2) — and draft acceptance was unaffected (2.23 / 2.03 / 2.28 tokens per step
+with the cache vs 2.27 / 1.80 / 1.96 without). `PREFIX_CACHE=0` turns caching off, and vLLM
+drops those state pages: on 0.31, `SPEC=dflash2 CTX=fast` holds 69,758 tokens off against
+68,605 on.
 
 **Lookup-augmented drafting** (`LOOKUP=1`, on by default for `SPEC=dflash2`) fixes the other
 half. With prefill nearly free, long-context chat is decode-bound, and that is exactly where
@@ -422,7 +424,7 @@ included (`tools` + `tool_choice: "auto"` come back as `tool_calls`).
 |---|---|---|
 | `MODEL` | `models/Qwen3.8-27B-W4A16-AutoRound-fast` if present, else the base dir | the fast variant (`prepare/fetch_fast_variant.py`) is +15% |
 | `CTX` | `fast` | `fast`: bf16 KV / FlashAttention / 64k / 4 drafts / split-KV attention. `long`: fp8 KV / FlashInfer / 150k / 3 drafts, ~15% slower at C1, faster from C4 up. `huge`: KVarN 4/2-bit KV / 200k / 3 drafts (needs `bash kvarn/install.sh`; docs/long-context.md) — buys 1.7x the pool for **half the decode rate past ~100k** (32.0 vs 68.1 tok/s at 112k), so take it when the request would not otherwise fit, not for speed |
-| `PREFIX_CACHE` | 0 | 1 = reuse a shared prompt prefix across requests (`--enable-prefix-caching --mamba-cache-mode align`): 20x faster follow-up turns, ~16% smaller KV pool |
+| `PREFIX_CACHE` | 1 | 1 = prefix caching on (`--enable-prefix-caching --mamba-cache-mode align`), plus the `CTX=huge` and draft tuning and safeguards (see above). 0 = `--no-enable-prefix-caching`, for raw-engine benchmarks, A/Bs that must not reuse a prefix, quality comparisons and debugging the cache path. It costs every follow-up turn a full prefill. Other values refuse to boot. The last `--enable-prefix-caching` / `--no-enable-prefix-caching` in `EXTRA_ARGS` wins |
 | `LOOKUP` | 1 (`SPEC=dflash2`) | draft from the request's own context when it repeats itself (`patches/dflash2-lookup-drafting.patch`), and fill the verify positions the drafter's block does not reach. `VLLM_DFLASH2_LOOKUP_NMIN` (6) is the shortest suffix that may match, `_NMAX` (12) the longest — the kernel prefers the longest match and breaks ties by recency, so a higher cap makes it choose an older long match over a newer short one, which is the worse predictor — `_NSTRONG` (6) the match length trusted on its own, `_AGREE` (0) how many tokens the drafter must independently agree on for a shorter match to be taken, `_NMIN_TAIL` (4) the same for positions the drafter never proposed, `_ADAPTIVE` (1 = ask the scheduler for the long block only while a copy is running, 0 = always long), `_LONGMIN` (6) the match length that counts as a fillable tail, `_STICKY` (3) steps to hold the long block after the flag drops, with one request in flight only — copies do not end when the flag says so, and re-entry costs two steps, but the counter is batch-wide and holding it across a mixed batch makes the block length depend on when the other requests arrived — `_CHEAP_CTX` (0 = off) a context length below which the long block is taken unconditionally |
 | `SPEC` | `mtp` | `dflash2`: the DFlash2 block drafter (`prepare/fetch_dflash2.py`; `CTX=fast` or `CTX=long`, V2 model runner). `DRAFT` overrides the drafter dir, `DFLASH_TOKENS` (7) the *verify* block — the drafter always proposes the 7 it was trained for, and 15 here is reproduction mode (4 request slots, 56k context) — `DFLASH_MAX_LEN` (65536, or 57344 at `DFLASH_TOKENS=15`) the context, `KV_MEM` (5583457484 = 5.2 GiB) pins the KV pool — set `KV_MEM=` to size it from `GPU_UTIL` instead; `VLLM_DFLASH2_DRAFT_TOPK_TOPP=0` disables the proposal truncation, `VLLM_DFLASH2_TORCH_TOPK=1` avoids the FlashInfer top-k JIT |
 | `DRAFT_TOKENS` | 4 (3 for `CTX=long`/`huge`) | speculative depth; 5 and 6 are slower |
@@ -459,12 +461,13 @@ systemctl --user start qwen-serving
 ## If you are the only user, do this
 
 The command above starts the conservative default — MTP speculation, 8 request
-slots, 64k context, 120 tok/s greedy at C1. Two settings are worth more than
-every other knob in this repo put together, and a third is worth a great deal on
-one particular workload:
+slots, 64k context, 120 tok/s greedy at C1 — with prefix caching on
+(`PREFIX_CACHE=1` is the default). One more setting is worth more than every
+other knob in this repo put together, and a second is worth a great deal on one
+particular workload:
 
 ```bash
-printf 'SPEC=dflash2\nPREFIX_CACHE=1\n' >> .env
+printf 'SPEC=dflash2\n' >> .env
 # add DFLASH_TOKENS=15 if your answers quote your prompts — see below
 docker compose --profile single up -d
 ```
@@ -473,7 +476,7 @@ or, in the venv install:
 
 ```bash
 venv/bin/python prepare/fetch_dflash2.py   # once, 1.2 GB (Docker's prepare step does it for you)
-SPEC=dflash2 PREFIX_CACHE=1 bash single-user/start_qwen.sh
+SPEC=dflash2 bash single-user/start_qwen.sh
 ```
 
 `SPEC=dflash2` swaps Qwen's MTP head for the DFlash2 block drafter: 7 tokens
@@ -481,7 +484,7 @@ proposed in one pass instead of 4 chained ones. `DFLASH_TOKENS=15` then lets the
 target verify 16 tokens per step — the drafter still proposes the 7 it was
 trained for, and the remaining positions are filled from the request's own
 context, which costs nothing to draft and is exactly right whenever the answer
-quotes the prompt. `PREFIX_CACHE=1` keeps the document you already sent, both
+quotes the prompt. Prefix caching keeps the document you already sent, both
 its attention KV and its recurrent state. One request at a time, greedy, RTX
 3090 at 250 W:
 
@@ -504,9 +507,10 @@ sampling keeps the drafter). Off by default.
 columns are one server session, where run-to-run greedy divergence is ±3-5%;
 reproduce them with `venv/bin/python bench/labd_bench.py <tag> --ctx 20000`.</sub>
 
-`PREFIX_CACHE=1` is orthogonal to the other two and worth as much again in a
-chat client: a second turn against that same 25k-token document takes 0.56 s to
-first token instead of 22.4 s, with the answers unchanged token for token.
+Prefix caching (on by default) is orthogonal to the other two and worth as much
+again in a chat client: a second turn against that same 25k-token document takes
+0.56 s to first token instead of 22.4 s with caching off, with the answers
+unchanged token for token.
 
 **Read that table by column, not by its last cell.** `SPEC=dflash2` is the upgrade
 for everyone; `DFLASH_TOKENS=15` is for one workload. On chat it is worth 1%,

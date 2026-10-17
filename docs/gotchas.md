@@ -401,8 +401,9 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     Two conditions, and it took two people to see both. The **hit** is necessary:
     a fresh server, one request, no warm-up, never collapses at any length
     ([#13](https://github.com/syv-ai/HyperQwen/pull/13), mjungnickel18) —
-    which is also why `PREFIX_CACHE=0` always looked clean. The **residue** decides
-    whether a hit corrupts, and it is a clean function of the draft count:
+    which is also why `PREFIX_CACHE=0` always looked clean on vLLM 0.27.1, where it meant
+    no caching, as it does again at HEAD. The **residue** decides whether a hit
+    corrupts, and it is a clean function of the draft count:
 
     | config | k | verify block L=k+1 | attention block | broken R | free slots 128-R |
     |---|---|---|---|---|---|
@@ -433,18 +434,24 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     not implicated and the shared multi-query verify against a partially-hit
     prefix is.
 
-    Mitigation, as it stands at HEAD: `CTX=huge` forces `cudagraph_mode=PIECEWISE`
-    for `SPEC=mtp`, which is clean at every residue and costs nothing measurable —
-    `SPEC=mtp` over 8k/16k/32k/50k is 87.8/86.1/70.4/63.5 tok/s captured against
-    93.5/83.8/70.3/59.6 piecewise. This repo previously scoped that workaround to
-    `dflash2` on the theory that MTP's short verify step captures correctly; it
-    does not, and `SPEC=mtp CTX=huge` shipped with the bug.
+    Mitigation, as it stands at HEAD: `CTX=huge PREFIX_CACHE=1` forces
+    `cudagraph_mode=PIECEWISE` for `SPEC=mtp`, which is clean at every residue and
+    costs nothing measurable — `SPEC=mtp` over 8k/16k/32k/50k is 87.8/86.1/70.4/63.5
+    tok/s captured against 93.5/83.8/70.3/59.6 piecewise. This repo previously scoped
+    that workaround to `dflash2` on the theory that MTP's short verify step captures
+    correctly; it does not, and `SPEC=mtp CTX=huge` shipped with the bug. Unset
+    `PREFIX_CACHE` means 1, so unset gets the pin too. A sweep of all 128 residues at
+    an 86% prefix-cache hit rate on vLLM 0.31 found 0 broken (2026-10-17), but it
+    measured the path unset ran before the launcher passed the flag both ways (vLLM's
+    default `FULL_AND_PIECEWISE` and caching, without the launcher's safeguards). It
+    does not lift the pin on `PREFIX_CACHE=1`. The pinned path itself, `CTX=huge
+    SPEC=mtp` with `PREFIX_CACHE` unset at HEAD, swept 0 of 128 broken on 0.31 too.
 
     `dflash2` has since got FULL capture back (`a75ee4b` fixed its residue, and
     `b356e31` swept **all 128** residues under FULL with 0 broken), so the two
-    speculators are no longer on the same default. `mtp` keeps PIECEWISE as a
-    correctness constraint until residue 4 comes back verbatim under a full sweep,
-    not until a particular symptom stops appearing.
+    speculators are no longer on the same default. `mtp` with `PREFIX_CACHE=1` keeps
+    PIECEWISE as a correctness constraint until residue 4 comes back verbatim under a
+    full sweep of that path, not until a particular symptom stops appearing.
 
     A third trap, learned the hard way on `DFLASH_TOKENS=15`: `bench/bugb_sweep.py`
     used to report the RAW prompt length, not the chat-templated one the engine
@@ -1007,8 +1014,8 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     inference` lines, for `_k_stats_kernel`, `_k_quant_kernel` and
     `_prefill_attn_kernel`. Same class of gap, different kernels, not yet
     prewarmed.
-46. **`prompt_logprobs` is wrong on `CTX=huge` + `SPEC=mtp` + prefix caching, and
-    the NaN 400s are only its visible half.** Reported as
+46. **`prompt_logprobs` was wrong on `CTX=huge` + `SPEC=mtp` + prefix caching up to vLLM
+    0.28, and the NaN 400s were only its visible half.** Reported as
     [#64](https://github.com/syv-ai/HyperQwen/issues/64) from a WSL2
     3090 — `bench/quality_battery.py --ppl-only` failing with
     `{"message":"Out of range float values are not JSON compliant: nan"}` on
@@ -1028,7 +1035,8 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
 
     So the inflated perplexity and the NaN are one bug, not two: in the broken
     combination the logprobs that come back are ~23% worse on English than the
-    same server produces with prefix caching off, and the requests whose
+    same server produces with `PREFIX_CACHE=0` (measured on vLLM 0.27.1, where that
+    meant no prefix caching), and the requests whose
     corruption reaches a non-finite float are the ones that 400. Every clean
     configuration agrees to four decimals, which is also what makes the broken
     one unmistakable.
@@ -1045,10 +1053,14 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     `MAX_LEN` is not involved: 240000 and the 245760 default both fail and both
     pass depending on the rest.
 
-    Practical rule until the read path is fixed: measure perplexity or anything
-    else using `prompt_logprobs` on KVarN with `PREFIX_CACHE=0`, or on a
-    non-MTP speculator. Ordinary generation is not implicated — needle
-    retrieval and decode rates are normal on the same server.
+    Fixed by the vLLM 0.29 pin (`858c3b7`, #64 closed 2026-09-23): clean on 0.29
+    on two machines, still corrupt on 0.28 on both, and the mechanism was never
+    identified. On 0.31 (a 3090, 332-336k-token pool, 2026-10-17) the `--ppl-only`
+    battery read 10.76 on English with caching off, with `PREFIX_CACHE` unset and
+    with `PREFIX_CACHE=1`, three runs each. If it comes back on a later pin, compare
+    against caching off, which is `PREFIX_CACHE=0` again. Ordinary generation was
+    never implicated — needle retrieval and decode rates were normal on the same
+    server.
 47. **`DFLASH_TOKENS=15` asserted at engine start on the int4 path, because the
     drafter's promoted block only has to *cover* the primary page, not divide
     it.** Filed as

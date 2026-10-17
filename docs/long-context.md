@@ -292,14 +292,19 @@ verify uncaptured — restored both the speed and the correctness on both machin
 
 `dflash2` has its FULL graphs back (`a75ee4b` fixed the residue, `b356e31` then
 swept **all 128** residues under FULL with 0 broken), so at HEAD
-`SPEC=dflash2 CTX=huge PREFIX_CACHE=1` runs captured. `SPEC=mtp CTX=huge`
+`SPEC=dflash2 CTX=huge PREFIX_CACHE=1` runs captured. `SPEC=mtp CTX=huge PREFIX_CACHE=1`
 still forces PIECEWISE, and that one is a correctness constraint rather than a
 preference: under FULL it breaks at one prompt length in 128 and nobody has
-fixed it. Either way prefix caching stays on, which is what the mode is for —
-turn 2 over a cached 100k document costs 4.7 s against 169 s cold.
+fixed it. Unset `PREFIX_CACHE` means 1, so unset gets PIECEWISE too. On 0.31 a sweep of
+all 128 residues found 0 broken at an 86% prefix-cache hit rate (2026-10-17), but it
+measured the path unset ran before the launcher passed the flag both ways (vLLM's
+default capture and caching, without the launcher's safeguards). It does not lift the
+pin. The pinned default path swept 0 of 128 broken on 0.31 as well (2026-10-17). In both
+cases prefix caching is on, which is what the mode is for — turn 2 over a
+cached 100k document costs 4.7 s against 169 s cold.
 
-`CUDAGRAPH_MODE=FULL_AND_PIECEWISE` overrides the MTP line for anyone hunting
-the root cause. Treat that as unsafe rather than merely slower.
+`CUDAGRAPH_MODE=FULL_AND_PIECEWISE` overrides the MTP `PREFIX_CACHE=1` line for anyone
+hunting the root cause. Treat that as unsafe rather than merely slower.
 
 What that trade costs, re-measured at HEAD. The numbers this README used to carry here
 had `FULL_AND_PIECEWISE` at 38 tok/s (1.97 per step) on the 25k copy task against
@@ -415,15 +420,15 @@ which caps `max_model_len` to 221,184 above 7 drafts rather than letting the ser
 to come up.
 
 
-The capture mode is fixed at boot, and for `SPEC=mtp CTX=huge` the trade is not
-optional. What FULL does there is corrupt one prompt length in every 128, and only
+The capture mode is fixed at boot, and for `SPEC=mtp CTX=huge PREFIX_CACHE=1` the trade
+is not optional. What FULL does there is corrupt one prompt length in every 128, and only
 for a request that hits the prefix cache. The broken residue is a function of the
 draft count (`R = 117 + k`, the same for both speculators), which is why scoping
 the workaround to `dflash2` was wrong the first time — `SPEC=mtp CTX=huge` shipped
 with the same bug at residue 4. Piecewise costs MTP nothing measurable
 (87.8/86.1/70.4/63.5 tok/s captured against 93.5/83.8/70.3/59.6 piecewise over
 8k-50k), so it keeps PIECEWISE until residue 4 comes back verbatim under a full
-sweep.
+sweep of that path.
 
 **Do not test that residue by its symptom.** The location is deterministic and the
 damage is not: the same `mtp` residue has returned an empty answer, a one-character
