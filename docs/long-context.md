@@ -182,7 +182,7 @@ plugin's backend supports only the LBNHC KV layout, vLLM's CPU-tier connector as
 BLHNC, and the CPU tier on this backend is untested, so the offload tier keeps int8 + Triton. An
 explicit `FA2_FP8KV=1` refuses that combination, and any other `SPEC` or `CTX`. The evidence is the
 T4 battery on the native 3090 ([#153](https://github.com/syv-ai/HyperQwen/issues/153)):
-<battery result: fill in before PR>.
+on 2026-10-18 (bare metal, 250 W, vLLM 0.31.0) the fp8 + FA2 arm passed every bar against the shipped int8 + Triton arm: GSM8K 0.950 vs 0.955 (n=200), perplexity +0.04%, 0 of 128 residues broken, a 20-minute soak with no restart, decode 54.0 vs 48.2 tok/s at ~66k and 48.2 vs 37.9 tok/s at ~100k (+27%), cold TTFT 75.5 vs 132.3 s and 54.7 vs 130.5 s, and a 3.3% larger pool (140,902 vs 136,429 tokens).
 
 ### What it is actually good for
 
