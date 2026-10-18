@@ -26,6 +26,8 @@ T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 (cd "$REPO" && tar --exclude=.git --exclude=./venv --exclude=docs/media --exclude=bench/demo --exclude=models -cf - .) | tar -xf - -C "$T"
 mkdir -p "$T/venv/bin"
 printf '#!/bin/sh\nprintf "%%s\\n" "$@"\n' > "$T/venv/bin/vllm"; chmod +x "$T/venv/bin/vllm"
+# Stands for the FA2 plugin's install probe, so FA2_FP8KV=1 reaches the fp8 arm.
+printf '#!/bin/sh\nexit 0\n' > "$T/venv/bin/python"; chmod +x "$T/venv/bin/python"
 # The dflash2 branch refuses to start without a drafter directory; a marker file is enough for a dry run.
 mkdir -p "$T/models/Qwen3.8-27B-DFlash2-W4A16" && : > "$T/models/Qwen3.8-27B-DFlash2-W4A16/model.safetensors"
 
@@ -33,8 +35,8 @@ INT8='--attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head'
 
 # note <env...>: the launcher's note line, or nothing. Every knob the note reads is cleared first,
 # so the caller's environment (a CTX or DFLASH_MAX_LEN in the shell) cannot change an arm.
-# FA2_FP8KV=0: the measured CTX=long rows are the int8 arm, and on a compute capability 8.6 host an unset
-# knob resolves to fp8 + FA2, whose pool the note does not model (it stays silent there).
+# FA2_FP8KV=0: the H3 CTX=long row is the int8 arm, and on a compute capability 8.6 host an unset
+# knob resolves to fp8 + FA2 (the #153 row sets FA2_FP8KV=1 itself).
 note() {
   (cd "$T" && env -u PRINT_ARGV -u DFLASH_TOKENS -u KV_MEM -u MAX_SEQS -u MAX_LEN -u EXTRA_ARGS -u PREFIX_CACHE \
      -u CTX -u DFLASH_MAX_LEN -u FA2_FP8KV \
@@ -61,6 +63,11 @@ echo "== measured arms: pool and block exact, observed residency inside the prin
 # 2026-10-16 H1 (PREFIX_CACHE=1) 5583457484 7 bf16 380           448    6         1            -
 # 2026-10-16 H2 (PREFIX_CACHE=0) 5583457484 7 bf16 380           448    6         -            -
 # 2026-10-16 H3 (CTX=long, int8, MAX_LEN 131072) 5583457484 7 382 864  7         2            -
+# #153 FA2 arm (CTX=long, fp8, MAX_LEN 131072)    5583457484 7 387 880  -         -            -
+# The #153 boot logged its pool as 140,902 tokens, not num_gpu_blocks. vLLM 0.31.0 logs
+# num_gpu_blocks / blocks per request x MAX_LEN, and 387 / 360 x 131072 is the only fit at 2,048 B
+# a token: 360 = 54 state + 2 x 149 context + 8 drafter-window blocks at block 880. The same sum at
+# int8's block 864 is 367, the 382 / 367 the H3 engine reported, and gives its logged 136,429.
 # Each charged 6 x (2 + k) state pages per request (vllm:kv_cache_usage_perc x (num_gpu_blocks - 1)
 # / Running: 54.00 at k=7, 30.00 at k=3, 18.0 at k=1), including H2: vLLM 0.31.0 enables prefix
 # caching, and so align mode, by default for this model, with or without PREFIX_CACHE=1.
@@ -88,6 +95,8 @@ check 1 "$(inside "$f" 6)" "  ... the observed 6 at ~1k is inside"
 f=$(fields DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1)
 check "6:7:1:382:864" "$f" "H3 CTX=long (int8, MAX_LEN 131072): range 6-7, pool 382, block 864"
 check 1 "$(inside "$f" 7)" "  ... the observed 7 at ~1k is inside"
+f=$(fields DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1 FA2_FP8KV=1)
+check "6:7:1:387:880" "$f" "#153 CTX=long FA2 arm (fp8, MAX_LEN 131072): range 6-7, pool 387, block 880"
 
 echo "== prefix caching switched off explicitly is unmeasured"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXTRA_ARGS="--no-enable-prefix-caching")" \
@@ -109,7 +118,7 @@ echo "== silent where it should be"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=7 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" "MAX_SEQS equal to the upper bound: no note"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=4 MAX_LEN=65536 PREFIX_CACHE=1)" "MAX_SEQS=4: no note"
 check "" "$(note KV_MEM=4900000000 DFLASH_TOKENS=3 MAX_SEQS=16 CTX=huge)" "CTX=huge (KVarN): no note"
-check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 EXTRA_ARGS="--kv-cache-dtype fp8")" "fp8 KV (unmeasured): no note"
+check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 EXTRA_ARGS="--kv-cache-dtype fp8_e5m2")" "fp8_e5m2 KV (unmeasured): no note"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 EXTRA_ARGS="--block-size 1024")" "explicit --block-size: no note"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 EXTRA_ARGS="--mamba-ssm-cache-dtype float32")" "float32 SSM state (unmeasured): no note"
 check "" "$(note KV_MEM= DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536)" "no KV_MEM pin (the pool is profiled, not known): no note"

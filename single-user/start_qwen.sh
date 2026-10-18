@@ -525,10 +525,12 @@ if [ "$SPEC" = "dflash2" ]; then
   #     PREFIX_CACHE=0 measured the same 54 pages at k=7 as PREFIX_CACHE=1.
   # bench/test_resident_print.sh checks this against eight measured boots: block and pool exact,
   # resident counts inside the ~1k range, exact at 61k, and exact at 32k where it was measured.
+  # fp8 (the FA2_FP8KV=1 arm) has no seat count yet: its block 880 and pool 387 are the one pair
+  # that gives the 140,902-token pool the #153 boot logged.
   # At ~1k the engine charges fewer attention pages than the formula (none on int8), which is
-  # why that end is a range. Unmeasured setups print nothing: KV dtypes other than bf16 and
-  # int8_per_token_head, a wider SSM state, an explicit --block-size, TP or PP > 1 (each rank
-  # holds a share of the heads or layers), a MAX_LEN that is not a plain decimal token count
+  # why that end is a range. Unmeasured setups print nothing: KV dtypes other than bf16,
+  # int8_per_token_head and fp8, a wider SSM state, an explicit --block-size, TP or PP > 1
+  # (each rank holds a share of the heads or layers), a MAX_LEN that is not a plain decimal token count
   # (vLLM also takes 64k or auto), a Mamba cache mode other than align or prefix caching switched
   # off in EXTRA_ARGS (never booted here), and other model shapes.
   RESIDENT_OK=1
@@ -538,6 +540,7 @@ if [ "$SPEC" = "dflash2" ]; then
   case "$RESIDENT_KV" in
     bfloat16|auto|"")    RESIDENT_TGT=4096; RESIDENT_DFT=4096 ;;
     int8_per_token_head) RESIDENT_TGT=2080; RESIDENT_DFT=2112 ;;
+    fp8)                 RESIDENT_TGT=2048; RESIDENT_DFT=2048 ;;
     *)                   RESIDENT_OK=0 ;;
   esac
   case "$RESIDENT_SSM" in float16|bfloat16) RESIDENT_SSM_B=2 ;; *) RESIDENT_OK=0 ;; esac
