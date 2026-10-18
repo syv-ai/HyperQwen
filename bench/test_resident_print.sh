@@ -33,10 +33,12 @@ INT8='--attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head'
 
 # note <env...>: the launcher's note line, or nothing. Every knob the note reads is cleared first,
 # so the caller's environment (a CTX or DFLASH_MAX_LEN in the shell) cannot change an arm.
+# FA2_FP8KV=0: the measured CTX=long rows are the int8 arm, and on a compute capability 8.6 host an unset
+# knob resolves to fp8 + FA2, whose pool the note does not model (it stays silent there).
 note() {
   (cd "$T" && env -u PRINT_ARGV -u DFLASH_TOKENS -u KV_MEM -u MAX_SEQS -u MAX_LEN -u EXTRA_ARGS -u PREFIX_CACHE \
-     -u CTX -u DFLASH_MAX_LEN \
-     SPEC=dflash2 PRINT_ARGV=1 VLLM_API_KEY=k HOME="$T" "$@" \
+     -u CTX -u DFLASH_MAX_LEN -u FA2_FP8KV \
+     SPEC=dflash2 PRINT_ARGV=1 VLLM_API_KEY=k HOME="$T" FA2_FP8KV=0 "$@" \
      bash single-user/start_qwen.sh 2>/dev/null </dev/null) | grep -o '\[start_qwen\] note: the pool holds.*' || true
 }
 # fields <env...>: "lo:hi:len:pool:block" from the note (a single 1k figure prints as "n:n").
