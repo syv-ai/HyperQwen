@@ -18,6 +18,7 @@ full reproductions; the list below collects the shorter reports from issues.
   not reproduce on either image (including a stock positive control and the
   maintainer's closing protocol past the 24-request boundary on main), plus the two
   boot-log lines the thread asked for and a 0.29.0 harness row
+- [5070ti-16gb-tp2.md](5070ti-16gb-tp2.md) — 2x RTX 5070 Ti 16 GB (sm120, Blackwell, TP=2), Docker, SPEC=mtp CTX=huge, 762k-token KV pool, ~75-80 tok/s decode at C1-C8
 - [a5000-230w.md](a5000-230w.md) — RTX A5000 24 GB (sm86) at a 230 W cap: the
   1× batch profile, the first 4× TP4 at 150k (0.28 and 0.29 tied within noise —
   the 0.28→0.29 regression is 1M-specific) and at 1M (0.29 regresses −10 to
