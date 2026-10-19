@@ -399,27 +399,30 @@ if [ -f /.dockerenv ]; then :; elif systemctl --user is-active qwen-serving >/de
 fi  # INSTALL
 
 if [ $NOSRV = 0 ]; then
-  echo "== live server (127.0.0.1:${PORT:-18020})"
   PORT=${PORT:-18020}
+  # VERIFY_SERVER_URL points the live checks at a server that is not this host's 127.0.0.1:$PORT,
+  # e.g. another Compose container (VERIFY_SERVER_URL=http://single:18020, #341).
+  SRV=${VERIFY_SERVER_URL:-http://127.0.0.1:$PORT}; SRV=${SRV%/}
+  echo "== live server ($SRV)"
   if [ "$WAIT" -gt 0 ]; then
     # Bounded poll for /health, same shape as single-user/qwen-server.sh:
     # fixed 5 s interval, at most WAIT seconds, abort if the server pid dies.
-    echo "verify: waiting up to ${WAIT}s for http://127.0.0.1:$PORT/health ..."
+    echo "verify: waiting up to ${WAIT}s for $SRV/health ..."
     _WAIT_N=$(( (WAIT + 4) / 5 )); _WAIT_HIT=0
     for _w in $(seq 1 "$_WAIT_N"); do
       if [ -n "${VERIFY_SERVER_PID:-}" ] && ! kill -0 "$VERIFY_SERVER_PID" 2>/dev/null; then
         echo "verify: server process $VERIFY_SERVER_PID exited before becoming healthy" >&2
         break
       fi
-      if curl -sf -o /dev/null "http://127.0.0.1:$PORT/health"; then _WAIT_HIT=1; break; fi
+      if curl -sf -o /dev/null "$SRV/health"; then _WAIT_HIT=1; break; fi
       sleep 5
     done
     [ "$_WAIT_HIT" = 1 ] && echo "verify: /health 200 after waiting"
   fi
-  if curl -sf -o /dev/null http://127.0.0.1:$PORT/health; then
+  if curl -sf -o /dev/null $SRV/health; then
     ok "/health 200"
     KEY=${VLLM_API_KEY:-$(cat api_key.txt 2>/dev/null)}
-    R=$(curl -s http://127.0.0.1:$PORT/v1/chat/completions -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+    R=$(curl -s $SRV/v1/chat/completions -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
         -d '{"model":"qwen3.8-27b","messages":[{"role":"user","content":"Hvad er hovedstaden i Danmark? Svar med ét ord."}],"max_tokens":8,"temperature":0,"chat_template_kwargs":{"enable_thinking":false}}')
     echo "$R" | grep -qi "københavn\|copenhagen" && ok "chat completion answers ('$(echo "$R" | $PY -c 'import json,sys; print(json.load(sys.stdin)["choices"][0]["message"]["content"].strip())' 2>/dev/null)')" || fail "chat completion wrong/failed: $(echo "$R" | head -c 200)"
     # /tokenize contract — the endpoint exists to prove the client's and the
@@ -467,11 +470,11 @@ text = tok.apply_chat_template(
 print(",".join(map(str, tok.encode(text, add_special_tokens=False))))
 EOF
 )
-    TOK_S=$(ids_of "http://127.0.0.1:$PORT/tokenize" "{\"model\":\"qwen3.8-27b\",\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
+    TOK_S=$(ids_of "$SRV/tokenize" "{\"model\":\"qwen3.8-27b\",\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
     [ -n "$TOK_LOC" ] && [ "$TOK_S" = "$TOK_LOC" ] \
       && ok "/tokenize with the served id returns the checkpoint tokenizer's ids" \
       || fail "/tokenize disagrees with the checkpoint tokenizer (server='$TOK_S' local='$TOK_LOC')"
-    TOK_S=$(ids_of "http://127.0.0.1:$PORT/tokenize" "{\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
+    TOK_S=$(ids_of "$SRV/tokenize" "{\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
     [ -n "$TOK_S" ] && [ "$TOK_S" = "$TOK_LOC" ] \
       && ok "/tokenize with the model omitted returns the same ids" \
       || fail "/tokenize model-omitted disagrees ('$TOK_S' vs '$TOK_LOC')"
@@ -482,7 +485,7 @@ EOF
     # template rejected the request" is a different finding from "the two
     # tokenizers disagree", and only the second one should stop a boot — so the
     # first warns with the body instead of failing.
-    TOK_R=$(curl -s -w '\n%{http_code}' "http://127.0.0.1:$PORT/tokenize" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
+    TOK_R=$(curl -s -w '\n%{http_code}' "$SRV/tokenize" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" \
       -d "{\"model\":\"qwen3.8-27b\",\"messages\":[{\"role\":\"user\",\"content\":\"$TOKP\"}],\"chat_template_kwargs\":{\"enable_thinking\":false}}")
     TOK_CODE=${TOK_R##*$'\n'}; TOK_BODY=${TOK_R%$'\n'*}
     TOK_S=$(printf '%s' "$TOK_BODY" | $PY -c 'import json,sys
@@ -496,20 +499,20 @@ print(",".join(map(str, json.load(sys.stdin).get("tokens", ()))))' 2>/dev/null)
     else
       fail "/tokenize chat form disagrees (server='$TOK_S' template='$TOK_CHAT_LOC')"
     fi
-    TOK_R=$(curl -s -w '\n%{http_code}' "http://127.0.0.1:$PORT/tokenize" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"not-a-served-model","prompt":"x"}')
+    TOK_R=$(curl -s -w '\n%{http_code}' "$SRV/tokenize" -H "Authorization: Bearer $KEY" -H "Content-Type: application/json" -d '{"model":"not-a-served-model","prompt":"x"}')
     TOK_CODE=${TOK_R##*$'\n'}; TOK_BODY=${TOK_R%$'\n'*}
     [ "$TOK_CODE" = 404 ] && printf '%s' "$TOK_BODY" | grep -q "Served models" \
       && ok "unknown model name -> 404 whose body lists the served names" \
       || graded serve-404-served-names entrypoints/serve/engine/serving.py "Served models:" \
            "unknown model name -> $TOK_CODE, body lists nothing usable: $(printf '%s' "$TOK_BODY" | head -c 120)"
     if [ -n "$KEY" ]; then
-      TOK_CODE=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$PORT/tokenize" -H "Content-Type: application/json" -d "{\"model\":\"qwen3.8-27b\",\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
+      TOK_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$SRV/tokenize" -H "Content-Type: application/json" -d "{\"model\":\"qwen3.8-27b\",\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
       [ "$TOK_CODE" = 401 ] \
         && ok "keyless /tokenize -> 401" \
         || graded auth-deny-default entrypoints/serve/middleware/authenticate.py "UNGUARDED_PATHS" \
              "keyless /tokenize -> $TOK_CODE (expected 401: it renders arbitrary text through the chat template)"
     else warn "no API key configured — the keyless-401 row cannot run"; fi
-    TOK_S=$(ids_of "http://127.0.0.1:$PORT/v1/tokenize" "{\"model\":\"qwen3.8-27b\",\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
+    TOK_S=$(ids_of "$SRV/v1/tokenize" "{\"model\":\"qwen3.8-27b\",\"prompt\":\"$TOKP\",\"add_special_tokens\":false}")
     [ -n "$TOK_S" ] && [ "$TOK_S" = "$TOK_LOC" ] \
       && ok "/v1/tokenize answers with the same ids (OpenAI-SDK base_url .../v1)" \
       || graded tokenize-v1-route entrypoints/serve/tokenize/api_router.py 'prefix="/v1"' \
@@ -522,7 +525,9 @@ print(",".join(map(str, json.load(sys.stdin).get("tokens", ()))))' 2>/dev/null)
       grep -q "MarlinLinearKernel" "$LOG" && ok "Marlin kernels in use" || true
       grep -oE "capping max_num_seqs [0-9]+ -> [0-9]+" "$LOG" | tail -1 | sed 's/^/  INFO  KVarN /'
     fi
-  else warn "no server on :$PORT (start batch/start_qwen.sh or single-user/start_qwen.sh, or pass --no-server)"; fi
+  elif [ -f /.dockerenv ] && [ -z "${VERIFY_SERVER_URL:-}" ]; then
+    warn "live checks SKIPPED: no server at $SRV from inside this container. A 'docker compose run' container is not the server's: run 'make verify' while the service is up (it runs verify.sh inside it), or set VERIFY_SERVER_URL=http://single:$PORT (or batch)"
+  else warn "no server at $SRV (start batch/start_qwen.sh or single-user/start_qwen.sh, set VERIFY_SERVER_URL, or pass --no-server)"; fi
 fi
 echo
 [ $FAILS = 0 ] && echo "verify: OK ($FAILS failures)" || echo "verify: $FAILS FAILURE(S)"

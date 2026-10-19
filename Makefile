@@ -25,8 +25,10 @@ ps: ## container state + /health from inside WSL/network namespace
 	docker ps --filter name=hyperqwen --format "{{.Names}} {{.Status}}"
 	@curl -s -o /dev/null -w "health: HTTP %{http_code}\n" http://127.0.0.1:$${PORT:-18020}/health || true
 
-verify: ## verify.sh inside the container (needs the single service image)
-	docker compose run --rm single verify
+verify: ## verify.sh inside the running single/batch container (live checks included), else in a fresh one (no live server)
+	@svc=$$(docker compose ps --status running --services 2>/dev/null | grep -xE 'single|batch' | head -n1); \
+	if [ -n "$$svc" ]; then echo "verify: running inside the running '$$svc' service"; docker compose exec $$svc bash verify.sh; \
+	else echo "verify: no single/batch service running; live-server checks will be skipped"; docker compose run --rm single verify; fi
 
 verify-install: ## install-only checks (venv, vLLM, patches, KVarN): no GPU/model/server
 	bash verify.sh --install
