@@ -1,4 +1,4 @@
---api-key: deny by default, allow the liveness paths.
+--api-key: deny by default, allow the liveness paths and /metrics.
 
 The old guard authenticated only the /v1, /v2, /inference and /cohere
 prefixes. /tokenize, /detokenize, /metrics, /docs and /server_info
@@ -7,24 +7,25 @@ model chat template, so this exposes the template, not only metadata.
 The --api-key help text warned about this type of hole.
 
 With --api-key set, every path now needs the bearer token, except
-/health, /ping, /load and /version. Liveness probes and load balancers
-need these four paths. A route that is added later is guarded by default.
-It does not stay open until somebody extends a prefix list. A Prometheus
-scraper that cannot send the key must use a separate listener. The
---api-key help text now describes the allowlist.
+/health, /ping, /load, /version and /metrics. Liveness probes and load
+balancers need the first four. /metrics stays open in the same spirit:
+it serves counters and histograms, not model capability, so an
+unauthenticated reader sees throughput, not the model, and the in-tree
+scrapes in bench/ read it directly. A route that is added later is
+guarded by default. It does not stay open until somebody extends a
+prefix list. The --api-key help text now describes the allowlist.
 
 The allowlist is matched on the path without a trailing slash. This
 middleware runs before the router, so /health/ does not get to the
 redirect_slashes step of FastAPI. Without this, a liveness probe that
 uses a trailing slash gets a 401.
 
-Only a real CORS preflight skips the token check: an OPTIONS request with
-an Origin header and an Access-Control-Request-Method header. This is the
-test that Starlette's CORSMiddleware uses before it answers a preflight.
-A bare OPTIONS request needs the token. /metrics is a mounted Prometheus
-app and answers any method, so a bare OPTIONS /metrics returned the full
-exposition without the key. Without Origin, CORSMiddleware sends the
-request through to the app, so both headers are necessary.
+Only a real CORS preflight skips the token check: an OPTIONS request
+with an Origin header and an Access-Control-Request-Method header. This
+is the test that Starlette's CORSMiddleware uses before it answers a
+preflight. A bare OPTIONS request needs the token on every path outside
+the allowlist. Without Origin, CORSMiddleware sends the request through
+to the app, so both headers are necessary.
 
 On v0.31.0: cut against 0.31.0 with the series. The middleware matches the request path with
 starlette's get_route_path, the function the router matches with, so --root-path / keeps /health
@@ -32,13 +33,15 @@ open (#290). The routes 0.30 added (/v1/responses/render, the --enable-scale-out
 under the deny-by-default rule with no allowlist change.
 
 Kind: fix
-What: --api-key guards every path except /health, /ping, /load and /version (deny by default). The
-  old prefix list left /tokenize, /detokenize, /metrics and the docs open without the key. /metrics
-  now needs the key: a scraper that cannot send it must use a separate listener, and the in-tree
-  scrapes send it (bench-probe-errors). The allowlist ignores a trailing slash, so a probe on
-  /health/ does not get a 401. Only a real CORS preflight (OPTIONS with Origin and
-  Access-Control-Request-Method) skips the token; a bare OPTIONS needs it, because /metrics answers
-  any method. The --api-key help text describes the allowlist
+What: --api-key guards every path except /health, /ping, /load, /version and /metrics (deny by
+  default). The old prefix list left /tokenize, /detokenize, /metrics and the docs open without
+  the key. The inference routes and /tokenize now need it (the latter renders arbitrary text
+  through the chat template). /metrics stays open like the liveness paths: it serves counters
+  and histograms, not model capability, so the in-tree bench scrapes read it without a key. The
+  allowlist ignores a trailing slash, so a probe on /health/ does not get a 401. Only a real
+  CORS preflight (OPTIONS with Origin and Access-Control-Request-Method) skips the token; a bare
+  OPTIONS needs it on every path outside the allowlist. The --api-key help text describes the
+  allowlist
 Upstream: vllm #59892
 Cut-against: 0.33.0
 Retires-when: upstream PR
@@ -46,10 +49,10 @@ Retires-when: upstream PR
 --- exported from b46d8e0155 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/common/cli_args.py b/entrypoints/common/cli_args.py
-index b861c9e73f..5e0391cdc6 100644
+index b861c9e73f..0dd903b849 100644
 --- a/entrypoints/common/cli_args.py
 +++ b/entrypoints/common/cli_args.py
-@@ -336,13 +336,13 @@
+@@ -336,13 +336,12 @@
      """If provided, the server will require one of these keys to be presented in
      the header.
  
@@ -58,11 +61,10 @@ index b861c9e73f..5e0391cdc6 100644
 -    `/invocations` (which exposes the same inference capabilities as `/v1`),
 -    remain unauthenticated. Do not rely on `--api-key` alone to secure vLLM;
 -    see
-+    This authenticates every endpoint on the server, except a small liveness
-+    allowlist (`/health`, `/ping`, `/load`, `/version`). All other endpoints
-+    need the key. This includes `/invocations`, `/tokenize` and `/metrics`.
-+    A scraper that must read `/metrics` without a key needs a separate
-+    listener. See
++    This authenticates every endpoint on the server, except a small allowlist
++    (`/health`, `/ping`, `/load`, `/version` and `/metrics` -- the liveness
++    probes and the Prometheus exposition). Every other endpoint needs the
++    key, including `/invocations` and `/tokenize`. See
      https://docs.vllm.ai/en/latest/usage/security.html#api-key-authentication-limitations
 -    for what it does and does not protect."""
 +    for what `--api-key` does and does not protect."""
@@ -70,10 +72,10 @@ index b861c9e73f..5e0391cdc6 100644
      """The file path to the SSL key file."""
      ssl_certfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index 0a0c1daeec..7327529b6b 100644
+index 0a0c1daeec..1f79c81853 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
-@@ -4,11 +4,34 @@
+@@ -4,11 +4,39 @@
  import secrets
  from collections.abc import Awaitable
  
@@ -84,12 +86,18 @@ index 0a0c1daeec..7327529b6b 100644
  
 -GUARDED_PREFIX = ("/v1", "/v2", "/inference", "/cohere")
 +# The paths that answer without the API key: the liveness and readiness
-+# probes, and the load and version endpoints. Every other path on the app
-+# needs a bearer token. This includes the inference routes, /tokenize (it
-+# renders arbitrary text through the chat template), /metrics and the docs.
-+# A route that is added later is therefore guarded by default. A scraper
-+# that cannot send the key belongs on a separate listener, not in this set.
-+UNGUARDED_PATHS = frozenset({"/health", "/ping", "/load", "/version"})
++# probes, the load and version endpoints, and the /metrics exposition.
++# Every other path on the app needs a bearer token. This includes the
++# inference routes, /tokenize (it renders arbitrary text through the chat
++# template) and the docs. A route that is added later is therefore guarded
++# by default.
++UNGUARDED_PATHS = frozenset({
++    "/health",
++    "/ping",
++    "/load",
++    "/version",
++    "/metrics",
++})
 +
 +
 +def _is_cors_preflight(scope: Scope, headers: Headers) -> bool:
@@ -97,9 +105,8 @@ index 0a0c1daeec..7327529b6b 100644
 +
 +    This is the same test that Starlette's CORSMiddleware uses before it
 +    answers a preflight itself. Both headers are necessary. Without "origin",
-+    CORSMiddleware sends the request through to the app, and a mount such as
-+    /metrics answers any method. A bare OPTIONS request must therefore pass
-+    the token check like every other request.
++    CORSMiddleware sends the request through to the app, so a bare OPTIONS
++    request must pass the token check like every other request.
 +    """
 +    return (
 +        scope.get("method") == "OPTIONS"
@@ -109,7 +116,7 @@ index 0a0c1daeec..7327529b6b 100644
  
  
  class AuthenticationMiddleware:
-@@ -18,8 +41,10 @@
+@@ -18,8 +46,10 @@
      Notes
      -----
      There are two cases in which authentication is skipped:
@@ -122,7 +129,7 @@ index 0a0c1daeec..7327529b6b 100644
  
      """
  
-@@ -45,18 +70,23 @@
+@@ -45,18 +75,23 @@
          return token_match
  
      def __call__(self, scope: Scope, receive: Receive, send: Send) -> Awaitable[None]:
