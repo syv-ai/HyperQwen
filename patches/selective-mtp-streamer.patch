@@ -1,0 +1,202 @@
+Backport model-owned safetensors shard selection for Qwen MTP while this
+image is pinned to vLLM 0.31.0. Keep the existing RunAI transport for local
+non-distributed loads and the original lists for remote/distributed loads.
+The default safetensors loader also uses the same model-owned rule.
+
+Kind: fix
+What: skip checkpoint shards unused by the Qwen MTP drafter
+Upstream: https://github.com/vllm-project/vllm/pull/60152 and https://github.com/vllm-project/vllm/pull/60759 (local selection backport)
+Cut-against: 0.31.0
+Retires-when: the pinned vLLM includes model-owned local MTP shard selection
+
+--- exported from f02f81c (selective-mtp-streamer); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/model_loader/default_loader.py b/model_executor/model_loader/default_loader.py
+index c3e09bc..9f1c25d 100644
+--- a/model_executor/model_loader/default_loader.py
++++ b/model_executor/model_loader/default_loader.py
+@@ -6,7 +6,7 @@
+ import glob
+ import os
+ import time
+-from collections.abc import Generator, Iterable
++from collections.abc import Callable, Generator, Iterable
+ from typing import TYPE_CHECKING, cast
+ 
+ import torch
+@@ -28,6 +28,7 @@
+     filter_duplicate_safetensors_files,
+     filter_files_not_needed_for_inference,
+     filter_mm_encoder_only_safetensors_files,
++    filter_safetensors_files_by_weight_name,
+     get_quant_config,
+     instanttensor_weights_iterator,
+     maybe_download_from_modelscope,
+@@ -75,6 +76,10 @@
+         allow_patterns_overrides: list[str] | None = None
+         """If defined, weights will load exclusively using these patterns."""
+ 
++        is_unused_weight: Callable[[str], bool] | None = None
++        """If defined, safetensors shards holding only weights whose checkpoint
++        name (before *prefix*) it accepts are not read."""
++
+     counter_before_loading_weights: float = 0.0
+     counter_after_loading_weights: float = 0.0
+ 
+@@ -283,6 +288,10 @@
+                     f"`{source.model_or_path}`; check language_model prefixes "
+                     f"{self._encoder_only_lm_prefixes}"
+                 )
++        if source.is_unused_weight is not None and use_safetensors:
++            hf_weights_files = filter_safetensors_files_by_weight_name(
++                hf_weights_files, source.is_unused_weight
++            )
+         if self.load_config.load_format == "npcache":
+             # Currently np_cache only support *.bin checkpoints
+             assert use_safetensors is False
+@@ -359,6 +368,7 @@
+             prefix="",
+             fall_back_to_pt=getattr(model, "fall_back_to_pt_during_load", True),
+             allow_patterns_overrides=getattr(model, "allow_patterns_overrides", None),
++            is_unused_weight=getattr(model, "is_unused_checkpoint_weight", None),
+         )
+         yield from self._get_weights_iterator(primary_weights)
+ 
+diff --git a/model_executor/model_loader/runai_streamer_loader.py b/model_executor/model_loader/runai_streamer_loader.py
+index 2f18a2e..9c4f7de 100644
+--- a/model_executor/model_loader/runai_streamer_loader.py
++++ b/model_executor/model_loader/runai_streamer_loader.py
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import os
+-from collections.abc import Generator
++from collections.abc import Callable, Generator
+ 
+ import torch
+ from torch import nn
+@@ -13,6 +13,7 @@
+ from vllm.model_executor.model_loader.weight_utils import (
+     download_safetensors_index_file_from_hf,
+     download_weights_from_hf,
++    filter_safetensors_files_by_weight_name,
+     runai_safetensors_weights_iterator,
+ )
+ from vllm.transformers_utils.repo_utils import resolve_revision
+@@ -122,10 +123,23 @@
+         return hf_weights_files
+ 
+     def _get_weights_iterator(
+-        self, model_or_path: str, revision: str | None
++        self,
++        model_or_path: str,
++        revision: str | None,
++        is_unused_weight: Callable[[str], bool] | None = None,
+     ) -> Generator[tuple[str, torch.Tensor], None, None]:
+         """Get an iterator for the model weights based on the load format."""
+         hf_weights_files = self._prepare_weights(model_or_path, revision)
++        # Keep remote transport and distributed collectives on their original
++        # file list. Only local, non-distributed loads select shards here.
++        if (
++            is_unused_weight is not None
++            and not self._is_distributed
++            and os.path.isdir(model_or_path)
++        ):
++            hf_weights_files = filter_safetensors_files_by_weight_name(
++                hf_weights_files, is_unused_weight
++            )
+         return runai_safetensors_weights_iterator(
+             hf_weights_files, self.load_config.use_tqdm_on_load, self._is_distributed
+         )
+@@ -140,5 +154,9 @@
+         if model_weights_override := model_config.model_weights:
+             model_weights = model_weights_override
+         model.load_weights(
+-            self._get_weights_iterator(model_weights, model_config.revision)
++            self._get_weights_iterator(
++                model_weights,
++                model_config.revision,
++                getattr(model, "is_unused_checkpoint_weight", None),
++            )
+         )
+diff --git a/model_executor/model_loader/weight_utils.py b/model_executor/model_loader/weight_utils.py
+index 12d557f..c6a72c4 100644
+--- a/model_executor/model_loader/weight_utils.py
++++ b/model_executor/model_loader/weight_utils.py
+@@ -785,6 +785,42 @@
+     return kept
+ 
+ 
++def filter_safetensors_files_by_weight_name(
++    hf_weights_files: list[str],
++    is_unused_weight: Callable[[str], bool],
++) -> list[str]:
++    """Drop safetensors shards in which `is_unused_weight` accepts every tensor.
++
++    Loaders that read whole files (InstantTensor, fastsafetensors, multi-thread,
++    eager, prefetch) cannot skip single tensors, so dropping shards is their
++    only way to avoid reading weights the model does not load.
++
++    Args:
++        hf_weights_files: Safetensors shard paths.
++        is_unused_weight: Returns True for checkpoint weight names the model does
++            not load.
++
++    Returns:
++        The shards holding at least one wanted tensor, or `hf_weights_files`
++        unchanged when no shard does.
++
++    """
++    kept: list[str] = []
++    for st_file in hf_weights_files:
++        with safe_open(st_file, framework="pt") as f:
++            if not all(is_unused_weight(name) for name in f.keys()):  # noqa: SIM118
++                kept.append(st_file)
++    if not kept:
++        return hf_weights_files
++    if len(kept) < len(hf_weights_files):
++        logger.info_once(
++            "Skipped %d/%d safetensors shard(s) holding no weights the model loads",
++            len(hf_weights_files) - len(kept),
++            len(hf_weights_files),
++        )
++    return kept
++
++
+ # explicitly use pure text format, with a newline at the end
+ # this makes it impossible to see the animation in the progress bar
+ # but will avoid messing up with ray or multiprocessing, which wraps
+diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+index b12d67d..b0d8ca8 100644
+--- a/model_executor/models/qwen3_5_mtp.py
++++ b/model_executor/models/qwen3_5_mtp.py
+@@ -351,19 +351,22 @@
+             return full
+         return self.logits_processor(self.lm_head, hidden_states)
+ 
++    def is_unused_checkpoint_weight(self, name: str) -> bool:
++        if "draft_lm_head" in name and self.model.draft_lm_head is None:
++            return True
++        return not name.startswith("mtp.") and not any(
++            key in name for key in ["embed_tokens", "lm_head"]
++        )
++
+     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+         def remap_weight_names(weights):
+             for name, weight in weights:
+-                # syv patch: skip the truncated draft head when it is disabled
+-                if "draft_lm_head" in name and self.model.draft_lm_head is None:
++                if self.is_unused_checkpoint_weight(name):
+                     continue
+                 if name.startswith("mtp."):
+                     name = name.replace("mtp.", "model.")
+-                elif any(key in name for key in ["embed_tokens", "lm_head"]):
+-                    if "embed_tokens" in name:
+-                        name = name.replace("language_model.", "")
+-                else:
+-                    continue
++                elif "embed_tokens" in name:
++                    name = name.replace("language_model.", "")
+                 yield name, weight
+ 
+         loader = AutoWeightsLoader(self)

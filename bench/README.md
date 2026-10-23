@@ -117,3 +117,37 @@ One test outside `bench/` gates CI too:
 | file | kind | needs | exit | what it does |
 |---|---|---|---|---|
 | `kvarn/tests/test_kvarn_fp16_dequant_torch.py` | test | torch | 0 or 1 | Numerics of `KVARN_FP16_DEQUANT`. |
+
+
+## MTP checkpoint shard selection on vLLM 0.31.0
+
+After installing the pinned vLLM and applying `patches/series`, run:
+
+```bash
+CUDA_VISIBLE_DEVICES= VLLM_TARGET_DEVICE=cpu venv/bin/python bench/test_selective_mtp_streamer.py
+```
+
+This backports the model-owned shard-selection mechanism from vLLM #60152
+and the local, non-distributed RunAI path from #60759. It is useful while
+HyperQwen remains pinned to vLLM 0.31.0; reassess the patch on the next pin
+upgrade. It is a backport of newer upstream functionality, not a new loader.
+
+The Qwen MTP consumer and shard filter share one rule, including the optional
+truncated draft head. Both dense and MoE MTP retain their shared embeddings,
+output heads and quantization tensors. RunAI still streams and clones the
+retained shards; remote and distributed RunAI loads retain their original
+file lists. The default loader filters before selecting a safetensors format.
+Sources without a rule and non-safetensors files keep their existing behavior.
+When every shard is rejected, the original list is kept so the model's normal
+missing-weight errors can still fire.
+
+The CPU tests use real safetensors files, real loader/consumer methods, and
+substitute the format-specific I/O boundary. They cover mixed shards, metadata
+errors, original ordering, empty selection, shared tensors, draft-head modes,
+weight-path overrides, source prefixes and independent secondary sources.
+No model allocation or GPU is needed. The Docker build runs the same suite.
+
+Selection operates on whole shards: unrelated tensors in a retained mixed
+shard are still read. A full remote/distributed backport would additionally
+require object-store metadata checks and collective selection coordination;
+those portions of #60759 are outside this patch.
