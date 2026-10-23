@@ -117,3 +117,16 @@ One test outside `bench/` gates CI too:
 | file | kind | needs | exit | what it does |
 |---|---|---|---|---|
 | `kvarn/tests/test_kvarn_fp16_dequant_torch.py` | test | torch | 0 or 1 | Numerics of `KVARN_FP16_DEQUANT`. |
+
+## Continuous usage while tool parsing buffers output
+
+After installing the pinned vLLM and applying `patches/series`, run:
+
+```bash
+CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_continuous_stream_usage.py
+```
+
+This uses Qwen's parser and the chat streaming generator with synthetic engine
+outputs. It checks continuous counts during a buffered array argument, hidden
+reasoning, final-only usage and no-usage streams. No model or GPU is needed.
+The Docker build runs the same regression after applying the patches.

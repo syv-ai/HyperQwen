@@ -1,0 +1,23 @@
+Keep continuous usage updates flowing while a parser buffers semantic output.
+Requests with final-only usage or no usage keep their existing behavior.
+
+Kind: fix
+What: preserve continuous usage while tool parsing buffers deltas
+Upstream: none yet
+Cut-against: 0.31.0
+Retires-when: upstream preserves continuous usage during parser buffering
+
+--- exported from a6c6a99 (continuous-stream-usage); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/entrypoints/openai/chat_completion/serving.py b/entrypoints/openai/chat_completion/serving.py
+index a7c3d76..9be596b 100644
+--- a/entrypoints/openai/chat_completion/serving.py
++++ b/entrypoints/openai/chat_completion/serving.py
+@@ -739,6 +739,7 @@
+                             output.finish_reason is None
+                             and logprobs is None
+                             and (not request.return_token_ids or hide_stream_metadata)
++                            and not include_continuous_usage
+                         ):
+                             continue
+                         delta_message = DeltaMessage()
