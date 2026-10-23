@@ -5,11 +5,11 @@ max_model_len from each device group's admission cap, using vLLM's own spec clas
 below are the shape of the reference stack (Qwen3.8-27B + DFlash2 drafter: 6 GDN groups, 2
 full-attention groups, 1 sliding-window group, group size 8). Each arm in ARMS is a boot on the
 reference RTX 3090 (vLLM 0.31.0, batch 5 Q2, prefix caching on, MAX_LEN 65536):
-  - the cost per request at 65536 must equal what that engine reported
-    (num_gpu_blocks / kv_cache_max_concurrency, read off /metrics);
-  - the printed residency is pinned exactly;
-  - what the boot held in waves of identical requests (peak Running) must lie inside the ~1k
-    range and equal the 32k and 65536 figures.
+  - the old cost per request is recovered from its captured concurrency metric;
+  - corrected async reservations add one state to each of six GDN groups;
+  - the new conservative residency estimates are pinned exactly.
+Captured short-request peaks remain historical data, not an upper bound on
+worst-case async reservations: not every resident request peaks together.
 No GPU. Run inside the vLLM venv after the patches are applied:
   CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py
 """
@@ -19,7 +19,6 @@ import unittest
 from unittest import mock
 
 import torch
-
 from vllm.v1.core import kv_cache_utils as kcu
 from vllm.v1.kv_cache_interface import (
     FullAttentionSpec,
@@ -41,6 +40,7 @@ def vllm_config(max_model_len, mamba_cache_mode="align", block_size=448, max_num
         scheduler_config=ns(max_num_seqs=max_num_seqs, max_num_batched_tokens=2048),
         parallel_config=ns(decode_context_parallel_size=1, prefill_context_parallel_size=1),
         max_in_flight_tokens=4096,
+        max_concurrent_batches=2,
     )
 
 
@@ -92,30 +92,36 @@ ARMS = {
 }
 
 
+ASYNC_RESIDENCY = {
+    "Q2-a int8 k=7": ((5, 6), (2, 2), (1, 1)),
+    "Q2-b int8 k=3": ((9, 11), (3, 3), (1, 1)),
+    "Q2-c int8 k=7, KV_MEM -1 GiB": ((4, 5), (2, 2), (1, 1)),
+    "Q2-d bf16 k=7": ((5, 6), (1, 1), (1, 1)),
+}
+
+
 class MeasuredBoots(unittest.TestCase):
     def test_each_arm(self):
-        for name, (block, k, dtype, blocks, concurrency, printed, held) in ARMS.items():
-            with self.subTest(name):
+        for name, (block, k, dtype, blocks, old_concurrency, _, _) in ARMS.items():
+            with self.subTest(name=name):
                 cfg = vllm_config(65536, block_size=block)
                 line = logged(cfg, stack(block, k, blocks, kv_dtype=dtype))
-                # The cost at max_model_len is the one the engine itself reported for that boot.
-                self.assertIn(f"{6 * (2 + k)} blocks that do not grow with context, "
-                              f"{round(blocks / concurrency)} in all at 65,536 tokens", line)
+                # Six GDN groups each gain the third in-flight async state.
+                old_blocks = round(blocks / old_concurrency)
+                self.assertIn(f"{6 * (3 + k)} blocks that do not grow with context, "
+                              f"{old_blocks + 6} in all at 65,536 tokens", line)
                 self.assertIn(f"{blocks - 1} usable blocks of {block} tokens", line)
                 r = residency(line)
-                self.assertEqual((r[1024], r[32768], r[65536]), printed)
-                low, high = r[1024]
-                self.assertTrue(low <= held[0] <= high)
-                self.assertEqual((r[32768][0], r[65536][0]), held[1:])
+                self.assertEqual((r[1024], r[32768], r[65536]), ASYNC_RESIDENCY[name])
 
     def test_ctx_long_boot(self):
         # 2026-10-16 H3: int8 CTX=long, k=7, max_model_len 131072, num_gpu_blocks 382, block 864.
         # The engine reported 1.04x concurrency (382 / 367) and held 7 at ~1k and 2 at ~32k.
         line = logged(vllm_config(131072, block_size=864), stack(864, 7, 382, kv_dtype=torch.int8))
-        self.assertIn("381 usable blocks of 864 tokens; a request holds 54 blocks that do not grow "
-                      "with context, 367 in all at 131,072 tokens", line)
+        self.assertIn("381 usable blocks of 864 tokens; a request holds 60 blocks that do not grow "
+                      "with context, 373 in all at 131,072 tokens", line)
         r = residency(line)
-        self.assertEqual((r[1024], r[32768], r[131072]), ((6, 7), (2, 2), (1, 1)))
+        self.assertEqual((r[1024], r[32768], r[131072]), ((5, 6), (2, 2), (1, 1)))
 
     def test_update_kv_cache_capacity_logs_the_budget(self):
         cfg = vllm_config(65536)

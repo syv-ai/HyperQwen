@@ -117,3 +117,19 @@ One test outside `bench/` gates CI too:
 | file | kind | needs | exit | what it does |
 |---|---|---|---|---|
 | `kvarn/tests/test_kvarn_fp16_dequant_torch.py` | test | torch | 0 or 1 | Numerics of `KVARN_FP16_DEQUANT`. |
+
+## Async Mamba KV sizing
+
+After installing the pinned vLLM and applying `patches/series`, run:
+
+```bash
+CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_async_mamba_kv_sizing.py
+CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py
+```
+
+These CPU checks cover async state reservations, speculative/checkpoint blocks,
+grouped admission, null-block capacity, budget overrides and automatic fitting.
+A replay fixture checks all 99 allocator snapshots from a 163K-token prefill,
+including its 219-block peak. The residency-log fixtures retain the older boot
+metrics while checking the corrected conservative async estimates. No model
+or GPU is needed. The Docker build runs both suites after applying the patches.

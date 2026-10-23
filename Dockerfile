@@ -53,7 +53,9 @@ RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm
     venv/bin/python bench/mq3d_scratch_pool_test.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python pthfa/tests/gate_test.py; \
     venv/bin/python fa2/tests/gate_test.py; \
-    venv/bin/python fa2/tests/check_mixed_prefill.py --device cpu
+    venv/bin/python fa2/tests/check_mixed_prefill.py --device cpu; \
+    CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_async_mamba_kv_sizing.py; \
+    CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py
 
 # HOME is a volume: torch.compile cache (~/.cache/vllm), Triton (~/.triton),
 # FlashInfer JIT (~/.cache/flashinfer), HF hub cache.
