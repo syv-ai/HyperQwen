@@ -20,7 +20,7 @@ check() { local want=$1 got=$2 what=$3
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 ENV=$(command -v env)
 mkdir "$T/tools"
-for u in bash cat cp date dirname grep head ln ls mkdir mktemp readlink rm sed sh sort stat tail tr wc; do
+for u in bash cat cp date dirname grep head ln ls mkdir mktemp readlink rm sed sh sha256sum sort stat tail tr wc; do
   ln -s "$(command -v $u)" "$T/tools/$u"; done
 # install.sh only asks whether a host compiler exists; the stub pip never compiles
 printf '#!/bin/sh\nexit 1\n' > "$T/tools/g++"; chmod +x "$T/tools/g++"
@@ -51,6 +51,7 @@ newcase() { C=$T/$1; mkdir -p "$C/tmp" "$C/venv/bin" "$C/site/triton"; cat > "$C
 #!/bin/bash
 case "$*" in
   "-m pip install "*)
+    echo install >> "$STUB_LOG.installs"
     v=$("$CUDA_HOME/bin/nvcc" --version | sed -nE 's/.*release ([0-9]+\.[0-9]+).*/\1/p')
     [ "${v%%.*}" = "${STUB_TORCH_CUDA%%.*}" ] || { echo "RuntimeError: ('The detected CUDA version (%s) mismatches the version that was used to compilePyTorch (%s). Please make sure to use the same CUDA versions.', '$v', '$STUB_TORCH_CUDA')" >&2; exit 1; }
     [ -e "$CUDA_HOME/lib64/libcudart.so" ] || { echo "ld: cannot find -lcudart" >&2; exit 1; }
@@ -103,5 +104,27 @@ check "0 | $C/sys/bin/nvcc | $C/sys/bin/cuobjdump | 0" "$(result)" "a newer syst
 newcase no-cuobjdump; toolkit "$C/sys" 13.0; mkdir -p "$C/site/triton"; run
 check "0 | $C/sys/bin/nvcc | none | 0" "$(result)" "no cuobjdump anywhere: installs"
 check yes "$(said "cuobjdump not found: arch list of")" "and says the arch list was not checked"
+
+echo "== source receipt invalidates the installed Python adapter"
+newcase source-receipt; toolkit "$C/sys" 13.0 cuobjdump
+ORIGINAL_SH=$SH
+mkdir "$C/recipe"
+cp "$SH" "$C/recipe/install.sh"
+cp "$(dirname "$SH")/PIN" "$(dirname "$SH")/SHA256SUMS" "$C/recipe/"
+SH=$C/recipe/install.sh
+run
+check 0 "$(cat "$C/rc")" "initial install succeeds"
+run
+check 0 "$(cat "$C/rc")" "identical receipt remains installable"
+check 1 "$(wc -l < "$C/log.installs" | tr -d ' ')" "identical source skips rebuilding"
+printf '\n' >> "$C/recipe/SHA256SUMS"
+run
+check 0 "$(cat "$C/rc")" "changed source receipt installs successfully"
+check 2 "$(wc -l < "$C/log.installs" | tr -d ' ')" "changed receipt rebuilds instead of retaining stale Python"
+SH=$ORIGINAL_SH
+
+# This is the existing PTH CPU CI entry point; also exercise the optional adapter.
+python3 "$HERE/test_fa2_slab_plan.py" || FAILS=$((FAILS+1))
+python3 "$HERE/test_fa2_slab_dispatch.py" || FAILS=$((FAILS+1))
 
 echo; [ $FAILS = 0 ] && echo "all checks passed" || { echo "$FAILS checks FAILED"; exit 1; }

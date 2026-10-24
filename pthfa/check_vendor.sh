@@ -7,7 +7,8 @@
 #                                            has PTH_COMMIT (pthfa/PIN): `git archive PTH_COMMIT`, then
 #                                            tools/export_upstream.py --out, then diff -r against pthfa/
 #
-# The vendored files are never edited here: change PTH_COMMIT, re-vendor, regenerate SHA256SUMS
+# The Python-only FA2 adapter is recorded in fa2-slab.patch and LOCAL_CHANGES.md.
+# Re-vendor, apply that patch, copy the two local modules and regenerate SHA256SUMS
 # (pthfa/README.md, "Re-vendoring"). Exit 0 = OK, 1 = a mismatch (named), 2 = usage.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -19,7 +20,7 @@ case "${1:-}" in
   *) echo "usage: bash pthfa/check_vendor.sh [--source DIR]" >&2; exit 2 ;;
 esac
 # This repo's own files in pthfa/; everything else is vendored and must be in SHA256SUMS.
-OWN="README.md PIN SHA256SUMS check_vendor.sh install.sh tests"
+OWN="README.md PIN SHA256SUMS check_vendor.sh install.sh tests LOCAL_CHANGES.md fa2-slab.patch"
 
 cd "$HERE"
 echo "== pthfa: vendored files against SHA256SUMS (PTH_COMMIT ${PTH_COMMIT:0:12})"
@@ -45,9 +46,15 @@ if [ -n "$SRC" ]; then
     || { echo "FAILED: tools/export_upstream.py at $PTH_COMMIT did not run" >&2; exit 1; }
   mkdir -p "$T/vendor/tools"
   for f in setup.py pyproject.toml tools/build_flags.py LICENSE NOTICE; do cp "$T/tree/$f" "$T/vendor/$f"; done
+  # Reproduce only the declared Python delta; CUDA/C++ still compare byte for byte.
+  patch -s --fuzz=0 -d "$T/vendor" -p1 < "$HERE/fa2-slab.patch" \
+    || { echo "FAILED: fa2-slab.patch does not apply to $PTH_COMMIT" >&2; exit 1; }
+  cp "$HERE/python/pth_flash_attn/fa2_slab.py" \
+     "$HERE/python/pth_flash_attn/fa2_slab_plan.py" "$T/vendor/python/pth_flash_attn/"
   diff -r -x README.md -x PIN -x SHA256SUMS -x check_vendor.sh -x install.sh -x tests -x build \
+       -x LOCAL_CHANGES.md -x fa2-slab.patch \
        -x '*.egg-info' -x __pycache__ "$T/vendor" "$HERE" \
     || { echo "FAILED: pthfa/ is not the vendored copy of $PTH_COMMIT" >&2; exit 1; }
-  echo "   identical to tools/export_upstream.py --out at $PTH_COMMIT plus the five build files"
+  echo "   identical to the pinned export plus five build files and the declared FA2 Python adapter"
 fi
 echo "pthfa vendor check: OK"

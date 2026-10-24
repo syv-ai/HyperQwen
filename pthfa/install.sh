@@ -5,7 +5,7 @@
 # records a class path under AttentionBackendEnum.CUSTOM and imports no CUDA code (pthfa/README.md).
 # Needs nvcc 13 and a host C++ compiler (the Docker image has both). No GPU, no network.
 # usage: bash pthfa/install.sh    (idempotent: skipped while the installed copy carries this PIN's commit,
-#        arch list, torch and nvcc)
+#        source receipt, arch list, torch and nvcc)
 # env:   PY (venv python), MAX_JOBS (4), CUDA_HOME (default: the nvcc on PATH, else /usr/local/cuda, if its
 #        CUDA major is torch's; else the venv's pip nvcc), PTHFA_BUILD (build dir; default a temp dir, removed
 #        afterwards)
@@ -46,7 +46,8 @@ echo "== nvcc: $(nvcc --version | tail -1)  (CUDA_HOME=$CUDA_HOME)"
 # torch 2.11 is the library's stable-ABI floor; PIN names the version it was built and measured with.
 TORCH_NOW=$("$PY" -c 'import torch; print(torch.__version__.split("+")[0])')
 case "$TORCH_NOW" in "$TORCH_VERSION"*) ;; *) echo "pthfa/install.sh: note: torch $TORCH_NOW, PIN says $TORCH_VERSION" >&2 ;; esac
-STAMP_NOW="$PTH_COMMIT | arch $TORCH_CUDA_ARCH_LIST | torch $TORCH_NOW | $(nvcc --version | tail -1)"
+SOURCE_SHA=$(sha256sum "$HERE/SHA256SUMS"); SOURCE_SHA=${SOURCE_SHA%% *}
+STAMP_NOW="$PTH_COMMIT | sources $SOURCE_SHA | arch $TORCH_CUDA_ARCH_LIST | torch $TORCH_NOW | $(nvcc --version | tail -1)"
 PKG_DIR=$("$PY" -c 'import importlib.util as u; s = u.find_spec("pth_flash_attn"); print(s.submodule_search_locations[0] if s else "")' 2>/dev/null || true)
 if [ -n "$PKG_DIR" ] && [ -f "$PKG_DIR/_C.abi3.so" ] && [ "$(cat "$PKG_DIR/.pthfa-stamp" 2>/dev/null)" = "$STAMP_NOW" ]; then
   echo "== pth_flash_attn already installed for this PIN ($PKG_DIR); nothing to do"

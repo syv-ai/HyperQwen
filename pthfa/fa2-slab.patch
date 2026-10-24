@@ -1,0 +1,24 @@
+diff --git a/python/pth_flash_attn/vllm_backend.py b/python/pth_flash_attn/vllm_backend.py
+index 0b29ca4..3e3e2f8 100644
+--- a/python/pth_flash_attn/vllm_backend.py
++++ b/python/pth_flash_attn/vllm_backend.py
+@@ -641,6 +641,8 @@ class PthFlashAttnImpl(TritonAttentionImpl):
+         self._ws_token_splits = 0
+         self._no_workspace: torch.Tensor | None = None
+         self._reserve_workspace(get_current_vllm_config_or_none())
++        from pth_flash_attn.fa2_slab import prepare_workspace
++        self._fa2_slab = prepare_workspace(self, get_current_vllm_config_or_none())
+
+     def _reserve_workspace(self, vllm_config: VllmConfig | None) -> None:
+         """Reserve W_ts token-splits of fp32 partials in the shared workspace.
+@@ -785,6 +787,10 @@ class PthFlashAttnImpl(TritonAttentionImpl):
+             # Memory-profile run: no attention is executed.
+             return output.fill_(0)
+         caches = self._caches(kv_cache)
++        if self._fa2_slab is not None:
++            from pth_flash_attn.fa2_slab import try_prefill
++            if try_prefill(self, self._fa2_slab, query, output, caches, attn_metadata):
++                return output
+         if attn_metadata.decode is not None:
+             self._run_slice(
+                 attn_metadata.decode, query, output, caches, attn_metadata.causal
