@@ -30,16 +30,16 @@ Kind: feature
 What: one log line per completed engine step, so a stalled core is visible without scraping stats
   gaps
 Upstream: upstream PR (syv-ai #94/#110)
-Cut-against: 0.31.0: adjacency with upstream's remote-prefill cached-token block
+Cut-against: 0.32.0
 Retires-when: upstreamed
 
---- exported from 6b1f5aa1e (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from b46937af7 (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index 8b188de13..ab701c306 100644
+index cec96d2a4..96a4b0b7d 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
-@@ -2180,6 +2180,20 @@
+@@ -2239,6 +2239,20 @@
                          kv_transfer_params["remote_prefill_cached_tokens"] = (
                              prefill_stats.num_cached_tokens
                          )

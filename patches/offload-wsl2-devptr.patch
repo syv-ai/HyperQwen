@@ -3,20 +3,18 @@ CPU offload tier device pointers on WSL2
 Kind: local
 What: CPU offload tier device pointers on WSL2
 Upstream: none
-Cut-against: 0.31.0: keeps upstream #51081's chunked cudaHostRegister; under WSL2 the device-pointer
-  translation queries every chunk and refuses to start if they map at different offsets. Native
-  Linux makes no query and uses the host address, as upstream does
+Cut-against: 0.32.0
 Retires-when: stays
 
---- exported from 6b92a4c1c (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 2ce1ccebb (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/kv_offload/cpu/gpu_worker.py b/v1/kv_offload/cpu/gpu_worker.py
-index 797abed5e..db96b3fb7 100644
+index f6053480a..170a8fbb1 100644
 --- a/v1/kv_offload/cpu/gpu_worker.py
 +++ b/v1/kv_offload/cpu/gpu_worker.py
-@@ -13,7 +13,7 @@
+@@ -12,7 +12,7 @@
+ 
  from vllm import _custom_ops as ops
- from vllm.distributed.device_communicators.cuda_wrapper import CudaRTLibrary
  from vllm.logger import init_logger
 -from vllm.platforms import current_platform
 +from vllm.platforms import current_platform, in_wsl
@@ -34,7 +32,7 @@ index 797abed5e..db96b3fb7 100644
      row_stride = tensor.stride(0)
  
      if blocks_per_chunk == 1:
-@@ -269,6 +271,83 @@
+@@ -238,6 +240,83 @@
          len(addresses),
      )
  
@@ -118,7 +116,7 @@ index 797abed5e..db96b3fb7 100644
  
  def _new_descriptor_buffers(
      num_copy_ops: int,
-@@ -843,6 +922,9 @@
+@@ -812,6 +891,9 @@
                  )
              elif mmap_region is not None:
                  cpu_tensor = mmap_region.create_next_worker_view(cpu_page_size_bytes)

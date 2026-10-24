@@ -14,11 +14,12 @@ still exempt a sliding-window block that does not divide the scheduler block.
 Kind: own
 What: KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards)
 Upstream: none
-Cut-against: 0.31.0: attention.py keeps upstream's kv_cache_spec beside our divisor_of; the
-  has_prefill decode-graph guard kept beside #58400 (docs/vllm-0.31.md)
+Cut-against: 0.32.0: the SlidingWindowManager.cache_blocks override stays after #61126 removed
+  get_num_common_prefix_blocks; the mamba_hybrid.py hunk is retired (#55601 seeds the state index with
+  mamba_block_size, the same fix)
 Retires-when: rides with KVarN
 
---- exported from 3bda92d41 (kvarn-v2-runner-0.31.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from faecbb10d (kvarn-v2-runner-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
 index e3389d4e1..9ea8e007a 100644
@@ -92,7 +93,7 @@ index e3389d4e1..9ea8e007a 100644
              return SlidingWindowSpec(
                  block_size=sw_block_size,
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index cb6f07f47..eee5e378f 100644
+index a1651f208..5ef2f149f 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
 @@ -257,6 +257,15 @@
@@ -112,10 +113,10 @@ index cb6f07f47..eee5e378f 100644
              self.num_heads,
              self.head_dim,
 diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
-index daf0cd12c..7f17af1d9 100644
+index 7d4f2d5a2..01849864d 100644
 --- a/v1/core/kv_cache_coordinator.py
 +++ b/v1/core/kv_cache_coordinator.py
-@@ -87,7 +87,8 @@
+@@ -110,7 +110,8 @@
          # The scheduling granularity (LCM of all group block sizes), must be a multiple
          # of the hash_block_size and the block size of each group.
          assert scheduler_block_size % hash_block_size == 0 and all(
@@ -126,12 +127,12 @@ index daf0cd12c..7f17af1d9 100644
          )
          self.scheduler_block_size = scheduler_block_size
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index 7c18ea364..73968e196 100644
+index d779d5640..7cf13b31c 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -1204,6 +1204,31 @@
-         """
-         return 0
+@@ -1178,6 +1178,31 @@
+             num_computed_tokens - self.sliding_window + 1 - self.extra_retained_tokens,
+         )
  
 +    def cache_blocks(
 +        self,
@@ -162,10 +163,10 @@ index 7c18ea364..73968e196 100644
  class CircularBufferManager(FullAttentionManager):
      """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 9100bcef5..e1cea17b8 100644
+index 37c0378d6..e766d0341 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1317,9 +1317,14 @@
+@@ -1353,9 +1353,14 @@
              decode_graph_eligible=decode_graph_eligible,
              max_seq_len_np=max_seq_len_np,
          )
@@ -181,27 +182,8 @@ index 9100bcef5..e1cea17b8 100644
  
      def prepare_inputs(
          self,
-diff --git a/v1/worker/gpu/model_states/mamba_hybrid.py b/v1/worker/gpu/model_states/mamba_hybrid.py
-index 32924555b..a4bce2ce2 100644
---- a/v1/worker/gpu/model_states/mamba_hybrid.py
-+++ b/v1/worker/gpu/model_states/mamba_hybrid.py
-@@ -114,8 +114,13 @@
-         self.num_accepted_tokens_gpu[req_index].fill_(1)
-         if self._align_mode:
-             # Seed the running state block from the resumed/prefilled position.
-+            mamba_bs = (
-+                self._mamba_spec.block_size
-+                if self._mamba_spec is not None
-+                else self.cache_config.block_size
-+            )
-             self._mamba_state_idx_gpu[req_index].fill_(
--                (new_req_data.num_computed_tokens - 1) // self.cache_config.block_size
-+                (new_req_data.num_computed_tokens - 1) // mamba_bs
-             )
- 
-     def _get_mamba_group_info(
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 41ede8286..ba6677a96 100644
+index e914af8d5..5609a83e0 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@
@@ -223,7 +205,7 @@ index 41ede8286..ba6677a96 100644
              (self.max_num_reqs, self.draft_block),
              dtype=self.draft_tokens.dtype,
              device=device,
-@@ -750,6 +753,8 @@
+@@ -752,6 +755,8 @@
          scores = self._score_candidates(candidate_ids, unary_logits, hidden_states)
          # The walk writes the drafter's own block into _selector_tokens; it is copied into
          # draft_tokens below, where _apply_lookup can fuse it with the lookup.

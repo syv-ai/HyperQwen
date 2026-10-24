@@ -15,13 +15,13 @@ What: GET/HEAD /, /api/status, /api/experimental/model-recommendations, and /api
   requested model only, never a served name or path), reads context length from model_config.max_model_len,
   and adds the routes to UNGUARDED_PATHS
 Upstream: none yet
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from 8aec733 (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from f1715243f (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/app.py b/entrypoints/launchers/app.py
-index ddea707..5770be0 100644
+index 59c4fc37a..d8f69da0b 100644
 --- a/entrypoints/launchers/app.py
 +++ b/entrypoints/launchers/app.py
 @@ -1,9 +1,12 @@
@@ -140,9 +140,9 @@ index ddea707..5770be0 100644
 +
      register_api_routers(args, app, supported_tasks, model_config)
  
-     # Endpoint plugins are attached last so their routes are registered after all core
+     # Endpoint plugin hooks run after core routers so plugins can inspect them.
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index 7327529..71150c9 100644
+index 7327529b6..71150c999 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
 @@ -10,12 +10,24 @@

@@ -52,9 +52,6 @@ class Fp8MetadataBuilder(native.FlashAttentionMetadataBuilder):
                            maximum_context=self.model_config.max_model_len,
                            prefill_query_starts=query_starts)
 
-    def use_cascade_attention(self, *args, **kwargs):
-        return False
-
 
 # vLLM assigns distributed ranks in AttentionImplBase.__new__; the framework
 # requires a mutable instance during that initialization.

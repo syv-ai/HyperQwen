@@ -15,17 +15,17 @@ What: measure captured CUDA-graph memory by the allocator's reserved bytes and l
   budget and collapses by 5.44 GiB during a cold compile, which the graph estimate subtracted from
   the KV budget and refused the CTX=huge first boot
 Upstream: none yet
-Cut-against: 0.31.0
+Cut-against: 0.32.0: the reserved-memory sample sits ahead of #59160's capture_pool block
 Retires-when: upstream measures by the allocator
 
---- exported from ffc4055c4 (cudagraph-memory-from-allocator); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 4eb6db4f5 (cudagraph-memory-from-allocator); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/cudagraph_utils.py b/v1/worker/gpu/cudagraph_utils.py
-index 8ba622c7e..1a99a59bb 100644
+index 1a396696a..3e412714b 100644
 --- a/v1/worker/gpu/cudagraph_utils.py
 +++ b/v1/worker/gpu/cudagraph_utils.py
-@@ -497,7 +497,11 @@
-                             set_graph_pool_id(current_platform.graph_pool_handle())
+@@ -513,7 +513,11 @@
+                         get_offloader().sync_prev_onload()
                          if self._capture_mem_samples is not None:
                              torch.accelerator.synchronize()
 -                            free_before = torch.accelerator.get_memory_info()[0]
@@ -34,10 +34,10 @@ index 8ba622c7e..1a99a59bb 100644
 +                            # estimate never mixes an allocator total with
 +                            # driver-measured samples.
 +                            reserved_before = torch.accelerator.memory_reserved()
-                         with torch.cuda.graph(
-                             graph, self.pool, stream=self._capture_stream(desc)
-                         ):
-@@ -509,8 +513,8 @@
+                         with (
+                             capture_pool(self.pool, self.vllm_config) as pool,
+                             torch.cuda.graph(
+@@ -528,8 +532,8 @@
                              get_offloader().join_after_forward()
                          if self._capture_mem_samples is not None:
                              torch.accelerator.synchronize()
@@ -49,10 +49,10 @@ index 8ba622c7e..1a99a59bb 100644
                          compilation_counter.num_cudagraph_captured += 1
  
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index e1cea17b8..65a4866fa 100644
+index e766d0341..9e3906692 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1043,6 +1043,7 @@
+@@ -1077,6 +1077,7 @@
          with freeze_gc_for_cudagraph_capture():
              torch.accelerator.empty_cache()
              start_free_gpu_memory = torch.accelerator.get_memory_info()[0]
@@ -60,7 +60,7 @@ index e1cea17b8..65a4866fa 100644
  
              with self.maybe_setup_dummy_loras(self.lora_config):
                  if capture_encoder:
-@@ -1080,6 +1081,7 @@
+@@ -1120,6 +1121,7 @@
                      self.kv_connector.reset_capture_state()
  
              end_free_gpu_memory = torch.accelerator.get_memory_info()[0]
@@ -68,7 +68,7 @@ index e1cea17b8..65a4866fa 100644
  
          if not profile_only:
              # Lock workspace to prevent resizing during execution. A resize after
-@@ -1088,12 +1090,22 @@
+@@ -1128,12 +1130,22 @@
  
          end_time = time.perf_counter()
          elapsed_time = end_time - start_time

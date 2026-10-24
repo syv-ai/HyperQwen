@@ -41,16 +41,16 @@ silent on configs with uniform chunk sizes.
 Kind: fix
 What: OffloadingConnector under dflash flagged every KV group as draft attention (fork #33)
 Upstream: none yet
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from e7e6fc404 (offload-dflash-eagle-groups); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 8546a63e1 (offload-dflash-eagle-groups); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-index 47aa8654f..b7d55f9cb 100644
+index 806267dcf..d1c3b933c 100644
 --- a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 +++ b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-@@ -331,6 +331,35 @@
+@@ -330,6 +330,35 @@
                          f"({retention_interval}) must be a multiple of "
                          f"tokens_per_chunk ({config.tokens_per_chunk})."
                      )

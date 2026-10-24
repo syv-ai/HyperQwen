@@ -32,16 +32,16 @@ What: both runners hand KVarN each step's block ids, so it drops (never flushes)
   of an evicted retired sink, into another request's mamba state was the "!!!!" output (#208); the
   KVarN half is in `kvarn/files`
 Upstream: none
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: rides with KVarN
 
---- exported from 428c4ac0f (kvarn-recycled-pages-0.31.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from c3096e6e5 (kvarn-recycled-pages-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
 
-diff --git a/v1/attention/backends/kvarn_attn.py b/v1/attention/backends/kvarn_attn.py
-index 9fce8fdab..c599595de 100644
+diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
+index 9e3906692..2128b119d 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1714,6 +1714,13 @@
+@@ -1757,6 +1757,13 @@
              self.free_states(scheduler_output)
              self.add_requests(scheduler_output)
              self.update_requests(scheduler_output)
@@ -56,10 +56,10 @@ index 9fce8fdab..c599595de 100644
              if self.aux_output_connector is not None:
                  # Register this step before the GPU forward.
 diff --git a/v1/worker/gpu_model_runner.py b/v1/worker/gpu_model_runner.py
-index 109046665..9140af524 100644
+index e19c1b84f..fc8ac3eee 100644
 --- a/v1/worker/gpu_model_runner.py
 +++ b/v1/worker/gpu_model_runner.py
-@@ -1220,6 +1220,12 @@
+@@ -1200,6 +1200,12 @@
          # stale NaN/data from corrupting attention or SSM computation.
          if scheduler_output.new_block_ids_to_zero:
              self._zero_block_ids(scheduler_output.new_block_ids_to_zero)

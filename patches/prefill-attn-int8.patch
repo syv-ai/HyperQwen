@@ -45,66 +45,66 @@ Written against vLLM 0.27.1.
 Kind: feature
 What: int8-QK Triton prefill attention for head_dim 256
 Upstream: none
-Cut-against: 0.31.0
+Cut-against: 0.32.0: the int8 prefill branch re-indented after #61126 removed cascade attention
 Retires-when: upstreamed
 
---- exported from 600998a12 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 90432420d (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 77c35dad2..b39d56dcb 100755
+index 7b6fb0f61..f44c8ed07 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1447,6 +1447,50 @@
-                     block_table = block_table[:, :num_pages]
-                     num_splits = 1
+@@ -1396,6 +1396,50 @@
+                 block_table = block_table[:, :num_pages]
+                 num_splits = 1
  
-+                # syv patch: int8-QK Triton prefill attention for head_dim 256
-+                # (SageAttention-style; ~1.3-1.35x FA2 at 16-51k context on
-+                # sm86). Single-request prefill chunks only — anything else
-+                # falls back to FA2 below. K is mean-smoothed per head, which
-+                # shifts every logit in a row equally, so the softmax — and
-+                # the output — is exact up to int8 rounding of Q rows and
-+                # 64-key K tiles (measured cos > 0.99999 against fp32).
-+                if (
-+                    envs.VLLM_PREFILL_ATTN in ("int8", "fp16")
-+                    and max_seqlen_q > 16
-+                    and cu_seqlens_q.shape[0] == 2
-+                    and self.num_heads == 24 and self.num_kv_heads == 4
-+                    and self.head_size == 256
-+                    and not is_quantized_kv_cache(self.kv_cache_dtype)
-+                    and (
-+                        sliding_window_size is None
-+                        or (sliding_window_size[0] < 0 and sliding_window_size[1] < 0)
-+                    )
-+                    and not self.logits_soft_cap
-+                    and self.alibi_slopes is None
-+                    and self.sinks is None
-+                    and causal is True
-+                    and mm_mask_mod is None
-+                    and rswa_mask_mod_fn is None
-+                ):
-+                    from vllm.v1.attention.backends.prefill_attn_hd256 import (
-+                        prefill_attn as _prefill_attn_hd256,
-+                    )
-+                    _kv_len = int(seqused_k[0].item())
-+                    _q_len = int(num_actual_tokens)
-+                    _prefill_attn_hd256(
-+                        query[:num_actual_tokens],
-+                        key_cache,
-+                        value_cache,
-+                        output[:num_actual_tokens],
-+                        block_table[0],
-+                        _kv_len,
-+                        _kv_len - _q_len,
-+                        self.scale,
-+                        int8_qk=envs.VLLM_PREFILL_ATTN == "int8",
-+                        block_t=128, block_n=64, num_warps=8, num_stages=3,
-+                    )
-+                    return output
++            # syv patch: int8-QK Triton prefill attention for head_dim 256
++            # (SageAttention-style; ~1.3-1.35x FA2 at 16-51k context on
++            # sm86). Single-request prefill chunks only — anything else
++            # falls back to FA2 below. K is mean-smoothed per head, which
++            # shifts every logit in a row equally, so the softmax — and
++            # the output — is exact up to int8 rounding of Q rows and
++            # 64-key K tiles (measured cos > 0.99999 against fp32).
++            if (
++                envs.VLLM_PREFILL_ATTN in ("int8", "fp16")
++                and max_seqlen_q > 16
++                and cu_seqlens_q.shape[0] == 2
++                and self.num_heads == 24 and self.num_kv_heads == 4
++                and self.head_size == 256
++                and not is_quantized_kv_cache(self.kv_cache_dtype)
++                and (
++                    sliding_window_size is None
++                    or (sliding_window_size[0] < 0 and sliding_window_size[1] < 0)
++                )
++                and not self.logits_soft_cap
++                and self.alibi_slopes is None
++                and self.sinks is None
++                and causal is True
++                and mm_mask_mod is None
++                and rswa_mask_mod_fn is None
++            ):
++                from vllm.v1.attention.backends.prefill_attn_hd256 import (
++                    prefill_attn as _prefill_attn_hd256,
++                )
++                _kv_len = int(seqused_k[0].item())
++                _q_len = int(num_actual_tokens)
++                _prefill_attn_hd256(
++                    query[:num_actual_tokens],
++                    key_cache,
++                    value_cache,
++                    output[:num_actual_tokens],
++                    block_table[0],
++                    _kv_len,
++                    _kv_len - _q_len,
++                    self.scale,
++                    int8_qk=envs.VLLM_PREFILL_ATTN == "int8",
++                    block_t=128, block_n=64, num_warps=8, num_stages=3,
++                )
++                return output
 +
-                 # syv patch: split-KV Triton attention for speculative-decode
-                 # batches (1 < queries/request <= 10). FA2 does not split the KV
-                 # sequence when max_seqlen_q > 1, leaving most SMs idle.
+             # syv patch: split-KV Triton attention for speculative-decode
+             # batches (1 < queries/request <= 10). FA2 does not split the KV
+             # sequence when max_seqlen_q > 1, leaving most SMs idle.
 diff --git a/v1/attention/backends/prefill_attn_hd256.py b/v1/attention/backends/prefill_attn_hd256.py
 new file mode 100644
 index 000000000..afc8ea9c6

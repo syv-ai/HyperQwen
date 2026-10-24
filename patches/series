@@ -50,7 +50,6 @@ topk-honour-flashinfer-sampler-switch.patch
 memory-profile-after-warmup.patch
 cudagraph-memory-from-allocator.patch
 bench-probe-errors.patch
-serve-404-served-names.patch
 serve-model-path-match.patch
 tokenize-v1-route.patch
 marlin-int8-asym-zp.patch

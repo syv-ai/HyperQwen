@@ -40,16 +40,16 @@ What: --api-key guards every path except /health, /ping, /load and /version (den
   Access-Control-Request-Method) skips the token; a bare OPTIONS needs it, because /metrics answers
   any method. The --api-key help text describes the allowlist
 Upstream: vllm #59892
-Cut-against: 0.31.0: docstring adjacency only
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from f2531f9 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ecc1decce (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/cli_args.py b/entrypoints/launchers/cli_args.py
-index ce66925..850f824 100644
+index e2c2625e9..6c66ebe2a 100644
 --- a/entrypoints/launchers/cli_args.py
 +++ b/entrypoints/launchers/cli_args.py
-@@ -318,13 +318,13 @@
+@@ -326,13 +326,13 @@
      """If provided, the server will require one of these keys to be presented in
      the header.
  
@@ -70,7 +70,7 @@ index ce66925..850f824 100644
      """The file path to the SSL key file."""
      ssl_certfile: str | None = None
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index 0a0c1da..7327529 100644
+index 0a0c1daee..7327529b6 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
 @@ -4,11 +4,34 @@

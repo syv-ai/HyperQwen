@@ -12,10 +12,10 @@ Kind: fix
 What: a model name equal to a served model's root path or its basename is accepted (exact matches
   only): /v1/models publishes the root, and echoing it back used to 404
 Upstream: vllm #59890
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from afd5bdb35 (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 062ffa9e3 (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/models/serving.py b/entrypoints/openai/models/serving.py
 index 231fed5c4..0178a123a 100644

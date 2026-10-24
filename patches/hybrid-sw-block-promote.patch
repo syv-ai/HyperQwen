@@ -74,19 +74,20 @@ branch was taken there. The int4 profile then padded the five drafter layers at 
 Kind: fix
 What: promote a draft SW layer's block to a divisor of the primary block instead of padding its page
 Upstream: none yet (upstream pads)
-Cut-against: 0.31.0
+Cut-against: 0.32.0: re-anchored after #57169 deleted the GLM5-next helpers it sat beside; only
+  _promote_indivisible_block_sizes is added
 Retires-when: upstream PR
 
---- exported from d590260dd (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 0a817e021 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index 5ac97ea67..e324e95d0 100644
+index 85a90ce9c..8628b5f98 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1378,6 +1378,146 @@
-         tail_names,
-         tail_page,
-     )
+@@ -1289,6 +1289,148 @@
+     return [KVCacheGroupSpec(list(spec.kv_cache_specs.keys()), spec)]
+ 
+ 
 +def _promote_indivisible_block_sizes(
 +    kv_cache_spec: dict[str, KVCacheSpec], max_page_size: int
 +) -> tuple[dict[str, KVCacheSpec], int]:
@@ -227,10 +228,12 @@ index 5ac97ea67..e324e95d0 100644
 +        )
 +        updated[name] = spec
 +    return updated, new_max
- 
- 
++
++
  def unify_kv_cache_spec_page_size(
-@@ -1410,6 +1550,12 @@
+     kv_cache_spec: dict[str, KVCacheSpec],
+ ) -> dict[str, KVCacheSpec]:
+@@ -1319,6 +1461,12 @@
          return kv_cache_spec
  
      max_page_size = max(page_sizes)

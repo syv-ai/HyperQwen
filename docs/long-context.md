@@ -14,12 +14,13 @@ way past that is a smaller cache, not a different engine, and
 know of: Hadamard rotation + iterative variance normalization + 4-bit keys /
 2-bit values per 128-token tile, at ~840 B/token/layer here. It ships as a
 fork of vLLM 0.23; [kvarn/](../kvarn/) is our port of its dense backend onto
-the 0.31.0 this repo runs (`bash kvarn/install.sh`, then `KV=kvarn` in batch mode
+the 0.32.0 this repo runs (`bash kvarn/install.sh`, then `KV=kvarn` in batch mode
 or `CTX=huge` in single-user mode). The rows below were measured on 0.28.0; the
 0.29.0 port computes the same cache geometry and matched quality on a WSL2 4090
 (see [vllm-0.29.md](vllm-0.29.md)), and the 0.30.0 port the same pools as 0.29 on the reference 3090
 (see [vllm-0.30.md](vllm-0.30.md)), and the 0.31.0 port the same `CTX=huge` pool as 0.30
-(see [vllm-0.31.md](vllm-0.31.md)).
+(see [vllm-0.31.md](vllm-0.31.md)), and the 0.32.0 port the same `CTX=huge` pool as 0.31
+(see [vllm-0.32.md](vllm-0.32.md)).
 
 Measured on the 3090 (`--kv-cache-dtype kvarn_k4v2_g128 --block-size 128`,
 fp16 recurrent state, batch defaults otherwise). **Every row in this table is the
@@ -308,7 +309,7 @@ and needles at 32k/128k/250k (517 of 517 checks), a sync-check boot, and teacher
 and 128k that sit no further from a bf16-KV reference than the Triton arm's (mean |delta| 0.0219 against
 0.0220 nats at 32k).
 
-**On this branch's pin, vLLM 0.31.0, with this branch's image.** Same box (two RTX 3080 20 GB, TP=2,
+**On vLLM 0.31.0 (this branch's pin when measured), with that pin's image.** Same box (two RTX 3080 20 GB, TP=2,
 our hardware, not the reference 3090), **capped state** (220 W, 1905 MHz lock), same launch shape as
 above. Four arms in one sitting, back to back: `PTH_FA=1` on this branch's image (NEW-on), the image
 built the same way from `main` on `TRITON_ATTN` int8 (OLD), this branch's image with `PTH_FA` unset on

@@ -58,7 +58,7 @@ from vllm.v1.attention.backend import (
     CommonAttentionMetadata,
     MultipleOf,
 )
-from vllm.v1.kv_cache_interface import KVCacheLayout
+from vllm.v1.kv_cache_interface import KVCacheLayout, KVCacheSpec
 from vllm.v1.attention.backends.fa_utils import (
     get_flash_attn_version,
     is_flash_attn_varlen_func_available,
@@ -216,7 +216,10 @@ class KVarNAttentionBackend(AttentionBackend):
         return (KVCacheLayout.LBHNC,)
 
     @staticmethod
-    def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
+    def get_supported_kernel_block_sizes(
+        kv_cache_spec: KVCacheSpec | None = None,
+    ) -> list[int | MultipleOf]:
+        # kv_cache_spec is unused: every group gets the active preset's tile.
         # One vLLM block == one KVarN tile (cfg.group).
         # port(0.27.1): report ONLY the active preset's group (plan §2.1.2).
         # 0.27.1's select_common_block_size (worker/utils.py) picks the LARGEST

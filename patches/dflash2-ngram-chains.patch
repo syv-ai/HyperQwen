@@ -5,15 +5,14 @@ num_tokens_across_dp from the base.
 Kind: feature
 What: quantized candidate chains for the drafter; `propose` override
 Upstream: none
-Cut-against: 0.31.0: follows CandidateSampler's members; the context-parallel arguments as in #261
-  (the CP size now read from dcp_size, #56723), and prepare_context_anchor after the hidden-states
-  copy (#57934)
+Cut-against: 0.32.0: propose() takes dp_sync_state (#60754 renamed dp_sync) and forwards
+  num_speculative_tokens, which the 0.32 runner passes by keyword on every step
 Retires-when: upstreamed
 
---- exported from e7f63cc76 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 290f372aa (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 2121031ed..db7379415 100644
+index 2121031ed..e1649d677 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -98,7 +97,7 @@ index 2121031ed..db7379415 100644
          if not self._adaptive:
              return None
          emitted = getattr(self, "last_num_emitted", None)
-@@ -406,6 +456,255 @@
+@@ -406,6 +456,257 @@
          self._prev_want = want
          return self.num_speculative_steps if long_block else self.draft_block
  
@@ -115,11 +114,12 @@ index 2121031ed..db7379415 100644
 +        next_prefill_tokens,
 +        temperature,
 +        seeds,
-+        dp_sync=None,
++        dp_sync_state=None,
 +        dummy_run=False,
 +        skip_attn_for_dummy_run=False,
 +        mm_inputs=None,
 +        is_profile=False,
++        num_speculative_tokens=None,
 +    ):
 +        # Chain eligibility is decided HERE, on the host, once per step --
 +        # propose() is never captured, so this state machine survives FULL
@@ -192,11 +192,12 @@ index 2121031ed..db7379415 100644
 +            next_prefill_tokens,
 +            temperature,
 +            seeds,
-+            dp_sync=dp_sync,
++            dp_sync_state=dp_sync_state,
 +            dummy_run=dummy_run,
 +            skip_attn_for_dummy_run=skip_attn_for_dummy_run,
 +            mm_inputs=mm_inputs,
 +            is_profile=is_profile,
++            num_speculative_tokens=num_speculative_tokens,
 +        )
 +
 +    def _chain_should_engage(self, prev_missed: bool) -> bool:
@@ -354,7 +355,7 @@ index 2121031ed..db7379415 100644
      def set_req_states(self, req_states) -> None:
          """The token history the lookup matches against (set by the model runner)."""
          self._req_states = req_states
-@@ -418,6 +717,10 @@
+@@ -418,6 +719,10 @@
      def set_sampling_states(self, sampling_states) -> None:
          self._req_top_p = sampling_states.top_p.gpu
          self._req_top_k = sampling_states.top_k.gpu
@@ -365,7 +366,7 @@ index 2121031ed..db7379415 100644
  
      def _generate_draft(
          self,
-@@ -549,3 +852,16 @@
+@@ -549,3 +854,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )

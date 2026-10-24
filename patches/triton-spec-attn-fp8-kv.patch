@@ -59,16 +59,16 @@ Kind: feature
 What: split-KV verify attention on the per-tensor fp8 KV cache (TRITON_ATTN, sm89+); registers
   `VLLM_SPEC_ATTN_DEBUG`
 Upstream: none
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstreamed
 
---- exported from 1ca8b0c2c (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5d41fb5fb (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index baa61cadf..0fb6ef537 100755
+index cf8260b54..9d6e12073 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -188,6 +188,8 @@
+@@ -189,6 +189,8 @@
      VLLM_SPEC_DECODE_ATTN: bool = False
      VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
      VLLM_SPEC_ATTN_BLOCK_M: int = 0
@@ -77,7 +77,7 @@ index baa61cadf..0fb6ef537 100755
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
      VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
      VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
-@@ -1555,6 +1557,8 @@
+@@ -1589,6 +1591,8 @@
      "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
      "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
      "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),
@@ -87,10 +87,10 @@ index baa61cadf..0fb6ef537 100755
      "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
          os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index b39d56dcb..83c0c493d 100755
+index f44c8ed07..8f981a652 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -2256,3 +2256,31 @@
+@@ -2004,3 +2004,31 @@
      att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
              cu_seqlens_q.shape[0] - 1, max_seqlen_q,
              k_scale_cache=k_scale_cache, v_scale_cache=v_scale_cache)
@@ -123,7 +123,7 @@ index b39d56dcb..83c0c493d 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q,
 +            k_descale=k_descale, v_descale=v_descale, q_descale=q_descale)
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 309487959..cde2e4c78 100644
+index 3cff0d6a7..674c5334d 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -44,6 +44,7 @@
@@ -134,7 +134,7 @@ index 309487959..cde2e4c78 100644
  )
  from vllm.v1.kv_cache_interface import (
      AttentionSpec,
-@@ -868,10 +869,31 @@
+@@ -855,10 +856,31 @@
          # int8 per-token-head only: the kernel folds the per-(token, head) scales in after
          # each dot, which is exact because they are constant along the head dim. The
          # drafter's own sliding-window layers are excluded by the window test below.
@@ -168,7 +168,7 @@ index 309487959..cde2e4c78 100644
              and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
              and attn_metadata.causal
              and (self.sliding_window is None or self.sliding_window == (-1, -1))
-@@ -883,6 +905,25 @@
+@@ -870,6 +892,25 @@
              and attn_metadata.rswa_prefix_lens is None
              and output_scale is None
          ):

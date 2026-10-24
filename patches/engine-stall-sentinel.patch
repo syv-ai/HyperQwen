@@ -44,27 +44,28 @@ Kind: feature
 What: daemon thread warns once per episode when no step completes for `VLLM_ENGINE_STALL_SENTINEL_S`
   while requests are live
 Upstream: upstream PR (syv-ai #94/#110)
-Cut-against: 0.31.0
+Cut-against: 0.32.0: beside #50300's VLLM_CHAT_TEMPLATE_RENDER_TIMEOUT; #59781 removed
+  VLLM_ENGINE_ITERATION_TIMEOUT_S, the old anchor
 Retires-when: upstreamed
 
---- exported from 50e943024 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 6668f5786 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 1f2c4525d..baa61cadf 100755
+index 83b35f4f2..cf8260b54 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -25,6 +25,7 @@
      CUDA_VISIBLE_DEVICES: str | None = None
-     VLLM_ENGINE_ITERATION_TIMEOUT_S: int = 60
      VLLM_ENGINE_READY_TIMEOUT_S: int = 600
+     VLLM_CHAT_TEMPLATE_RENDER_TIMEOUT: float = 30.0
 +    VLLM_ENGINE_STALL_SENTINEL_S: float = 0.0
      VLLM_API_KEY: str | None = None
      VLLM_DEBUG_LOG_API_SERVER_RESPONSE: bool = False
      S3_ACCESS_KEY_ID: str | None = None
-@@ -861,6 +862,11 @@
-     "VLLM_ENGINE_ITERATION_TIMEOUT_S": lambda: int(
-         os.environ.get("VLLM_ENGINE_ITERATION_TIMEOUT_S", "60")
-     ),
+@@ -862,6 +863,11 @@
+     "LOCAL_RANK": lambda: int(os.environ.get("LOCAL_RANK", "0")),
+     # used to control the visible devices in the distributed setting
+     "CUDA_VISIBLE_DEVICES": lambda: os.environ.get("CUDA_VISIBLE_DEVICES", None),
 +    # Warn when the engine core stops completing steps while requests are
 +    # still alive, after this many seconds. 0 (default) disables the check.
 +    "VLLM_ENGINE_STALL_SENTINEL_S": lambda: float(
@@ -74,10 +75,10 @@ index 1f2c4525d..baa61cadf 100755
      # during startup. Default is 600 seconds (10 minutes).
      "VLLM_ENGINE_READY_TIMEOUT_S": lambda: int(
 diff --git a/v1/engine/core.py b/v1/engine/core.py
-index 5c09a0059..d5dcf9a43 100644
+index 35cc8cc18..ec0930b9f 100644
 --- a/v1/engine/core.py
 +++ b/v1/engine/core.py
-@@ -108,6 +108,68 @@
+@@ -112,6 +112,68 @@
  _R = TypeVar("_R")  # Return type for collective_rpc
  
  
@@ -146,7 +147,7 @@ index 5c09a0059..d5dcf9a43 100644
  class EngineCore:
      """Inner loop of vLLM's Engine."""
  
-@@ -1156,6 +1218,24 @@
+@@ -1199,6 +1261,24 @@
                  internal_dp_balancing,
              )
  
@@ -171,7 +172,7 @@ index 5c09a0059..d5dcf9a43 100644
              # Initialize fault tolerance settings.
              self.enable_fault_tolerance = (
                  vllm_config.parallel_config.enable_fault_tolerance
-@@ -1532,6 +1612,8 @@
+@@ -1609,6 +1689,8 @@
              self.output_queue.put_nowait(output)
          # Post-step hook.
          self.post_step(model_executed)

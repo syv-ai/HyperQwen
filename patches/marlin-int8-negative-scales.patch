@@ -17,10 +17,10 @@ Validated against vLLM 0.28.0.
 Kind: fix
 What: Marlin W4A8 reads group scales as unsigned; AutoRound exports negative ones
 Upstream: none yet
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from 5cd798dbb (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 43d683117 (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index 60687fc86..13591a141 100644

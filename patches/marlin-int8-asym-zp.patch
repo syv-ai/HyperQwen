@@ -26,10 +26,10 @@ What: the Marlin int8-activation path (`INT8_ACT=int8`) accepts zero-point `uint
   asymmetric AWQ exports (compressed-tensors `symmetric: false`) run W4A8 like the symmetric ones;
   the `kS8 x kU4` kernel is already compiled, only two asserts refused it
 Upstream: none yet
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from 5a759da90 (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ccbc755aa (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index a3200a3d4..6b3f6e6ad 100644

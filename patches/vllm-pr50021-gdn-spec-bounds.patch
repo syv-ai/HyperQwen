@@ -9,10 +9,10 @@ drafts and async scheduling is off, got a zeroed conv output on every GDN layer 
 Kind: backport
 What: bounds checks in GDN/KDA spec-decode state lookups
 Upstream: vllm #50021 (open)
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: the pin that carries #50021
 
---- exported from a86a6d49b (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3e9e807bf (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/mamba/ops/causal_conv1d.py b/model_executor/layers/mamba/ops/causal_conv1d.py
 index e8254e4f3..3d828f26f 100644

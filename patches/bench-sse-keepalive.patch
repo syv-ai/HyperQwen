@@ -22,16 +22,16 @@ What: `vllm bench serve` no longer fails a request whose server sends an SSE kee
   (`run_benchmarks.sh --long` read zeros; #216 lost its 48k+ rows). The audio request function also
   skips SSE comments now
 Upstream: none yet
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: upstream PR
 
---- exported from 704a6bedb (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 0285915f8 (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/lib/endpoint_request_func.py b/benchmarks/lib/endpoint_request_func.py
-index 14ff6c1ab..e7c3083bf 100644
+index 778a4e50d..d15b2dfdf 100644
 --- a/benchmarks/lib/endpoint_request_func.py
 +++ b/benchmarks/lib/endpoint_request_func.py
-@@ -209,8 +209,9 @@
+@@ -235,8 +235,9 @@
                  handler = StreamedResponseHandler()
  
                  async for chunk_bytes in response.content.iter_any():
@@ -43,7 +43,7 @@ index 14ff6c1ab..e7c3083bf 100644
                          continue
  
                      messages = handler.add_chunk(chunk_bytes)
-@@ -386,8 +387,9 @@
+@@ -412,8 +413,9 @@
                  first_chunk_received = False
                  handler = StreamedResponseHandler()
                  async for chunk_bytes in response.content.iter_any():
@@ -55,7 +55,7 @@ index 14ff6c1ab..e7c3083bf 100644
                          continue
  
                      message_strings = handler.add_chunk(chunk_bytes)
-@@ -687,14 +689,19 @@
+@@ -713,14 +715,19 @@
                      handler = StreamedResponseHandler()
  
                      async for chunk_bytes in response.content.iter_any():

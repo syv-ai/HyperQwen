@@ -84,8 +84,7 @@ class MixedPrefill(unittest.TestCase):
             query_start_loc=torch.tensor(starts, dtype=torch.int32, device=device),
             max_seq_len=int(lengths.max()), seq_lens=lengths, block_table=table,
             slot_mapping=torch.zeros(starts[-1], dtype=torch.int64, device=device),
-            use_cascade=False, common_prefix_len=0, cu_prefix_query_lens=None,
-            prefix_kv_lens=None, suffix_kv_lens=None, causal=True,
+            causal=True,
         )
         builder = object.__new__(backend.Fp8MetadataBuilder)
         builder.dcp_world_size = 1

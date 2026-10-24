@@ -38,9 +38,7 @@ def check(queries, length, dim, heads, kv_heads, causal, window):
         num_actual_tokens=queries, max_query_len=queries,
         query_start_loc=torch.tensor([0, queries], dtype=torch.int32, device="cuda"),
         max_seq_len=length, seq_lens=torch.tensor([length], dtype=torch.int32, device="cuda"),
-        block_table=table, slot_mapping=slots[:queries], use_cascade=False,
-        common_prefix_len=0, cu_prefix_query_lens=None, prefix_kv_lens=None,
-        suffix_kv_lens=None, causal=causal,
+        block_table=table, slot_mapping=slots[:queries], causal=causal,
         prefill_context=length if causal and queries > 64 else 0,
         maximum_context=capacity,
     )

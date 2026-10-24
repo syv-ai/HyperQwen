@@ -22,16 +22,16 @@ Kind: fix
 What: the CPU KV tier keeps a running request's head chunks; an eviction before the request finishes takes its tail
   first
 Upstream: vllm #61050 (open); the regression is from vllm #51787
-Cut-against: 0.31.0
+Cut-against: 0.32.0
 Retires-when: the pin that carries #61050
 
---- exported from b303a87e0 (vllm-pr61050-lru-running-prefix); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from f31390dd9 (vllm-pr61050-lru-running-prefix); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/kv_offload/cpu/manager.py b/v1/kv_offload/cpu/manager.py
-index e42cb47f2..d4aa2c8c2 100644
+index 2c08ac897..f7612bc92 100644
 --- a/v1/kv_offload/cpu/manager.py
 +++ b/v1/kv_offload/cpu/manager.py
-@@ -161,6 +161,7 @@
+@@ -162,6 +162,7 @@
          reused_keys: Iterable[OffloadKey] = (),
      ) -> None:
          state = self._get_request_cache_access(req_context)
@@ -39,7 +39,7 @@ index e42cb47f2..d4aa2c8c2 100644
          for key in keys:
              if key in state.seen_keys:
                  continue
-@@ -170,6 +171,9 @@
+@@ -171,6 +172,9 @@
              group_idx = get_offload_group_idx(key)
              state.key_groups.setdefault(group_idx, []).append(key)
              state.seen_keys.add(key)
@@ -49,7 +49,7 @@ index e42cb47f2..d4aa2c8c2 100644
          state.inserted_keys.update(inserted_keys)
          # Re-reading a chunk inserted by this request is an internal transfer
          # (for example, a tiering cascade), not a second cache access.
-@@ -342,6 +346,7 @@
+@@ -349,6 +353,7 @@
  
          for key, chunk in zip(keys_to_store, chunks):
              self._policy.insert(key, chunk)
