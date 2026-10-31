@@ -246,6 +246,7 @@ Everything that used to be in this README, in the folder it belongs to.
 | [docs/optimizations.md](docs/optimizations.md) | Every optimization in full: why it was needed, what it measured, which patch implements it — including what each step buys in tokens per second, the two speculative-decoding modes, and the lookup drafter. |
 | [docs/benchmarks.md](docs/benchmarks.md) | The comparison against ninfer-3090, and quality per configuration. |
 | [docs/quality.md](docs/quality.md) | IFBench, perplexity and GSM8K per configuration. |
+| [docs/gdn-checkpoints.md](docs/gdn-checkpoints.md) | Opt-in exact GDN checkpoints on vLLM 0.32, supported backends and recomputation cost. |
 | [docs/long-context.md](docs/long-context.md) | 262k context with the KVarN 4/2-bit KV cache, `CTX=huge` with DFlash2 at 240k, vLLM's own per-token-head KV modes, the int8 KV route on the pth-flash-attn kernel (`PTH_FA=1`, `SPEC=mtp` or `SPEC=dflash2` at `CTX=long`), and the experimental int4 route. |
 | [docs/reproductions/](docs/reproductions/README.md) | Other people's hardware running this stack, reports and full write-ups. |
 | [docs/gotchas.md](docs/gotchas.md) | Things that each cost us hours — read before debugging something that looks like a vLLM bug. |

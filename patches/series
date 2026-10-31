@@ -70,3 +70,4 @@ quant-scale-view-preserve-pages.patch
 dflash-context-capacity.patch
 async-mamba-kv-sizing.patch
 continuous-stream-usage.patch
+gdn-prefill-exact-checkpoints.patch

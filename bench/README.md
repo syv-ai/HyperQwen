@@ -74,6 +74,9 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_bench_sse_keepalive.py` | test | image | 0 or 1 | `vllm bench serve` against a server that sends an SSE keep-alive. |
 | `test_conc_ladder_salt.py` | test | CPU | 0 or 1 | `conc_ladder.py --salt` against a stub server: the same prompts on a second run, and the prefix-cache hit reported. |
 | `test_chat_hardening.py` | test | CPU | 0 or 1 | Explicit/default template scope, path deduplication and help without writes. |
+| `test_gdn_checkpoint_export.py` | test | image; GPU optional | 0 or 1 | Exact GDN checkpoint planning/history; `--device cuda:0` checks actual FLA prefix/resume numerics. |
+| `test_gdn_checkpoint_model.py` | test | 2 CUDA GPUs, image, cached model; saved JSON only with `--compare-only` | 0 or 1; 2 for CLI errors | Real TP=2 export/replay with fresh enabled/default-off processes and optional DFlash2. `--require-off-miss` refuses a baseline that already hits. |
+| `test_gdn_checkpoint_safety.py` | test | CPU, patched vLLM source | 0 or 1 | GDN opt-in allocation/backend guards, strict interior geometry and manager publication on the current pin. |
 | `test_gdn_ba_lora.py` | test | image | 0 or 1 | CPU/source check of the GDN projection gate and LoRA dispatch, plain padding numerics and fake output shapes. |
 | `test_fa2_slab_plan.py` | test | CPU | 0 or 1 | Bounded K/V slab coverage, causal alignment and fixed workspace size. |
 | `test_fa2_slab_dispatch.py` | test | CPU | 0 or 1 | Opt-in dispatch, workspace sharing and fallback for decode, capture and unsupported inputs. |
