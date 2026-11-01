@@ -30,11 +30,25 @@ inert for every other config in this repo (verified: MTP mode's pool is bit-iden
 Apply from the installed vllm package directory:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/hybrid-kv-groups-v2-cudagraph.patch
 
-Written against vLLM 0.27.1. Reapply after upgrades.
+Validated against vLLM 0.28.0. Reapply after upgrades.
 
+Retired on the 0.29 port: the VLLM_V2_CUDAGRAPH_MEM_MIB reserve hunk in v1/worker/gpu/model_runner.py.
+vLLM 0.29 profiles CUDA graph memory natively (cudagraph_utils.profile_cudagraph_memory, upstream #53306), so the
+reserve knob is a no-op there; only the kv_cache_utils hunks remain.
+
+Kind: fix
+What: KV group sizing when the smallest bucket is the drafter's sliding-window layers
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from 890ec637f (hybrid-kv-groups-v2-cudagraph); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
+index 03c6c5ff6..85a90ce9c 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1137,6 +1137,51 @@
+@@ -1359,6 +1359,51 @@
      return not kv_cache_spec
  
  
@@ -86,7 +100,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
  def _get_kv_cache_groups_uniform_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> list[KVCacheGroupSpec]:
-@@ -1254,6 +1299,10 @@
+@@ -1476,6 +1521,10 @@
          # layers while accommodating speculative decoding drafters that add
          # extra layers to one attention type.
          group_size = max_num_layers
@@ -97,33 +111,3 @@ Written against vLLM 0.27.1. Reapply after upgrades.
      grouped_layers = []
      for layers in layer_buckets:
          num_padding_layers = group_size - len(layers) % group_size
---- a/v1/worker/gpu/model_runner.py
-+++ b/v1/worker/gpu/model_runner.py
-@@ -18,6 +18,7 @@
- """
- 
- import functools
-+import os
- import gc
- import time
- from copy import deepcopy
-@@ -751,6 +752,19 @@
- 
-     def profile_cudagraph_memory(self) -> int:
-         # NOTE(woosuk): It is TBD whether we keep this API or not.
-+        # (syv) Until V2 profiles its graphs like V1 does, reserve an explicit,
-+        # measured amount so gpu_memory_utilization covers them instead of the
-+        # graphs landing on top of the KV cache. Read the figure from the
-+        # "... GiB for CUDAGraph memory" line of a previous start.
-+        reserve_mib = float(os.environ.get("VLLM_V2_CUDAGRAPH_MEM_MIB", "0") or 0)
-+        if reserve_mib > 0 and self.compilation_config.cudagraph_mode != CUDAGraphMode.NONE:
-+            reserve = int(reserve_mib * 1024 * 1024)
-+            logger.info(
-+                "Reserving %.2f GiB for CUDA graphs before sizing the KV cache "
-+                "(VLLM_V2_CUDAGRAPH_MEM_MIB)",
-+                reserve / 2**30,
-+            )
-+            return reserve
-         return 0
- 
-     @torch.inference_mode()

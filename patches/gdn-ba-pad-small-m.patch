@@ -1,0 +1,156 @@
+Pad 2-4 token batches of the GDN in_proj_ba GEMM to 5 rows: cuBLAS falls off a cliff there.
+
+in_proj_ba (in_proj_b + in_proj_a, N = 2 * 48 = 96, K = 5120) is left unquantized in the
+W4A16 checkpoints (`ignore` in their quantization_config), so it runs through
+UnquantizedLinearMethod -> F.linear -> cuBLAS. At M = 2..4 cuBLAS picks
+cutlass_80_wmma_tensorop_bf16_s161616gemm_bf16_16x16_128x2_tn_align8 for this skinny
+shape, which is ~5x slower than what it picks one row either side. MTP-3 verifies 4 tokens
+per step, so every decode step pays it in all 48 GDN layers.
+
+Measured on an RTX 3090 (sm_86, torch 2.13.0+cu130, the 0.31 image), [M, 5120] x
+[5120, 96] bf16, 48 calls replayed in one CUDA graph, us per call:
+
+  M        1     2     3     4     5     8     16
+  cuBLAS   3.9  23.8  23.8  23.8   4.9   5.0   5.3
+  pad->5    -    6.7   6.7   6.7    -     -     -
+
+(cuBLASLt via torch.backends.cuda.preferred_blas_library is no better: 26.9 at M = 2..4.)
+
+Torch profiler on the live server, SPEC=mtp CTX=long PREFIX_CACHE=1, thinking on, same
+prompts before and after (bench: one 400-token generation on a short prompt, one
+300-token generation over a 25k-token cached document):
+
+                                      before      after
+  in_proj_ba GEMM per engine step     1.80 ms     0.24 ms
+  engine step, short prompt          23.51 ms    22.39 ms   (-4.8%)
+  engine step, 25k context           25.44 ms    24.47 ms   (-3.8%)
+
+The rest of the step is unchanged (Marlin 18.46 -> 18.50 ms/step). End-to-end tok/s moves
+by the same ratio only at equal acceptance; with sampling at T=0.6 the run-to-run spread
+of accepted tokens per step is larger than 5%, so a plain tok/s A/B needs several runs.
+
+The projection goes through a custom op (vllm::gdn_ba_proj) so the branch on the batch
+size stays out of the compiled graph: under the backed dynamic batch dimension a Python
+branch on num_tokens would be specialised or guarded. Outside 2..4 the op is the plain
+F.linear. Numerics: the padded rows are zeros and are sliced off; the kept rows differ
+from the unpadded call only by bf16 rounding of a different kernel (max |err| 0.03 on
+outputs of magnitude ~1.5).
+
+Only the plain unquantized, bias-free in_proj_ba on CUDA takes the op; anything else
+(a quantized ba_proj, ROCm/XPU/CPU paths, which do not go through forward_cuda) is
+untouched. VLLM_GDN_BA_PAD_SMALL_M=0 turns it off. The cliff is a cuBLAS heuristic, so it
+may not exist on other GPUs or cuBLAS versions; where it does not, the pad costs ~1.5 us
+per call (6.7 against 4.9).
+
+LoRA-enabled models retain the normal layer forward: the adapter wrapper is installed after
+construction, and a raw base-weight projection would omit its contribution.
+
+Env knobs this patch reads go through vllm.envs: VLLM_GDN_BA_PAD_SMALL_M (registered here).
+
+Kind: feature
+What: pad 2-4 token batches of the bf16 GDN `in_proj_ba` GEMM to 5 rows (cuBLAS cliff at
+  that shape; MTP-3 verify)
+Upstream: none
+Cut-against: 0.32.0
+Retires-when: upstreamed, or a cuBLAS that picks a sane kernel at M = 2..4
+
+--- exported from daf4558 (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 83f6313..ce101cf 100644
+--- a/envs.py
++++ b/envs.py
+@@ -132,6 +132,7 @@
+     VLLM_USE_HW_AGNOSTIC: bool = False
+     VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
+     VLLM_GDN_DECODE_KERNEL: Literal["cuda", "triton"] = "cuda"
++    VLLM_GDN_BA_PAD_SMALL_M: bool = True
+     VLLM_DISABLE_PYNCCL: bool = False
+     VLLM_USE_OINK_OPS: bool = False
+     VLLM_MXFP4_EMULATION_DEQUANT_AT_LOAD: bool = False
+@@ -1307,6 +1308,11 @@
+         ["cuda", "triton"],
+         case_sensitive=False,
+     ),
++    # Pad 2-4 token batches of the GDN in_proj_ba GEMM to 5 rows, stepping
++    # around a cuBLAS kernel-selection cliff at that shape (speculative verify).
++    "VLLM_GDN_BA_PAD_SMALL_M": lambda: bool(
++        int(os.getenv("VLLM_GDN_BA_PAD_SMALL_M", "1"))
++    ),
+     # Disable pynccl (using torch.distributed instead)
+     "VLLM_DISABLE_PYNCCL": lambda: (
+         os.getenv("VLLM_DISABLE_PYNCCL", "False").lower() in ("true", "1")
+diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index 516ef13..976ac2c 100644
+--- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -29,6 +29,7 @@
+     ColumnParallelLinear,
+     MergedColumnParallelLinear,
+     RowParallelLinear,
++    UnquantizedLinearMethod,
+ )
+ from vllm.model_executor.layers.mamba.gdn.base import GatedDeltaNetAttention
+ from vllm.model_executor.layers.mamba.mamba_mixer2 import mamba_v2_sharded_weight_loader
+@@ -619,6 +620,18 @@
+         if self.speculative_config is not None:
+             logger.info_once("GDN spec decode kernel: %s", self.gdn_decode_kernel)
+ 
++        # Pad 2-4 token batches of the bf16 in_proj_ba GEMM to 5 rows (see
++        # gdn_ba_proj below). Only the plain unquantized, bias-free projection.
++        self.ba_proj_pad_small_m = (
++            envs.VLLM_GDN_BA_PAD_SMALL_M
++            # LoRA replaces in_proj_ba after construction. Calling F.linear on
++            # its base weight would silently omit the adapter contribution.
++            and vllm_config.lora_config is None
++            and current_platform.is_cuda()
++            and isinstance(self.in_proj_ba.quant_method, UnquantizedLinearMethod)
++            and self.in_proj_ba.bias is None
++        )
++
+         compilation_config = get_current_vllm_config().compilation_config
+         if prefix in compilation_config.static_forward_context:
+             raise ValueError(f"Duplicate layer name: {prefix}")
+@@ -993,7 +1006,10 @@
+         # Part 1: Input Projection
+         # ============================================================
+         mixed_qkvz, _ = self.in_proj_qkvz(hidden_states)
+-        ba, _ = self.in_proj_ba(hidden_states)
++        if self.ba_proj_pad_small_m:
++            ba = torch.ops.vllm.gdn_ba_proj(hidden_states, self.in_proj_ba.weight)
++        else:
++            ba, _ = self.in_proj_ba(hidden_states)
+ 
+         use_fused_gdn_spec_decode = (
+             self.enable_fused_gdn_spec_decode
+@@ -2057,3 +2073,30 @@
+     op_func=qwen_gdn_attention_core_fused_norm_packed,
+     mutates_args=["core_attn_out"],
+ )
++
++
++def gdn_ba_proj(hidden_states: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
++    """in_proj_ba (bf16, N = 2 * num_v_heads) with 2-4 token batches padded to 5.
++
++    cuBLAS picks a 16x16 wmma kernel for M = 2..4 at this skinny shape: on an RTX
++    3090 (torch 2.13 / CUDA 13.0) [M, 5120] x [5120, 96] takes 23.8 us at M = 2..4
++    against 3.9 us at M = 1 and 4.9 us at M = 5..8. Speculative verify steps
++    (MTP-3: 4 tokens) sit exactly in that window, 48 GDN layers per step. A custom
++    op so the branch on the batch size stays out of the compiled graph.
++    """
++    num_tokens = hidden_states.size(0)
++    if 2 <= num_tokens <= 4:
++        padded = torch.nn.functional.pad(hidden_states, (0, 0, 0, 5 - num_tokens))
++        return torch.nn.functional.linear(padded, weight)[:num_tokens]
++    return torch.nn.functional.linear(hidden_states, weight)
++
++
++def gdn_ba_proj_fake(hidden_states: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
++    return hidden_states.new_empty((hidden_states.size(0), weight.size(0)))
++
++
++direct_register_custom_op(
++    op_name="gdn_ba_proj",
++    op_func=gdn_ba_proj,
++    fake_impl=gdn_ba_proj_fake,
++)

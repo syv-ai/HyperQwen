@@ -1,0 +1,72 @@
+# Apply order for the vLLM patches, one basename per line.
+#
+# patches/apply.sh reads this file and applies it in THIS order, not glob
+# order; the Dockerfile, docs/install.md and docs/python-314.md call it, and
+# verify.sh and patches/check_vllm_series.sh read the order from
+# `patches/apply.sh --list`. A
+# few patches carry hunk context that an earlier patch adds (e.g.
+# prefill-attn-int8.patch inserts before spec-decode-attn.patch's split-KV
+# block and carries its lines as context), so order is a hard requirement.
+#
+#   - a new independent patch goes on the last line
+#   - a patch that must apply before an existing one is listed before it
+#
+# `patches/apply.sh --list` exits 2, and names each offender, if this list and
+# the directory disagree in either direction; the apply refuses to start then.
+
+qwen3_5-embed-quant.patch
+marlin-int8-layer-select.patch
+marlin-int8-negative-scales.patch
+qwen3_5-mtp-draft-vocab.patch
+vllm-pr50021-gdn-spec-bounds.patch
+sampler-small-topk-fast-softmax.patch
+spec-decode-attn.patch
+speed-knobs-envs.patch
+hybrid-kv-groups-v2-cudagraph.patch
+dflash2-lookup-drafting.patch
+hybrid-sw-block-promote.patch
+spec-decode-int8-kv.patch
+vision-tower-cpu-offload.patch
+int4-kv-per-token-head.patch
+marlin-repack-staged-sm80.patch
+offload-dflash-eagle-groups.patch
+dflash2-ngram-chains.patch
+offload-wsl2-devptr.patch
+spec-decode-int4-kv-mq3d.patch
+dflash2-prewarm.patch
+marlin-tune-table.patch
+prefill-attn-int8.patch
+spec-sampler-prewarm.patch
+mamba-align-checkpoint-order.patch
+spec-decode-scratch-token-units.patch
+mamba-chunked-prefill-align.patch
+spec-decode-scratch-within-budget.patch
+dflash2-z-adaptive-emitted.patch
+dspark-draft-quant-config.patch
+engine-completion-log.patch
+engine-stall-sentinel.patch
+triton-spec-attn-fp8-kv.patch
+topk-honour-flashinfer-sampler-switch.patch
+memory-profile-after-warmup.patch
+cudagraph-memory-from-allocator.patch
+bench-probe-errors.patch
+serve-model-path-match.patch
+tokenize-v1-route.patch
+marlin-int8-asym-zp.patch
+compile-key-runtime-knobs.patch
+auth-deny-default.patch
+spec-attn-smem-fit.patch
+bench-sse-keepalive.patch
+sampler-warmup-cuda.patch
+pinned-kv-empty-cache.patch
+api-root-health.patch
+qwen3_5-embed-uva.patch
+vllm-pr40371-prompt-progress.patch
+vllm-pr61050-lru-running-prefix.patch
+kv-cache-seat-budget.patch
+gdn-ba-pad-small-m.patch
+vllm-pr61612-flashinfer-async-barrier.patch
+quant-scale-view-preserve-pages.patch
+dflash-context-capacity.patch
+async-mamba-kv-sizing.patch
+continuous-stream-usage.patch

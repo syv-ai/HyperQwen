@@ -1,0 +1,427 @@
+int4 3D scratch: allocate inside the memory budget
+
+WHAT THIS FIXES, AND WHOSE DEFECT IT IS
+
+The follow-up from the #57 merge review. The three softmax_segm_* scratch
+buffers were allocated by the attention metadata builder, and the builder is
+constructed in initialize_attn_backend, which initialize_kv_cache runs after
+determine_available_memory has already fixed the KV budget. Nothing inside the
+memory_profiling window touches the builder, so the buffers were never in the
+budget: they came out of the headroom the profile had reserved for
+activations. The sizing rule is upstream vLLM's (one set per builder, sized
+by seq_threshold_3D); the exposure is ours, because #46 opened the 3D path to
+multi-query batches and #57 sized the buffers in query tokens, which grows
+them with max_num_seqs (four builders on this model: 112.88 MiB at
+max_num_seqs=4, 903 MiB at 32 and above) while the budget never moved.
+Resident memory under-reads it: the caching allocator serves the scratch
+from segments the profiler already reserved, so nvidia-smi sees little of it
+and the honest figure is the KV budget itself.
+
+THE FIX
+
+The attention Impl is constructed during load_model, inside the window whose
+consumption the profile counts. The first Impl of a geometry allocates the
+scratch into a module-level pool (logged: "allocated at model load (inside
+the memory profile)"); every metadata builder of that geometry adopts it
+("adopted by the metadata builder"). "Model loading took" rises by the
+scratch bytes and "Available KV cache memory" drops by the same. The
+derivation moved into mq3d_scratch_plan and did not change; the property test
+(bench/mq3d_capacity_property.py) is unaffected. Geometry (head size, KV
+heads) is the model config's, as the builder derives it, not the layer's own
+arguments: they differ for the drafter, and a pool keyed on the layer's
+numbers is one the drafter's builder can never adopt.
+
+Builders of one geometry share a set. That is safe because an attention call
+writes and reduces the scratch within the call, on one stream, which is the
+assumption the existing sharing across a group's layers already makes; it also
+halves the footprint (four builders, two geometries). Under ubatching (DBO)
+a group's builders run on separate streams, so a builder then adopts only a
+set no builder has adopted and the rest allocate their own. Any builder that
+finds nothing to adopt allocates and says so at WARNING ("AFTER the memory
+profile: these bytes are not in the KV budget"), so the unaccounted case can
+no longer happen silently. resolve_cudagraph_mode_and_sizes can re-round the
+capture sizes after the model loads, so a builder may derive a capacity the
+Impl did not: smaller adopts the larger pool (declared capacity = the pool's,
+asserted >= derived), larger takes the WARNING path.
+
+SUPERSEDES
+
+Supersedes: spec-decode-scratch-token-units.patch
+
+Both still apply, in glob order, and both are required: this patch is a diff
+against the tree that one produces. But it rewrites the region that one added,
+so the older patch's lines are no longer in the tree and verify.sh's content
+check cannot find them. The declaration above is what lets verify.sh say so
+instead of reporting a false failure.
+
+SCOPE
+
+One file, v1/attention/backends/triton_attn.py. Applies after
+spec-decode-scratch-token-units.patch (glob order). No kernel, metadata, or
+dispatch change; the buffers' shapes, dtype, and the breach guard in
+int4_per_token_head.py are untouched. Pool logic: bench/mq3d_scratch_pool_test.py
+(CPU tensors, runs inside the image). Measurements and the reading:
+docs/spec-decode-scratch-token-units.md, "Follow-up".
+
+Kind: own
+What: mq3d scratch allocated inside the memory budget (fork #57)
+Upstream: none
+Cut-against: 0.32.0: the pool owns the scratch at 16 segments, so #58482's SM120 64-segment mode is off in
+  TRITON_ATTN (max_seqs_64_segments = 0): RTX 50 cards keep 0.31's 16 segments and lose #58482's occupancy
+  gain; correctness unchanged
+Retires-when: rides with mq3d
+
+--- exported from 8cccc4888 (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
+index 7b7a46c0a..3cff0d6a7 100644
+--- a/v1/attention/backends/triton_attn.py
++++ b/v1/attention/backends/triton_attn.py
+@@ -9,7 +9,7 @@
+ 
+ import vllm.envs as envs
+ from vllm._aiter_ops import rocm_aiter_ops
+-from vllm.config import CUDAGraphMode, VllmConfig
++from vllm.config import CUDAGraphMode, VllmConfig, get_current_vllm_config_or_none
+ from vllm.config.cache import CacheDType
+ from vllm.logger import init_logger
+ from vllm.model_executor.layers.quantization.utils.quant_utils import (
+@@ -18,7 +18,7 @@
+ )
+ from vllm.platforms import current_platform
+ from vllm.platforms.interface import DeviceCapability
+-from vllm.utils.math_utils import cdiv, next_power_of_2
++from vllm.utils.math_utils import next_power_of_2
+ from vllm.utils.torch_utils import get_dtype_size, is_quantized_kv_cache
+ from vllm.v1.attention.backend import (
+     AttentionBackend,
+@@ -63,6 +63,175 @@
+ MAX_QUERY_LEN_3D = 16
+ 
+ 
++# ---- SCRATCH INSIDE THE MEMORY BUDGET -----------------------------------------
++# The metadata builder that owns the 3D scratch is constructed in
++# initialize_attn_backend, which initialize_kv_cache runs AFTER
++# determine_available_memory has fixed the KV budget. Buffers allocated there are
++# invisible to the memory profile: they come out of the headroom the profile
++# reserved for activations (measured on the reference config: +182 MiB resident at
++# max_num_seqs=64 with a byte-identical KV pool). The attention Impl is constructed
++# during load_model, inside the window whose consumption the profile does count
++# (memory_profiling: total_consumed = free memory at worker init minus free memory
++# after the profile; "Model loading took" reports it). So the first Impl of a given
++# geometry allocates the scratch into this pool and every builder of that geometry
++# adopts it: the bytes show up in the model-load figure and the KV budget shrinks
++# by exactly that much. The profiling-time builders
++# (initialize_kv_cache(..., is_profiling=True) under profile_cudagraph_memory)
++# adopt too, so the scratch is allocated once per geometry per process, not twice.
++#
++# resolve_cudagraph_mode_and_sizes can re-round cudagraph_capture_sizes for spec
++# decode after the model is loaded, so a builder may derive a capacity the Impl did
++# not: smaller adopts the larger pool (the declared capacity is the pool's), larger
++# allocates again and says so at WARNING. Either way the boot record shows it.
++#
++# The derivation is the one the builder used; it moved, it did not change. That
++# includes where the geometry comes from: head size and KV-head count are the
++# MODEL CONFIG's, as the builder reads them, not the layer's own arguments. The
++# two differ for a speculative drafter (its layers carry their own head size and
++# KV heads; its builder still sizes rows by the target config), and a pool keyed
++# on the layer's numbers is one the drafter's builder can never adopt.
++
++
++@dataclass(frozen=True)
++class Mq3dScratchPlan:
++    num_heads_q: int
++    num_heads_kv: int
++    headdim_padded: int
++    seq_threshold_3D: int          # SEQUENCES  (policy)
++    max_query_len_3d: int          # QUERY TOKENS PER SEQUENCE  (eligibility)
++    capacity: int                  # TOTAL QUERY TOKENS  (allocation)
++    row_bytes: int
++    max_num_batched_tokens: int
++    max_num_seqs: int
++
++
++def mq3d_scratch_plan(vllm_config: VllmConfig, num_heads_q: int) -> Mq3dScratchPlan:
++    model_config = vllm_config.model_config
++    num_heads_kv = model_config.get_num_kv_heads(vllm_config.parallel_config)
++    headdim = model_config.get_head_size()
++    # The launch grid for the 2D kernel is defined as (num_q_blocks, num_heads_kv).
++    # A lower bound for num_q_blocks is the number of sequences.
++    # To ensure the minimum launch grid size is achieved, the number of sequences
++    # must be at least equal to the threshold below.
++    # If this threshold is not reached (i.e., the batch size is not large enough),
++    # the 3D kernel will be selected instead.
++    seq_threshold_3D = MIN_LAUNCH_GRID_SIZE_2D // num_heads_kv
++    compilation_config = vllm_config.compilation_config
++    if compilation_config.cudagraph_mode in (
++        CUDAGraphMode.FULL_AND_PIECEWISE,
++        CUDAGraphMode.FULL_DECODE_ONLY,
++        CUDAGraphMode.FULL,
++    ):
++        capture_sizes = compilation_config.cudagraph_capture_sizes
++        assert capture_sizes, "CUDA Graphs enabled but no capture sizes specified."
++        # Select the CUDA Graph capture size closest to seq_threshold_3D as
++        # threshold. This ensures that each captured graph covers the correct
++        # execution path.
++        seq_threshold_3D = min(capture_sizes, key=lambda x: abs(x - seq_threshold_3D))
++    sched = vllm_config.scheduler_config
++    # Eligibility already requires num_seqs <= seq_threshold_3D, and no batch can
++    # carry more query tokens than the scheduler will place in one, so this is the
++    # smallest capacity that can hold every policy-eligible batch.
++    capacity = min(
++        sched.max_num_batched_tokens,
++        min(sched.max_num_seqs, seq_threshold_3D) * MAX_QUERY_LEN_3D,
++    )
++    headdim_padded = next_power_of_2(headdim)
++    row_bytes = 4 * (
++        num_heads_q * NUM_PAR_SOFTMAX_SEGMENTS * headdim_padded
++        + 2 * num_heads_q * NUM_PAR_SOFTMAX_SEGMENTS
++    )
++    return Mq3dScratchPlan(
++        num_heads_q=num_heads_q,
++        num_heads_kv=num_heads_kv,
++        headdim_padded=headdim_padded,
++        seq_threshold_3D=seq_threshold_3D,
++        max_query_len_3d=MAX_QUERY_LEN_3D,
++        capacity=capacity,
++        row_bytes=row_bytes,
++        max_num_batched_tokens=sched.max_num_batched_tokens,
++        max_num_seqs=sched.max_num_seqs,
++    )
++
++
++class Mq3dScratch:
++    """The three 3D-softmax scratch buffers for one geometry, and where they came from."""
++
++    def __init__(self, plan: Mq3dScratchPlan, device: torch.device, origin: str):
++        rows = plan.capacity
++        self.output = torch.empty(
++            (rows, plan.num_heads_q, NUM_PAR_SOFTMAX_SEGMENTS, plan.headdim_padded),
++            dtype=torch.float32,
++            device=device,
++        )
++        self.max = torch.empty(
++            (rows, plan.num_heads_q, NUM_PAR_SOFTMAX_SEGMENTS),
++            dtype=torch.float32,
++            device=device,
++        )
++        self.expsum = torch.empty_like(self.max)
++        self.plan = plan
++        self.origin = origin
++        self.adopters = 0   # builders using this set
++
++    @property
++    def capacity(self) -> int:
++        return self.output.shape[0]
++
++
++# (device type, device index, num_heads_q, segments, headdim_padded) -> scratch
++_MQ3D_SCRATCH_POOL: dict[tuple, Mq3dScratch] = {}
++
++
++def mq3d_scratch_acquire(
++    plan: Mq3dScratchPlan, device: torch.device, origin: str, exclusive: bool = False
++) -> Mq3dScratch:
++    """origin is "model load" (inside the memory profile) or "metadata builder"
++    (after it). A builder that finds nothing to adopt still gets its buffers, and
++    the boot record says so at WARNING: that is the unaccounted case.
++
++    Builders of one geometry share a set: an attention call writes and reduces the
++    scratch within the call, on one stream, which is the assumption the sharing
++    across a group's layers already makes. Under ubatching (DBO) the builders of a
++    group run on separate streams, so a builder passes exclusive=True and adopts
++    only a set no builder has adopted; the rest allocate their own, after the
++    profile, and say so."""
++    dev = torch.device(device)
++    key = (dev.type, dev.index, plan.num_heads_q, NUM_PAR_SOFTMAX_SEGMENTS, plan.headdim_padded)
++    have = _MQ3D_SCRATCH_POOL.get(key)
++    fits = have is not None and have.capacity >= plan.capacity
++    if fits and not (exclusive and have.adopters > 0):
++        if origin != "model load":
++            have.adopters += 1
++            logger.info(
++                "int4 3D scratch: capacity=%d query tokens adopted by the %s "
++                "(derived %d for this instance; allocated at %s)",
++                have.capacity, origin, plan.capacity, have.origin,
++            )
++        return have
++    inside = origin == "model load"
++    log = logger.info if inside else logger.warning
++    # Bind the inputs and the resulting cost into the boot record: a capacity that
++    # cannot be read back at boot is a capacity nobody can audit later.
++    log(
++        "int4 3D scratch: capacity=%d query tokens (min of max_num_batched_tokens=%d, "
++        "min(max_num_seqs=%d, seq_threshold_3D=%d) * max_query_len_3d=%d); "
++        "%d B/row, %.2f MiB, allocated at %s%s",
++        plan.capacity, plan.max_num_batched_tokens, plan.max_num_seqs,
++        plan.seq_threshold_3D, plan.max_query_len_3d,
++        plan.row_bytes, plan.row_bytes * plan.capacity / 2**20, origin,
++        " (inside the memory profile)" if inside
++        else " (AFTER the memory profile: these bytes are not in the KV budget"
++        + ("; ubatching: builders do not share a set)" if fits else ")"),
++    )
++    scratch = Mq3dScratch(plan, dev, origin)
++    if not inside:
++        scratch.adopters = 1
++    if not fits:
++        _MQ3D_SCRATCH_POOL[key] = scratch   # an exclusive extra set is nobody else's to adopt
++    return scratch
++
++
+ @dataclass
+ class TritonAttentionMetadata:
+     # NOTE(sang): Definition of context_len, query_len, and seq_len.
+@@ -133,40 +302,11 @@
+             )
+         )
+ 
+-        # The launch grid for the 2D kernel is defined as (num_q_blocks, num_heads_kv).
+-        # A lower bound for num_q_blocks is the number of sequences.
+-        # To ensure the minimum launch grid size is achieved, the number of sequences
+-        # must be at least equal to the threshold below.
+-        # If this threshold is not reached (i.e., the batch size is not large enough),
+-        # the 3D kernel will be selected instead.
+-        self.seq_threshold_3D = MIN_LAUNCH_GRID_SIZE_2D // self.num_heads_kv
+-
+-        # Modify the threshold if needed.
+-        if self.decode_cudagraph_enabled:
+-            capture_sizes = self.vllm_config.compilation_config.cudagraph_capture_sizes
+-            assert capture_sizes, "CUDA Graphs enabled but no capture sizes specified."
+-
+-            # Select the CUDA Graph capture size closest to self.seq_threshold_3D
+-            # as threshold. This ensures that each captured graph covers the
+-            # correct execution path.
+-            self.seq_threshold_3D = min(
+-                capture_sizes,
+-                key=lambda x: abs(x - self.seq_threshold_3D),
+-            )
+-
+         self.num_par_softmax_segments = NUM_PAR_SOFTMAX_SEGMENTS
+-        # On SM120, batches whose 16-segment grid under-fills the SMs use 64.
++        # (syv) upstream's SM120 64-segment mode (#58482) stays off while the 3D scratch
++        # comes from the budgeted pool (mq3d_scratch_plan), which is sized for 16 segments,
++        # the layout every card ran before #58482. build()'s 16-segment fallback never fires.
+         self.max_seqs_64_segments = 0
+-        if current_platform.is_cuda() and current_platform.is_device_capability(
+-            (12, 0)
+-        ):
+-            self.max_seqs_64_segments = (current_platform.num_compute_units() - 1) // (
+-                NUM_PAR_SOFTMAX_SEGMENTS * self.num_heads_kv
+-            )
+-        if self.max_seqs_64_segments > 0:
+-            self.num_par_softmax_segments = 64
+-        headdim_padded = next_power_of_2(self.headdim)
+-
+         # ---- UNIT SPLIT ------------------------------------------------------------
+         # These three quantities were one variable, in three different units. The
+         # scratch buffers are indexed by QUERY TOKEN, but were sized by
+@@ -187,70 +327,29 @@
+         # requires num_seqs <= seq_threshold_3D, and no batch can carry more query
+         # tokens than the scheduler will place in one, so this is the smallest
+         # capacity that can hold every policy-eligible batch.
+-        self.max_query_len_3d = MAX_QUERY_LEN_3D
+-        _sched = self.vllm_config.scheduler_config
+-        self.scratch_token_capacity_3d = min(
+-            _sched.max_num_batched_tokens,
+-            min(_sched.max_num_seqs, self.seq_threshold_3D) * self.max_query_len_3d,
++        plan = mq3d_scratch_plan(self.vllm_config, self.num_heads_q)
++        assert (plan.num_heads_kv, plan.headdim_padded) == (
++            self.num_heads_kv, next_power_of_2(self.headdim)
++        ), "int4 3D scratch plan geometry disagrees with the builder's"
++        self.seq_threshold_3D = plan.seq_threshold_3D
++        self.max_query_len_3d = plan.max_query_len_3d
++        scratch = mq3d_scratch_acquire(
++            plan, device, "metadata builder",
++            exclusive=bool(getattr(self.vllm_config.parallel_config, "use_ubatching", False)),
+         )
+-
+-        _rows = self.scratch_token_capacity_3d
+-        _segment_ratio = self.num_par_softmax_segments // NUM_PAR_SOFTMAX_SEGMENTS
+-        if _segment_ratio > 1:
+-            # (syv) upstream's SM120 sizing (#58482) in token units: rows at 64 segments,
+-            # which build() reuses at 16 segments with _segment_ratio times the rows, so
+-            # that layout must still hold the whole token capacity.
+-            _rows = max(
+-                min(self.max_seqs_64_segments, _rows),
+-                cdiv(_rows, _segment_ratio),
+-            )
+-        _row_bytes = 4 * (
+-            self.num_heads_q * self.num_par_softmax_segments * headdim_padded
+-            + 2 * self.num_heads_q * self.num_par_softmax_segments
+-        )
+-        # Bind the inputs and the resulting cost into the boot record: a capacity that
+-        # cannot be read back at boot is a capacity nobody can audit later.
+-        logger.info(
+-            "int4 3D scratch: capacity=%d query tokens (min of max_num_batched_tokens=%d, "
+-            "min(max_num_seqs=%d, seq_threshold_3D=%d) * max_query_len_3d=%d); "
+-            "%d B/row, %.2f MiB for this instance",
+-            self.scratch_token_capacity_3d, _sched.max_num_batched_tokens, _sched.max_num_seqs,
+-            self.seq_threshold_3D, self.max_query_len_3d,
+-            _row_bytes, _row_bytes * _rows / 2**20,
+-        )
+-
+-        self.softmax_segm_output = torch.empty(
+-            (
+-                _rows,
+-                self.num_heads_q,
+-                self.num_par_softmax_segments,
+-                headdim_padded,
+-            ),
+-            dtype=torch.float32,
+-            device=device,
+-        )
+-        self.softmax_segm_max = torch.empty(
+-            (_rows, self.num_heads_q, self.num_par_softmax_segments),
+-            dtype=torch.float32,
+-            device=device,
+-        )
+-        self.softmax_segm_expsum = torch.empty(
+-            (_rows, self.num_heads_q, self.num_par_softmax_segments),
+-            dtype=torch.float32,
+-            device=device,
+-        )
+-        # All three buffers must agree with the DECLARED capacity. One oversized
+-        # buffer can otherwise mask another undersized one until a different reducer
+-        # path is taken.
++        self.softmax_segm_output = scratch.output
++        self.softmax_segm_max = scratch.max
++        self.softmax_segm_expsum = scratch.expsum
++        # The declared capacity is the pool's, never below the derived one. All
++        # three buffers must agree with it: one oversized buffer can otherwise mask
++        # another undersized one until a different reducer path is taken.
++        self.scratch_token_capacity_3d = scratch.capacity
+         assert (
+             self.softmax_segm_output.shape[0]
+             == self.softmax_segm_max.shape[0]
+             == self.softmax_segm_expsum.shape[0]
+-        ) and (
+-            self.softmax_segm_max.shape[0] == self.scratch_token_capacity_3d
+-            if _segment_ratio == 1
+-            else self.softmax_segm_max.shape[0] * _segment_ratio
+-            >= self.scratch_token_capacity_3d
++            == self.scratch_token_capacity_3d
++            >= plan.capacity
+         ), "int4 3D scratch buffers disagree with the declared token capacity"
+         self.rswa_window = model_config.rswa_window
+         # R-SWA restages prefix lengths in build(), which the no-op
+@@ -616,6 +715,20 @@
+         else:
+             self.use_td = td_override
+ 
++        # Allocate the 3D scratch for this layer's head count while the memory
++        # profile can still see it (Mq3dScratch above); the metadata builder
++        # adopts it later. Only num_heads is the layer's: head size and KV heads
++        # are the model config's, as the builder will derive them. Constructed
++        # without a current config (unit tests), there is nothing to size from
++        # and the builder allocates, unaccounted, as before.
++        vllm_config = get_current_vllm_config_or_none()
++        if vllm_config is not None and current_platform.is_cuda_alike():
++            mq3d_scratch_acquire(
++                mq3d_scratch_plan(vllm_config, num_heads),
++                torch.device("cuda", torch.cuda.current_device()),
++                "model load",
++            )
++
+     def forward(
+         self,
+         layer: torch.nn.Module,

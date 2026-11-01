@@ -1,3 +1,8 @@
+"""Microbenchmark of the Gated DeltaNet packed-decode kernel (vLLM's fused_recurrent) over
+block sizes (BV) and warp counts, at batch 24 and 48 with Qwen3.8-27B's decode shapes. Each row
+is one config's time per call and the state bandwidth it reached. A measurement, not a gate.
+  venv/bin/python bench/tune_gdn.py    # GPU
+"""
 import torch, triton, sys, importlib
 
 from vllm.third_party.flash_linear_attention.ops import fused_recurrent as fr

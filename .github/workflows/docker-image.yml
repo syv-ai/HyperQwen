@@ -1,8 +1,8 @@
 # Build the Docker image and push it to GitHub Container Registry, so
 # `docker compose pull` replaces the 20-minute local build.
 #
-#   ghcr.io/syv-ai/qwen38-27b-rtx3090:latest      tracks main
-#   ghcr.io/syv-ai/qwen38-27b-rtx3090:sha-<7>     immutable, one per commit
+#   ghcr.io/syv-ai/hyperqwen:latest      tracks main
+#   ghcr.io/syv-ai/hyperqwen:sha-<7>     immutable, one per commit
 #
 # The Dockerfile itself is the quality gate: it applies every patch in
 # patches/ against the pinned vLLM and runs `verify.sh --install`, so a
@@ -12,6 +12,8 @@
 #
 # The weekly cron rebuilds `latest` without a commit so base-image fixes
 # (CUDA runtime, Ubuntu CVEs) are picked up.
+# Forks run the same build gate, but only this upstream repository publishes
+# release images and writes its registry cache.
 
 name: docker image
 
@@ -22,12 +24,19 @@ on:
       - '**.md'
       - 'docs/**'
       - '.gitignore'
+  # A pull request builds the image too (the Dockerfile is the quality gate), but does not push it:
+  # a PR from a fork has a read-only token, and an unmerged tree must not become `latest` or a sha tag.
+  pull_request:
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
   schedule:
     - cron: '17 4 * * 1'
   workflow_dispatch:
 
 concurrency:
-  group: docker-image
+  group: docker-image-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -52,6 +61,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - uses: docker/login-action@v3
+        if: github.repository == 'syv-ai/HyperQwen' && github.event_name != 'pull_request'
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -60,7 +70,7 @@ jobs:
       - uses: docker/metadata-action@v5
         id: meta
         with:
-          images: ghcr.io/${{ github.repository }}
+          images: ghcr.io/syv-ai/hyperqwen
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=sha
@@ -68,8 +78,8 @@ jobs:
       - uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          push: ${{ github.repository == 'syv-ai/HyperQwen' && github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-          cache-from: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache
-          cache-to: type=registry,ref=ghcr.io/${{ github.repository }}:buildcache,mode=max
+          cache-from: type=registry,ref=ghcr.io/syv-ai/hyperqwen:buildcache
+          cache-to: ${{ github.repository == 'syv-ai/HyperQwen' && github.event_name != 'pull_request' && 'type=registry,ref=ghcr.io/syv-ai/hyperqwen:buildcache,mode=max' || '' }}

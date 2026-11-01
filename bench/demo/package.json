@@ -1,0 +1,8 @@
+{
+  "name": "hyperqwen-demo",
+  "private": true,
+  "type": "module",
+  "description": "Renders docs/media/demo.{mp4,avif} from real recordings. See render.mjs.",
+  "scripts": { "render": "node render.mjs" },
+  "dependencies": { "puppeteer": "^24.0.0" }
+}

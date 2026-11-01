@@ -1,0 +1,306 @@
+KVarN dense KV-cache integration for vLLM 0.28.0.
+
+The 0.28 KV cache API uses KVQuantMode values and FullAttentionSpec.state_content_bytes rather than the old TQFullAttentionSpec/tq_slot_size representation. This port preserves the packed KVarN tile layout and tail-pool budgeting on the new interfaces.
+
+Ported to 0.29.0: the registry hunk re-anchored (AMX_MLA now precedes TURBOQUANT); the attn_utils.py
+strided-view hunk retired, because the KV cache layout refactor (#51718) moved page views into
+kv_cache_interface.compute_layout_strides, where the block stride follows the spec's page size
+(padded or not) for every backend; the KVarN backend now declares its layout (LBNHC) and folds the
+per-token [N, C] slots of the runner's 4D view back into one tile per (block, head).
+
+Kind: feature
+What: KVarN cache dtypes, quant mode, backend registration, page size
+Upstream: none (KVarN is Huawei CSL's, Apache-2.0)
+Cut-against: 0.32.0: KVQuantMode.KVARN moves from 11 to 100, because #57057's ULTRAQUANT_4BIT took 11 (a
+  duplicate IntEnum value is a silent alias); both dtypes kept in every registry
+Retires-when: upstreamed
+
+--- exported from 31d868e58 (kvarn-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/config/cache.py b/config/cache.py
+index 5eb26726c..43f1c794e 100644
+--- a/config/cache.py
++++ b/config/cache.py
+@@ -51,6 +51,10 @@
+     "turboquant_k3v4_nc",
+     "turboquant_3bit_nc",
+     "ultraquant_4bit",
++    "kvarn_k4v2_g128",
++    "kvarn_k4v4_g128",
++    "kvarn_k4v2_g64",
++    "kvarn_k4v4_g64",
+     "int4_per_token_head",
+     "int8_per_token_head",
+     "fp8_per_token_head",
+diff --git a/envs.py b/envs.py
+index 30148da33..83b35f4f2 100755
+--- a/envs.py
++++ b/envs.py
+@@ -228,6 +228,26 @@
+     VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
+     VLLM_DRAFT_TEMP_SCALE: float = 1.0
+     VLLM_MARLIN_REPACK_STAGED: str | None = None
++    KVARN_POW2_SLOT: bool = False
++    KVARN_POOL_MEM_FRAC: str | None = None
++    KVARN_FA_SCRATCH_CAP: str | None = None
++    KVARN_SINKHORN_ITERS: int = 8
++    KVARN_SINK_TOKENS: int = 128
++    KVARN_QUANT_SLIDING: bool = False
++    KVARN_FUSED_VERIFY: bool = True
++    KVARN_FUSED_VERIFY_MAXQ: int = 8
++    KVARN_FUSED_VERIFY_MIN_BLOCKS: int = 64
++    KVARN_DBG_LAYERS: bool = False
++    KVARN_POOL_SLOTS: int = 0
++    KVARN_LOOKUP_BLOCKS: int = 0
++    KVARN_SPEC_DEBUG: bool = False
++    KVARN_SHARED_VERIFY: bool = False
++    KVARN_FAST_FLUSH: bool = True
++    KVARN_DUMP_TILES: str = ""
++    KVARN_RTN_QUANTILE: str = ""
++    KVARN_NUM_KV_SPLITS: str | None = None
++    KVARN_FUSED_DECODE: bool = True
++    KVARN_SPLIT_K: str | None = None
+     # GiB of vision-tower weights to keep in pinned host memory; 0 disables.
+     VLLM_VISION_CPU_OFFLOAD_GB: float = 0.0
+     VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
+@@ -1665,6 +1685,28 @@
+     "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
+     # Marlin repack staging buffer, opt-in: "1" turns it on (GA100 mining cards); unset or anything else = off
+     "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
++    # KVarN KV cache (kvarn/, Huawei CSL naming kept): the knobs its modules read. None-typed ones keep
++    # "unset" distinct from a value because the readers branch on presence.
++    "KVARN_POW2_SLOT": lambda: os.environ.get("KVARN_POW2_SLOT", "0") == "1",
++    "KVARN_POOL_MEM_FRAC": lambda: os.environ.get("KVARN_POOL_MEM_FRAC"),
++    "KVARN_FA_SCRATCH_CAP": lambda: os.environ.get("KVARN_FA_SCRATCH_CAP"),
++    "KVARN_SINKHORN_ITERS": lambda: int(os.environ.get("KVARN_SINKHORN_ITERS", "8")),
++    "KVARN_SINK_TOKENS": lambda: int(os.environ.get("KVARN_SINK_TOKENS", "128")),
++    "KVARN_QUANT_SLIDING": lambda: os.environ.get("KVARN_QUANT_SLIDING") == "1",
++    "KVARN_FUSED_VERIFY": lambda: os.environ.get("KVARN_FUSED_VERIFY", "1") == "1",
++    "KVARN_FUSED_VERIFY_MAXQ": lambda: int(os.environ.get("KVARN_FUSED_VERIFY_MAXQ", "8")),
++    "KVARN_FUSED_VERIFY_MIN_BLOCKS": lambda: int(os.environ.get("KVARN_FUSED_VERIFY_MIN_BLOCKS", "64")),
++    "KVARN_DBG_LAYERS": lambda: os.environ.get("KVARN_DBG_LAYERS") == "1",
++    "KVARN_POOL_SLOTS": lambda: int(os.environ.get("KVARN_POOL_SLOTS", "0")),
++    "KVARN_LOOKUP_BLOCKS": lambda: int(os.environ.get("KVARN_LOOKUP_BLOCKS", "0")),
++    "KVARN_SPEC_DEBUG": lambda: os.environ.get("KVARN_SPEC_DEBUG", "0") == "1",
++    "KVARN_SHARED_VERIFY": lambda: os.environ.get("KVARN_SHARED_VERIFY", "0") == "1",
++    "KVARN_FAST_FLUSH": lambda: os.environ.get("KVARN_FAST_FLUSH", "1") == "1",
++    "KVARN_DUMP_TILES": lambda: os.environ.get("KVARN_DUMP_TILES", ""),
++    "KVARN_RTN_QUANTILE": lambda: os.environ.get("KVARN_RTN_QUANTILE", ""),
++    "KVARN_NUM_KV_SPLITS": lambda: os.environ.get("KVARN_NUM_KV_SPLITS"),
++    "KVARN_FUSED_DECODE": lambda: os.environ.get("KVARN_FUSED_DECODE", "1") == "1",
++    "KVARN_SPLIT_K": lambda: os.environ.get("KVARN_SPLIT_K"),
+     "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
+         os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
+     ),
+diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
+index bec1856d9..e3389d4e1 100644
+--- a/model_executor/layers/attention/attention.py
++++ b/model_executor/layers/attention/attention.py
+@@ -667,6 +667,26 @@
+                 page_size_padded=shared_page,
+             )
+         else:
++            if isinstance(self.kv_cache_dtype, str) and self.kv_cache_dtype.startswith(
++                "kvarn_"
++            ):
++                from vllm.model_executor.layers.quantization.kvarn.config import (
++                    KVarNConfig,
++                )
++
++                kvarn_config = KVarNConfig.from_cache_dtype(
++                    self.kv_cache_dtype, self.head_size
++                )
++                slot_bytes = kvarn_config.tile_bytes_aligned // kvarn_config.group
++                return FullAttentionSpec(
++                    block_size=block_size,
++                    num_kv_heads=self.num_kv_heads,
++                    head_size=self.head_size,
++                    head_size_v=self.head_size_v,
++                    dtype=self.kv_cache_torch_dtype,
++                    kv_quant_mode=quant_mode,
++                    state_content_bytes=slot_bytes,
++                )
+             return FullAttentionSpec(
+                 block_size=block_size,
+                 num_kv_heads=self.num_kv_heads,
+diff --git a/platforms/cuda.py b/platforms/cuda.py
+index 401a98f66..9cc37b42b 100644
+--- a/platforms/cuda.py
++++ b/platforms/cuda.py
+@@ -162,6 +162,7 @@
+                 AttentionBackendEnum.FLASH_ATTN,
+                 AttentionBackendEnum.TRITON_ATTN,
+                 AttentionBackendEnum.FLEX_ATTENTION,
++                AttentionBackendEnum.KVARN,
+                 AttentionBackendEnum.TURBOQUANT,
+             ]
+         else:
+@@ -175,6 +176,7 @@
+                 AttentionBackendEnum.FLASHINFER,
+                 AttentionBackendEnum.TRITON_ATTN,
+                 AttentionBackendEnum.FLEX_ATTENTION,
++                AttentionBackendEnum.KVARN,
+                 AttentionBackendEnum.TURBOQUANT,
+             ]
+ 
+@@ -363,6 +365,70 @@
+                 "`wsl --shutdown`."
+             )
+ 
++        # KVarN keeps a fixed-size fp16 tail pool for each active request.
++        # Bound scheduler concurrency to the pool budget before worker startup;
++        # the backend itself cannot safely grow this allocation after CUDA graph
++        # buffers have been created.
++        cache_config = vllm_config.cache_config
++        cache_dtype = getattr(cache_config, "cache_dtype", None)
++        if (
++            model_config is not None
++            and isinstance(cache_dtype, str)
++            and cache_dtype.startswith("kvarn_")
++            and not getattr(model_config, "use_mla", False)
++        ):
++            from vllm.model_executor.layers.quantization.kvarn.config import (
++                KVarNConfig,
++            )
++
++            head_size = model_config.get_head_size()
++            if head_size not in (128, 256, 512):
++                raise ValueError(
++                    f"{cache_dtype} requires head_dim in (128, 256, 512), "
++                    f"but this model has head_dim={head_size}."
++                )
++
++            # KVarN's dense backend has no sliding-window mask. Preserve the
++            # full-precision SW layers in hybrid models unless explicitly opted in.
++            hf_text_config = getattr(model_config, "hf_text_config", None)
++            layer_types = getattr(hf_text_config, "layer_types", None)
++            has_swa = (
++                "sliding_attention" in layer_types
++                if layer_types
++                else getattr(hf_text_config, "sliding_window", None) is not None
++            )
++            skip_layers = cache_config.kv_cache_dtype_skip_layers
++            if envs.KVARN_QUANT_SLIDING:
++                while "sliding_window" in skip_layers:
++                    skip_layers.remove("sliding_window")
++            elif has_swa and "sliding_window" not in skip_layers:
++                skip_layers.append("sliding_window")
++
++            kvarn_cfg = KVarNConfig.from_cache_dtype(cache_dtype, head_size)
++            weight_bytes = kvarn_cfg.estimate_weight_bytes(
++                model_config.model,
++                tensor_parallel_size=parallel_config.tensor_parallel_size,
++            )
++            supported = kvarn_cfg.max_supported_seqs(
++                total_gpu_bytes=cls.get_device_total_memory(),
++                num_kv_heads=model_config.get_num_kv_heads(parallel_config),
++                num_layers=KVarNConfig.num_kvarn_layers(
++                    model_config, parallel_config
++                ),
++                max_num_batched_tokens=scheduler_config.max_num_batched_tokens,
++                gpu_memory_utilization=cache_config.gpu_memory_utilization,
++                weight_bytes=weight_bytes,
++            )
++            if scheduler_config.max_num_seqs > supported:
++                logger.warning(
++                    "KVarN (%s): capping max_num_seqs %d -> %d for the fp16 "
++                    "tail-pool budget.",
++                    cache_dtype,
++                    scheduler_config.max_num_seqs,
++                    supported,
++                )
++                scheduler_config.max_num_seqs = supported
++
+     @classmethod
+     def get_current_memory_usage(
+         cls, device: torch.types.Device | None = None
+diff --git a/platforms/interface.py b/platforms/interface.py
+index 3df44a927..c28c8e3a2 100644
+--- a/platforms/interface.py
++++ b/platforms/interface.py
+@@ -979,6 +979,23 @@
+                 cache_dtype_str=cache_config.cache_dtype,
+                 kv_quant_mode=kv_quant_mode,
+             ).page_size_bytes
++        elif cache_config.cache_dtype.startswith("kvarn_"):
++            from vllm.model_executor.layers.quantization.kvarn.config import (
++                KVarNConfig,
++            )
++
++            kvarn_config = KVarNConfig.from_cache_dtype(
++                cache_config.cache_dtype, model_config.get_head_size()
++            )
++            slot_bytes = kvarn_config.tile_bytes_aligned // kvarn_config.group
++            attn_page_size_1_token = FullAttentionSpec(
++                block_size=1,
++                num_kv_heads=model_config.get_num_kv_heads(parallel_config),
++                head_size=model_config.get_head_size(),
++                dtype=kv_cache_dtype,
++                kv_quant_mode=kv_quant_mode,
++                state_content_bytes=slot_bytes,
++            ).page_size_bytes
+         elif (
+             cache_config.cache_dtype.startswith("turboquant_")
+             or cache_config.cache_dtype == "ultraquant_4bit"
+diff --git a/utils/torch_utils.py b/utils/torch_utils.py
+index 4bf2e3397..7b229679c 100644
+--- a/utils/torch_utils.py
++++ b/utils/torch_utils.py
+@@ -51,6 +51,10 @@
+     "turboquant_k3v4_nc": torch.uint8,
+     "turboquant_3bit_nc": torch.uint8,
+     "ultraquant_4bit": torch.uint8,
++    "kvarn_k4v2_g128": torch.uint8,
++    "kvarn_k4v4_g128": torch.uint8,
++    "kvarn_k4v2_g64": torch.uint8,
++    "kvarn_k4v4_g64": torch.uint8,
+     "nvfp4": torch.uint8,
+     "nvfp4_4over6": torch.uint8,
+ }
+diff --git a/v1/attention/backends/registry.py b/v1/attention/backends/registry.py
+index 207c112a3..c09ed4381 100644
+--- a/v1/attention/backends/registry.py
++++ b/v1/attention/backends/registry.py
+@@ -151,6 +151,7 @@
+     CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
+     CPU_MLA = "vllm.v1.attention.backends.mla.cpu_mla.CPUMLABackend"
+     AMX_MLA = "vllm.v1.attention.backends.mla.amx_mla.AMXMLABackend"
++    KVARN = "vllm.v1.attention.backends.kvarn_attn.KVarNAttentionBackend"
+     TURBOQUANT = "vllm.v1.attention.backends.turboquant_attn.TurboQuantAttentionBackend"
+     ULTRAQUANT = "vllm.v1.attention.backends.ultraquant_attn.UltraQuantAttentionBackend"
+     # Placeholder for third-party/custom backends - must be registered before use
+diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
+index 79e88ca91..8f968eefd 100644
+--- a/v1/kv_cache_interface.py
++++ b/v1/kv_cache_interface.py
+@@ -57,6 +57,9 @@
+     TURBOQUANT_3BIT_NC = 9
+     NVFP4_DS_MLA = 10  # opaque-bytes NVFP4 DS-MLA layouts (FlashMLA sparse)
+     ULTRAQUANT_4BIT = 11  # packed FP4 values + UE8M0 group scales
++    # KVarN is not upstream's: its value sits far from upstream's counter, which reached 11
++    # with ULTRAQUANT_4BIT (#57057) the release after KVarN took 11 (fork rule, vllm/CLAUDE.md).
++    KVARN = 100
+ 
+     @property
+     def is_per_token_head(self) -> bool:
+@@ -87,6 +90,11 @@
+         """True for the UltraQuant 4-bit KV-cache format."""
+         return self == KVQuantMode.ULTRAQUANT_4BIT
+ 
++    @property
++    def is_kvarn(self) -> bool:
++        """True for KVarN packed KV-cache quantization."""
++        return self == KVQuantMode.KVARN
++
+ 
+ def get_kv_quant_mode(kv_cache_dtype: str) -> KVQuantMode:
+     """Map a ``kv_cache_dtype`` string to a :class:`KVQuantMode`."""
+@@ -107,6 +115,8 @@
+         return KVQuantMode[kv_cache_dtype.upper()]
+     if kv_cache_dtype == "ultraquant_4bit":
+         return KVQuantMode.ULTRAQUANT_4BIT
++    if isinstance(kv_cache_dtype, str) and kv_cache_dtype.startswith("kvarn_"):
++        return KVQuantMode.KVARN
+     if isinstance(kv_cache_dtype, str) and kv_cache_dtype.startswith("fp8"):
+         return KVQuantMode.FP8_PER_TENSOR
+     return KVQuantMode.NONE

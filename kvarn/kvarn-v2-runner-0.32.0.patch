@@ -1,0 +1,216 @@
+KVarN V2-runner compatibility fixes for vLLM 0.28.0.
+
+These changes are applied after the 0.28 KVarN base port and the repo's DFlash2 patches. They keep sliding-window groups out of prefix-cache arithmetic, use the Mamba group's block size for resumed-state indexing, and harden DFlash2 selector buffers against degenerate scores.
+
+Ported to 0.29.0: the four kv_cache_utils.py hunks are retired. Upstream rewrote that function as
+resolve_kv_cache_block_sizes (#51718, #53896): the hash unit is now the GCD over prefix-cacheable groups
+only and every spec's per-state alignment is checked, which is what the hunks did by hand for the
+drafter's sliding-window groups. On this model the groups are the KVarN full-attention layers and the
+Mamba layers at the aligned block (2176 tokens for k4v2_g128) and the drafter's sliding-window layers at
+block 128 with their page padded to the primary page, so both trees compute the same scheduler block
+(2176) and hash unit (128); the hunks changed nothing for this geometry, and the coordinator hunks below
+still exempt a sliding-window block that does not divide the scheduler block.
+
+Kind: own
+What: KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards)
+Upstream: none
+Cut-against: 0.32.0: the SlidingWindowManager.cache_blocks override stays after #61126 removed
+  get_num_common_prefix_blocks; the mamba_hybrid.py hunk is retired (#55601 seeds the state index with
+  mamba_block_size, the same fix)
+Retires-when: rides with KVarN
+
+--- exported from faecbb10d (kvarn-v2-runner-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
+index e3389d4e1..9ea8e007a 100644
+--- a/model_executor/layers/attention/attention.py
++++ b/model_executor/layers/attention/attention.py
+@@ -104,6 +104,7 @@
+     page_budget: int,
+     fallback: int,
+     kv_cache_spec: KVCacheSpec | None = None,
++    divisor_of: int | None = None,
+ ) -> int:
+     """Largest supported kernel block size whose page fits in ``page_budget``.
+ 
+@@ -118,11 +119,31 @@
+     sizes = attn_backend.get_supported_kernel_block_sizes(kv_cache_spec)
+     max_block_size = page_budget // per_token_bytes
+     candidates = [s for s in sizes if isinstance(s, int)]
+-    candidates.extend(
+-        max(s.base, max_block_size // s.base * s.base)
+-        for s in sizes
+-        if isinstance(s, MultipleOf)
+-    )
++    for s in sizes:
++        if not isinstance(s, MultipleOf):
++            continue
++        scaled = max(s.base, max_block_size // s.base * s.base)
++        # (kvarn-v2) A padded SW drafter page next to a hybrid primary block: take the
++        # largest fitting block that also DIVIDES the primary block (a multiple of 128
++        # first, then of the base), so the group stays a divisor of the scheduler block
++        # and of prefix_match_unit. The largest aligned block alone lands on 432 against
++        # a 2176 primary at DFLASH_TOKENS=7, and CTX=huge + prefix caching (#179) is then
++        # refused: "prefix-cacheable KV cache group block sizes must be divisible by
++        # prefix_match_unit" (128). 0.29 picked 128 here.
++        if divisor_of:
++            for step in (128, s.base):
++                d = next(
++                    (
++                        d
++                        for d in range(max_block_size, step - 1, -1)
++                        if divisor_of % d == 0 and d % step == 0
++                    ),
++                    0,
++                )
++                if d:
++                    scaled = d
++                    break
++        candidates.append(scaled)
+     if not candidates:
+         return fallback
+     smallest = min(candidates)
+@@ -635,6 +656,13 @@
+             # cannot run the primary block start from their smallest block and
+             # ``unify`` scales it up by an integer ratio.
+             shared_page = vllm_config.cache_config.skip_page_size_padded
++            # port(kvarn-v2): hybrid without skip layers: pad the drafter's
++            # SW pages to the mamba/primary page instead of wasting 16-token
++            # blocks inside 1.8 MB uniform pages (26x overhead).
++            if shared_page is None and str(
++                vllm_config.cache_config.cache_dtype
++            ).startswith("kvarn"):
++                shared_page = vllm_config.cache_config.mamba_page_size_padded
+             # The backend owns its packing
+             kv_cache_spec = self.attn_backend.customize_spec(
+                 SlidingWindowSpec(
+@@ -655,6 +683,7 @@
+                 page_budget,
+                 block_size,
+                 kv_cache_spec,
++                divisor_of=block_size if shared_page else None,
+             )
+             return SlidingWindowSpec(
+                 block_size=sw_block_size,
+diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
+index a1651f208..5ef2f149f 100644
+--- a/model_executor/models/qwen3_dflash.py
++++ b/model_executor/models/qwen3_dflash.py
+@@ -257,6 +257,15 @@
+         )
+ 
+         self.sliding_window = sliding_window
++        # KVarN has no sliding-window backend; keep the drafter's SW layers in
++        # the native cache dtype while the target full-attention layers use KVarN.
++        if cache_config is not None and str(
++            getattr(cache_config, "cache_dtype", "auto")
++        ).startswith("kvarn"):
++            from copy import copy as _kv_copy
++
++            cache_config = _kv_copy(cache_config)
++            cache_config.cache_dtype = "auto"
+         self.attn = Attention(
+             self.num_heads,
+             self.head_dim,
+diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
+index 7d4f2d5a2..01849864d 100644
+--- a/v1/core/kv_cache_coordinator.py
++++ b/v1/core/kv_cache_coordinator.py
+@@ -110,7 +110,8 @@
+         # The scheduling granularity (LCM of all group block sizes), must be a multiple
+         # of the hash_block_size and the block size of each group.
+         assert scheduler_block_size % hash_block_size == 0 and all(
+-            scheduler_block_size % g.kv_cache_spec.block_size == 0
++            isinstance(g.kv_cache_spec, SlidingWindowSpec)
++            or scheduler_block_size % g.kv_cache_spec.block_size == 0
+             for g in kv_cache_config.kv_cache_groups
+         )
+         self.scheduler_block_size = scheduler_block_size
+diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
+index d779d5640..7cf13b31c 100644
+--- a/v1/core/single_type_kv_cache_manager.py
++++ b/v1/core/single_type_kv_cache_manager.py
+@@ -1178,6 +1178,31 @@
+             num_computed_tokens - self.sliding_window + 1 - self.extra_retained_tokens,
+         )
+ 
++    def cache_blocks(
++        self,
++        request: Request,
++        num_tokens: int,
++        retention_interval: int | None = None,
++        *,
++        replay_boundaries: Sequence[int],
++    ) -> None:
++        # Prefix reuse is not meaningful for a rolling window. Skip the write
++        # path when the SW block and hash unit are not divisible in either
++        # direction, or when the scheduler boundary is finer than the SW
++        # block. The latter would make reachable_block_mask assert before
++        # resolve_block_hashes is reached.
++        if (
++            self.block_size % self.block_pool.hash_block_size != 0
++            or self.scheduler_block_size % self.block_size != 0
++        ):
++            return
++        super().cache_blocks(
++            request,
++            num_tokens,
++            retention_interval=retention_interval,
++            replay_boundaries=replay_boundaries,
++        )
++
+ 
+ class CircularBufferManager(FullAttentionManager):
+     """Claims the ring's single block per request; prefix caching disabled."""
+diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
+index 37c0378d6..e766d0341 100644
+--- a/v1/worker/gpu/model_runner.py
++++ b/v1/worker/gpu/model_runner.py
+@@ -1353,9 +1353,14 @@
+             decode_graph_eligible=decode_graph_eligible,
+             max_seq_len_np=max_seq_len_np,
+         )
+-        return batch_state, get_uniform_decode_token_count(
++        uniform_decode_token_count = get_uniform_decode_token_count(
+             num_reqs, num_toks, max_query_len, decode_graph_eligible
+         )
++        # A uniform-looking final prefill chunk is still prefill. Do not route
++        # it through a captured speculative-decode graph on a prefix-cache hit.
++        if uniform_decode_token_count is not None and batch_state.has_prefill:
++            uniform_decode_token_count = None
++        return batch_state, uniform_decode_token_count
+ 
+     def prepare_inputs(
+         self,
+diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+index e914af8d5..5609a83e0 100644
+--- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
++++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+@@ -97,6 +97,9 @@
+             IS_DRAFTING=True,
+             USE_FP64=USE_FP64,
+         )
++        # A degenerate distribution can produce NaN scores. Keep the walk in
++        # bounds; the verify step will reject any bad proposal.
++        index = tl.where(index >= top_k, 0, index)
+         # vLLM 0.28.0's rejection sampler expects pre-temperature logits. With TRUNCATE
+         # the cached row is the truncated proposal (-inf outside the kept support).
+         realized = scores
+@@ -260,7 +263,7 @@
+             device,
+             cache_steps=self.num_speculative_steps,
+         )
+-        self._selector_tokens = torch.empty(
++        self._selector_tokens = torch.zeros(
+             (self.max_num_reqs, self.draft_block),
+             dtype=self.draft_tokens.dtype,
+             device=device,
+@@ -752,6 +755,8 @@
+         scores = self._score_candidates(candidate_ids, unary_logits, hidden_states)
+         # The walk writes the drafter's own block into _selector_tokens; it is copied into
+         # draft_tokens below, where _apply_lookup can fuse it with the lookup.
++        # A degenerate selector can emit NaN/inf scores (kvarn-v2-runner); keep the walk finite.
++        scores = torch.nan_to_num(scores, nan=-1e30, posinf=1e30, neginf=-1e30)
+         truncate = self._truncate and self._req_top_p is not None
+         self.candidate_sampler.sample(
+             candidate_ids,

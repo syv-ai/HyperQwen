@@ -1,0 +1,178 @@
+Adds GET/HEAD /, /api/status, /api/experimental/model-recommendations,
+and /api/show to vLLM's FastAPI app so `ollama launch codex` can discover
+the served model and read its context length dynamically without requiring
+an external proxy.
+
+- Dynamic model matching against configured served_model_name and model paths.
+- Returns standard HTTP 404 when requested model is not served.
+- Reads general.context_length dynamically from model_config.max_model_len.
+- Adds discovery routes to UNGUARDED_PATHS in AuthenticationMiddleware so
+  servers configured with --api-key do not reject unauthenticated client probes.
+
+Kind: feature
+What: GET/HEAD /, /api/status, /api/experimental/model-recommendations, and /api/show for `ollama launch codex`
+  compatibility. Matches served models dynamically, returns 404 for unserved models (the body names the
+  requested model only, never a served name or path), reads context length from model_config.max_model_len,
+  and adds the routes to UNGUARDED_PATHS
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from f1715243f (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/entrypoints/launchers/app.py b/entrypoints/launchers/app.py
+index 59c4fc37a..d8f69da0b 100644
+--- a/entrypoints/launchers/app.py
++++ b/entrypoints/launchers/app.py
+@@ -1,9 +1,12 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++import os
++import re
+ import warnings
+ from argparse import Namespace
+ 
+-from fastapi import FastAPI
++from fastapi import FastAPI, Request
++from starlette.responses import JSONResponse
+ 
+ from vllm.config import ModelConfig
+ from vllm.entrypoints.serve.exception_handling.register import init_exception_handler
+@@ -42,6 +45,102 @@
+     app.state.args = args
+     app.root_path = args.root_path
+ 
++    # Compatibility endpoint for clients that probe the server root
++    # before using the OpenAI-compatible API.
++    @app.api_route(
++        "/",
++        methods=["GET", "HEAD"],
++        include_in_schema=False,
++    )
++    async def root():
++        return {"status": "ok"}
++
++    # Minimal Ollama compatibility endpoints used by `ollama launch codex`.
++    @app.get("/api/status", include_in_schema=False)
++    async def ollama_status():
++        return {"status": "ok"}
++
++    @app.get("/api/experimental/model-recommendations", include_in_schema=False)
++    async def ollama_model_recommendations():
++        return {"models": []}
++
++    @app.post("/api/show", include_in_schema=False)
++    async def ollama_show(request: Request):
++        try:
++            body = await request.json()
++        except Exception:
++            body = {}
++        req_model = str(body.get("model", "") or body.get("name", "")).strip()
++
++        # Collect configured served model names and underlying model paths
++        served_names: list[str] = []
++        raw_served = getattr(args, "served_model_name", None)
++        if raw_served:
++            if isinstance(raw_served, list):
++                served_names.extend(str(s) for s in raw_served)
++            else:
++                served_names.append(str(raw_served))
++        if getattr(args, "model", None):
++            served_names.append(str(args.model))
++        if model_config and getattr(model_config, "model", None):
++            served_names.append(str(model_config.model))
++
++        # Deduplicate while preserving order
++        unique_served: list[str] = list(dict.fromkeys(served_names))
++
++        def _matches(candidate: str, target: str) -> bool:
++            c = candidate.lower()
++            t = target.lower()
++            if c == t or c == os.path.basename(t):
++                return True
++            # Match colon tags or hyphens (e.g. qwen3.8:27b vs qwen3.8-27b)
++            if c.replace(":", "-") == t.replace(":", "-"):
++                return True
++            # Match without :latest
++            if c.removesuffix(":latest") == t or t.removesuffix(":latest") == c:
++                return True
++            # Prefix match before tag (e.g. qwen3.8 vs qwen3.8:27b)
++            if c.split(":")[0] == t.split(":")[0]:
++                return True
++            return False
++
++        matched = (
++            any(_matches(req_model, name) for name in unique_served)
++            if (unique_served and req_model)
++            else True
++        )
++
++        if not matched:
++            return JSONResponse(
++                status_code=404,
++                content={
++                    "error": f"model '{req_model}' not found"
++                },
++            )
++
++        # Context length from model_config, falling back to args or 262144
++        context_len = (
++            getattr(model_config, "max_model_len", None)
++            or getattr(args, "max_model_len", None)
++            or 262144
++        )
++
++        # Parameter size heuristic from model name if available
++        param_match = re.search(
++            r"(\d+(\.\d+)?[bB])",
++            str(getattr(args, "model", "") or req_model),
++        )
++        param_size = param_match.group(1).upper() if param_match else "27B"
++
++        return {
++            "model_info": {
++                "general.context_length": context_len,
++            },
++            "details": {
++                "parameter_size": param_size,
++            },
++        }
++
+     register_api_routers(args, app, supported_tasks, model_config)
+ 
+     # Endpoint plugin hooks run after core routers so plugins can inspect them.
+diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
+index 7327529b6..71150c999 100644
+--- a/entrypoints/serve/middleware/authenticate.py
++++ b/entrypoints/serve/middleware/authenticate.py
+@@ -10,12 +10,24 @@
+ from starlette.types import ASGIApp, Receive, Scope, Send
+ 
+ # The paths that answer without the API key: the liveness and readiness
+-# probes, and the load and version endpoints. Every other path on the app
+-# needs a bearer token. This includes the inference routes, /tokenize (it
+-# renders arbitrary text through the chat template), /metrics and the docs.
+-# A route that is added later is therefore guarded by default. A scraper
+-# that cannot send the key belongs on a separate listener, not in this set.
+-UNGUARDED_PATHS = frozenset({"/health", "/ping", "/load", "/version"})
++# probes, the load and version endpoints, and Ollama discovery routes
++# (/, /api/status, /api/experimental/model-recommendations, /api/show)
++# used by client launchers like `ollama launch codex`. Every other path
++# on the app needs a bearer token. This includes the inference routes,
++# /tokenize (it renders arbitrary text through the chat template),
++# /metrics and the docs. A route that is added later is therefore guarded
++# by default. A scraper that cannot send the key belongs on a separate
++# listener, not in this set.
++UNGUARDED_PATHS = frozenset({
++    "/health",
++    "/ping",
++    "/load",
++    "/version",
++    "/",
++    "/api/status",
++    "/api/experimental/model-recommendations",
++    "/api/show",
++})
+ 
+ 
+ def _is_cors_preflight(scope: Scope, headers: Headers) -> bool:

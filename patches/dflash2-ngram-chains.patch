@@ -1,81 +1,33 @@
-Drafter-free n-gram chains for DFlash2 (VLLM_DFLASH2_CHAIN=1, default off).
+Ported to 0.29: the propose() override takes dp_sync (DPSyncState) instead of num_tokens_across_dp, matching the
+runner call and the DFlashSpeculator base (upstream changed the signature in 0.29); the inner draft path still receives
+num_tokens_across_dp from the base.
 
-While a request keeps reproducing its own context, whole verify blocks are
-proposed from its history alone — context-KV insert + suffix lookup +
-point-mass rewrite, a handful of small eager kernels — and the draft model's
-forward AND its CUDA-graph replay are skipped entirely, until the first
-rejected token ends the chain. The proposal stays lossless: every position's
-draft distribution is a point mass on the proposed token, a legal q for
-vLLM's rejection sampler; positions past the match's continuation hold token
-0 and get rejected, which is exactly the exit signal.
+Kind: feature
+What: quantized candidate chains for the drafter; `propose` override
+Upstream: none
+Cut-against: 0.32.0: propose() takes dp_sync_state (#60754 renamed dp_sync) and forwards
+  num_speculative_tokens, which the 0.32 runner passes by keyword on every step
+Retires-when: upstreamed
 
-Ported from Dmtrii-tesla/dflash2-ngram-vllm (Apache-2.0), offered for
-cherry-pick in issue #38 by its author, who independently rebuilt this
-repo's lookup lane and added this layer on top. Their three load-bearing
-design calls are preserved:
+--- exported from 290f372aa (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
-  - the entry/exit state machine lives in propose(), on the host, once per
-    step -- under FULL cudagraphs any Python inside _generate_draft runs at
-    capture time only (their v1 died exactly there);
-  - the one value crossing GPU->host is a captured D2H memcpy of a
-    per-request flag into pinned memory, replayed by the graph every step,
-    read one step stale -- the same pattern the sticky/adaptive controllers
-    already use;
-  - entry evidence is the lookup's match_len (reaches nmax), not its valid
-    count (clamped to k; keying on it can never fire).
-
-Adaptations to this tree: propose() composes the chain decision ahead of
-the existing wrapper (which carries the dormant dflash3 extension
-machinery) instead of replacing the method, and _chain_generate mirrors
-this tree's current prepare_dflash_inputs signature. Constraints: single
-request in the batch, dp_size == 1, no mm inputs -- one shared decision
-per batch, like the sticky long block. While a chain is active,
-next_num_draft_tokens pins the full verify block so the tail is not
-thrown away.
-
-Envs: VLLM_DFLASH2_CHAIN (off), VLLM_DFLASH2_CHAIN_MINMATCH (8, tokens of
-longest context match required to enter), VLLM_DFLASH2_CHAIN_LOG_SEC (30,
-period of the "chain: N/M steps engaged" line; 0 silences). Requires
-VLLM_DFLASH2_LOOKUP=1; warns and disables itself otherwise. No compiled or
-captured shape depends on any of them (chain steps run eagerly), so they
-stay out of the compile-cache key by construction.
-
-Measured on this card (1x 3090 @ 250 W, CTX=fast, DFLASH_TOKENS=7,
-bench/labd_bench.py --ctx 20000 + run_benchmarks single, chain on vs off):
-
-  copy (25k ctx, greedy)   256.9 -> 274.8 tok/s (+7.0%), reproduced twice
-  six-task labd total      99.9 -> 99.2-101.4 (flat)
-  C1 chat greedy           137.6/137.9 -> 135.3 (within spread)
-  C1 chat T=default        129.7/126.6 -> 117.6 UNGATED (-8%); with the
-                           greedy-only gate chains never engage there and
-                           the cell reads 123.5, inside the sampling band
-  engage rate              ~6% of steps on the mixed suite
-  correctness              bench/verbatim.py all shapes; tool-calling round
-                           trip; scheduler sees a legal q every step
-
-Why the temperature gate: a point-mass q accepts with probability p(token),
-so under sampling the chain's context copy displaces the drafter's
-distribution-aware proposals on exactly the steps it wins under greedy.
-Greedy requests keep the whole win; sampled requests keep the drafter.
-
-Off-state: pool byte-identical (68,605 tokens), bench within run-to-run
-spread of the pre-port baseline.
-
---- generated hunks below ---
+diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+index 2121031ed..e1649d677 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-@@ -2,6 +2,7 @@
+@@ -1,7 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
  # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
  
- import os
+-import os
 +import time
  from typing import Any
  
  import torch
-@@ -11,7 +12,10 @@
- from vllm.config.compilation import CUDAGraphMode
- from vllm.triton_utils import tl, tldevice, triton
- from vllm.v1.worker.gpu.sample.gumbel import tl_rand32, tl_rand64
+@@ -12,7 +12,10 @@
+ from vllm.logger import init_logger
+ from vllm.triton_utils import tl, triton
+ from vllm.v1.worker.gpu.sample.gumbel import gumbel_noised_argmax
 -from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
 +from vllm.v1.worker.gpu.spec_decode.dflash.speculator import (
 +    DFlashSpeculator,
@@ -84,8 +36,8 @@ spread of the pre-port baseline.
  
  logger = init_logger(__name__)
  from vllm.v1.worker.gpu.spec_decode.dflash2.lookup import (
-@@ -277,6 +281,54 @@
-         self._lookup_sticky = int(os.environ.get("VLLM_DFLASH2_LOOKUP_STICKY", "3"))
+@@ -347,6 +350,48 @@
+         self._lookup_sticky = envs.VLLM_DFLASH2_LOOKUP_STICKY
          self._sticky = 0
  
 +        # --- drafter-free chains (VLLM_DFLASH2_CHAIN=1), ported from
@@ -98,7 +50,7 @@ spread of the pre-port baseline.
 +        # runs at capture time only; the one thing crossing GPU->host is a
 +        # captured D2H memcpy of a per-request flag into pinned memory,
 +        # replayed by the graph every step exactly like the kernels around it.
-+        self._chain = os.environ.get("VLLM_DFLASH2_CHAIN", "0") == "1"
++        self._chain = envs.VLLM_DFLASH2_CHAIN
 +        if self._chain and not self._lookup:
 +            logger.warning("VLLM_DFLASH2_CHAIN=1 needs VLLM_DFLASH2_LOOKUP=1; disabling")
 +            self._chain = False
@@ -106,19 +58,13 @@ spread of the pre-port baseline.
 +            # Entry evidence is the previous normal step's longest context
 +            # match (match_len, which reaches nmax) -- NOT the lookup's valid
 +            # count, which the kernel clamps to k. Keying on valid never fires.
-+            self._chain_minmatch = int(
-+                os.environ.get("VLLM_DFLASH2_CHAIN_MINMATCH", "8")
-+            )
-+            self._chain_log_sec = float(
-+                os.environ.get("VLLM_DFLASH2_CHAIN_LOG_SEC", "30")
-+            )
++            self._chain_minmatch = envs.VLLM_DFLASH2_CHAIN_MINMATCH
++            self._chain_log_sec = envs.VLLM_DFLASH2_CHAIN_LOG_SEC
 +            # Point-mass q under sampling accepts with probability p(token):
 +            # at temperature the chain blocks displace strictly better drafter
 +            # proposals (measured -8% C1 at T=default on chat). Greedy-only by
 +            # default; VLLM_DFLASH2_CHAIN_GREEDY_ONLY=0 lifts the gate.
-+            self._chain_greedy_only = (
-+                os.environ.get("VLLM_DFLASH2_CHAIN_GREEDY_ONLY", "1") == "1"
-+            )
++            self._chain_greedy_only = envs.VLLM_DFLASH2_CHAIN_GREEDY_ONLY
 +            self._req_temp_np = None
 +            self._chain_ev_gpu = torch.zeros(
 +                self.max_num_reqs, dtype=torch.int32, device=device
@@ -139,7 +85,7 @@ spread of the pre-port baseline.
          if self._lookup:
              logger.info(
                  "DFlash2 lookup-augmented drafting on (k=%d nmin=%d nmax=%d nstrong=%d "
-@@ -299,6 +351,11 @@
+@@ -369,6 +414,11 @@
          unanimity across the batch. Below CHEAP_CTX tokens of context an extra verify
          position is nearly free (+6% per step at 1.5k against +27% at 25k), so there the
          flag alone is enough."""
@@ -151,7 +97,7 @@ spread of the pre-port baseline.
          if not self._adaptive:
              return None
          emitted = getattr(self, "last_num_emitted", None)
-@@ -336,6 +393,249 @@
+@@ -406,6 +456,257 @@
          self._prev_want = want
          return self.num_speculative_steps if long_block else self.draft_block
  
@@ -168,11 +114,12 @@ spread of the pre-port baseline.
 +        next_prefill_tokens,
 +        temperature,
 +        seeds,
-+        num_tokens_across_dp=None,
++        dp_sync_state=None,
 +        dummy_run=False,
 +        skip_attn_for_dummy_run=False,
 +        mm_inputs=None,
 +        is_profile=False,
++        num_speculative_tokens=None,
 +    ):
 +        # Chain eligibility is decided HERE, on the host, once per step --
 +        # propose() is never captured, so this state machine survives FULL
@@ -245,11 +192,12 @@ spread of the pre-port baseline.
 +            next_prefill_tokens,
 +            temperature,
 +            seeds,
-+            num_tokens_across_dp=num_tokens_across_dp,
++            dp_sync_state=dp_sync_state,
 +            dummy_run=dummy_run,
 +            skip_attn_for_dummy_run=skip_attn_for_dummy_run,
 +            mm_inputs=mm_inputs,
 +            is_profile=is_profile,
++            num_speculative_tokens=num_speculative_tokens,
 +        )
 +
 +    def _chain_should_engage(self, prev_missed: bool) -> bool:
@@ -311,6 +259,7 @@ spread of the pre-port baseline.
 +        else:
 +            hidden_states = last_hidden_states
 +        self.hidden_states[:num_target_tokens].copy_(hidden_states[:num_target_tokens])
++        self.prepare_context_anchor(input_batch, num_rejected)
 +
 +        # Same input preparation as the base path: the verify side needs slot
 +        # mappings / context positions, and suffix_lookup needs
@@ -336,6 +285,9 @@ spread of the pre-port baseline.
 +                seeds,
 +                self.block_tables.input_block_tables[gid],
 +                self.block_tables.kernel_block_sizes[gid],
++                self.block_tables.cp_rank,
++                self.dcp_size,
++                self.block_tables.cp_interleave,
 +                self.parallel_drafting_token_id,
 +                self.num_query_per_req,
 +                self.draft_block,
@@ -379,11 +331,13 @@ spread of the pre-port baseline.
 +        self._lookup_use[:num_reqs].fill_(1)
 +        self.draft_tokens[:num_reqs].copy_(tokens)
 +        draft_logits = self.draft_logits
-+        assert draft_logits is not None
-+        block_k = triton.next_power_of_2(self.selector_top_k)
++        if draft_logits is None:
++            # Greedy rejection sampling does not consume a proposal distribution.
++            return self.draft_tokens[:num_reqs]
++        block_k = triton.next_power_of_2(self.top_k)
 +        _point_mass_draft_logits_kernel[(num_reqs * k,)](
 +            draft_logits,
-+            self._cached_candidate_ids,
++            self.candidate_sampler.cached_candidate_ids,
 +            self.draft_tokens,
 +            self.draft_tokens.stride(0),
 +            self._lookup_use,
@@ -392,7 +346,7 @@ spread of the pre-port baseline.
 +            draft_logits.stride(0),
 +            draft_logits.stride(1),
 +            num_steps=k,
-+            top_k=self.selector_top_k,
++            top_k=self.top_k,
 +            BLOCK_K=block_k,
 +            num_warps=1,
 +        )
@@ -401,7 +355,7 @@ spread of the pre-port baseline.
      def set_req_states(self, req_states) -> None:
          """The token history the lookup matches against (set by the model runner)."""
          self._req_states = req_states
-@@ -343,6 +643,10 @@
+@@ -418,6 +719,10 @@
      def set_sampling_states(self, sampling_states) -> None:
          self._req_top_p = sampling_states.top_p.gpu
          self._req_top_k = sampling_states.top_k.gpu
@@ -410,9 +364,9 @@ spread of the pre-port baseline.
 +            # UVA-backed: .np is the host view of the same memory, no sync.
 +            self._req_temp_np = getattr(temp, "np", None)
  
-     def _sample_path(
+     def _generate_draft(
          self,
-@@ -490,3 +794,16 @@
+@@ -549,3 +854,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )

@@ -1,0 +1,57 @@
+Register the V2 runner's top-k/top-p sampler JIT warmups on CUDA as well as ROCm. The V2 runner calls
+apply_top_k_top_p directly and never builds a TopKTopPSampler, whose __init__ is where these warmups register, so on
+0.30.0 the registry stays empty ("JIT kernel warmup finished in 0.00s"), and the new split top-p kernels
+(_topp_sb_stats, _topp_sb_step, _topp_sb_mask) and a _topk_topp specialization compile on the first sampled batch,
+on the request path.
+
+Measured on an RTX 3090, a cold cache volume per boot, sampled traffic at concurrency 1-16: without this, the
+default profile compiles 6 kernels in-request and DFlash2 k7 11, and the first sampled batch pays ~1.86 s (cold minus
+warm first TTFT, n=3). With it, 0 in-request compiles on both; the boot warmup takes 71 s (default) / 78 s (DFlash2
+k7) on a cold volume and ~0.2 s on a warm one.
+
+Backport of vllm-project/vllm@96e203b08e (#58092, Andreas Karatzas), which landed on vLLM main after v0.30.0. The
+nine added lines are upstream's, unchanged, placed at the same point of 0.30.0's sampler setup. vllm-project/vllm#58465
+then limited the registration to ROCm, because on CUDA every cold start pays for it (CI). This carries the registration
+without that gate: with a persistent cache volume the cost is paid once per volume. On 0.31 only the gate differs.
+
+Signed-off-by: Andreas Karatzas <akaratza@amd.com>
+Signed-off-by: Michael Stufflebeam <cpuchip@gmail.com>
+
+Kind: backport
+What: registers the V2 runner's top-k/top-p sampler JIT warmups on CUDA too (vllm #58092 without
+  #58465's ROCm-only gate): 0 in-request compiles, ~71-78 s of warmup once per cold cache volume,
+  ~0.2 s warm
+Upstream: vllm #58092 (merged after 0.30.0)
+Cut-against: 0.32.0: #58092 is in the pin, still gated to ROCm by #58465; the patch removes the gate
+Retires-when: the pin that carries #58092 with CUDA registration (upstream gates it to ROCm; an
+  opt-in is the ask)
+
+--- exported from 408780872 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
+index 2128b119d..26651deb7 100644
+--- a/v1/worker/gpu/model_runner.py
++++ b/v1/worker/gpu/model_runner.py
+@@ -461,15 +461,14 @@
+             self.vllm_config, self.req_states, self.is_pooling_model, config_processors
+         )
+         if self.is_last_pp_rank and not self.is_pooling_model:
+-            # V2 bypasses TopKTopPSampler, which registers native warmups.
+-            # ROCm only: on CUDA these warmups add ~2 min to every engine start.
+-            if current_platform.is_rocm():
+-                from vllm.v1.sample.ops.topk_topp_sampler import (
+-                    register_top_k_top_p_warmups,
+-                )
++            from vllm.v1.sample.ops.topk_topp_sampler import (
++                register_top_k_top_p_warmups,
++            )
+ 
+-                with self.jit_warmup_registry.activate():
+-                    register_top_k_top_p_warmups()
++            # V2 bypasses TopKTopPSampler, which registers native warmups.
++            # CUDA also needs these for its FlashInfer fallback paths.
++            with self.jit_warmup_registry.activate():
++                register_top_k_top_p_warmups()
+ 
+             sampler_kwargs: dict[str, Any] = {
+                 "vllm_config": self.vllm_config,

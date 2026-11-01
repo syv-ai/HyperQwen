@@ -1,0 +1,79 @@
+vllm bench serve: an SSE keep-alive before the first token no longer fails the request.
+
+The request functions strip every network chunk before handing it to StreamedResponseHandler,
+which splits messages on the blank line between them. Stripping removes that separator, so when
+the server sends ": keep-alive" before the first token (this repo's launchers pass
+--sse-keep-alive-interval 30, so any prefill longer than 30 s does), the comment is glued to every
+message after it. The parser never sees a line starting "data: ", and the request is marked failed
+with "Never received a valid chunk to calculate TTFT" although the server completed it. That is
+why bench/run_benchmarks.sh --long read zeros for its 100k and 60k rows, and why #216 lost every
+prompt of 48k tokens or more.
+
+The chunks are now passed through unstripped (whitespace-only chunks are still skipped), and the
+audio request function skips SSE comments like the other two. Checked against a local server
+that sends a keep-alive before three tokens: stock fails with the error above, patched returns the
+text. Upstream main has the same code.
+
+Kind: fix
+What: `vllm bench serve` no longer fails a request whose server sends an SSE keep-alive before the
+  first token: the request functions stripped each network chunk, which deleted the blank line
+  between SSE messages and glued the `: keep-alive` comment to every message after it. With the
+  launchers' `--sse-keep-alive-interval 30`, that failed every prompt whose prefill took over 30 s
+  (`run_benchmarks.sh --long` read zeros; #216 lost its 48k+ rows). The audio request function also
+  skips SSE comments now
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from 0285915f8 (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/benchmarks/lib/endpoint_request_func.py b/benchmarks/lib/endpoint_request_func.py
+index 778a4e50d..d15b2dfdf 100644
+--- a/benchmarks/lib/endpoint_request_func.py
++++ b/benchmarks/lib/endpoint_request_func.py
+@@ -235,8 +235,9 @@
+                 handler = StreamedResponseHandler()
+ 
+                 async for chunk_bytes in response.content.iter_any():
+-                    chunk_bytes = chunk_bytes.strip()
+-                    if not chunk_bytes:
++                    # port(bench-sse-keepalive): the SSE separators are data; stripping a chunk
++                    # glues a keep-alive comment to every message after it (see the patch header).
++                    if not chunk_bytes.strip():
+                         continue
+ 
+                     messages = handler.add_chunk(chunk_bytes)
+@@ -412,8 +413,9 @@
+                 first_chunk_received = False
+                 handler = StreamedResponseHandler()
+                 async for chunk_bytes in response.content.iter_any():
+-                    chunk_bytes = chunk_bytes.strip()
+-                    if not chunk_bytes:
++                    # port(bench-sse-keepalive): the SSE separators are data; stripping a chunk
++                    # glues a keep-alive comment to every message after it (see the patch header).
++                    if not chunk_bytes.strip():
+                         continue
+ 
+                     message_strings = handler.add_chunk(chunk_bytes)
+@@ -713,14 +715,19 @@
+                     handler = StreamedResponseHandler()
+ 
+                     async for chunk_bytes in response.content.iter_any():
+-                        chunk_bytes = chunk_bytes.strip()
+-                        if not chunk_bytes:
++                        # port(bench-sse-keepalive): the SSE separators are data; stripping a chunk
++                        # glues a keep-alive comment to every message after it (see the patch header).
++                        if not chunk_bytes.strip():
+                             continue
+ 
+                         messages = handler.add_chunk(chunk_bytes)
+                         for message in messages:
+                             if type(message) is bytes:
+                                 message = message.decode("utf-8")
++                            # port(bench-sse-keepalive): SSE comments (keep-alive pings)
++                            # are not JSON, as in the two request functions above.
++                            if message.startswith(":"):
++                                continue
+                             chunk = message.removeprefix("data: ")
+                             if chunk != "[DONE]":
+                                 timestamp = time.perf_counter()

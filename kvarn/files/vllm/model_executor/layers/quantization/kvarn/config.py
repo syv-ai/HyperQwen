@@ -4,6 +4,8 @@
 
 import math
 import os
+
+import vllm.envs as envs
 from dataclasses import dataclass
 
 # Named KVarN presets: each maps to a frozen set of config parameters.
@@ -129,7 +131,7 @@ class KVarNConfig:
         offsets below are unchanged either way (trailing pad only), and every
         kernel reads ``kv_cache.stride(0/1)`` rather than assuming a size, so the
         two layouts are byte-compatible."""
-        if self.head_dim >= 256 and os.environ.get("KVARN_POW2_SLOT", "0") == "1":
+        if self.head_dim >= 256 and envs.KVARN_POW2_SLOT:
             slot = math.ceil(self.tile_bytes / self.group)
             slot_pow2 = 1 << (slot - 1).bit_length()
             aligned = slot_pow2 * self.group
@@ -240,7 +242,7 @@ class KVarNConfig:
         Fallback (weights unknown): the legacy ``frac · total`` with
         POOL_MEM_FRAC_DEFAULT, so behaviour is unchanged when we cannot read the
         weight size."""
-        env = os.environ.get("KVARN_POOL_MEM_FRAC")
+        env = envs.KVARN_POOL_MEM_FRAC
         if weight_bytes is not None and gpu_memory_utilization is not None:
             share = float(env) if env is not None else self.POOL_USABLE_SHARE_DEFAULT
             usable = gpu_memory_utilization * total_gpu_bytes - weight_bytes
@@ -305,7 +307,7 @@ class KVarNConfig:
     @classmethod
     def fa_scratch_cap(cls) -> int:
         """Token cap of the shared FA materialize scratch (KVARN_FA_SCRATCH_CAP)."""
-        env = os.environ.get("KVARN_FA_SCRATCH_CAP")
+        env = envs.KVARN_FA_SCRATCH_CAP
         return int(env) if env else cls.FA_SCRATCH_CAP_DEFAULT
 
     @classmethod
@@ -432,8 +434,8 @@ class KVarNConfig:
         # Optional env override for Sinkhorn iteration count (KVARN_SINKHORN_ITERS).
         # Default 16 mirrors the paper; useful for testing convergence at large
         # model scale (e.g. 48-layer 30B-A3B-Thinking-2507 may benefit from more).
-        iters = int(os.environ.get("KVARN_SINKHORN_ITERS", "8"))
-        sink_tokens = int(os.environ.get("KVARN_SINK_TOKENS", "128"))
+        iters = envs.KVARN_SINKHORN_ITERS
+        sink_tokens = envs.KVARN_SINK_TOKENS
         return KVarNConfig(
             head_dim=head_dim,
             key_bits=preset["key_bits"],

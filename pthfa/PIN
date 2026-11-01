@@ -1,0 +1,13 @@
+# Sourced by pthfa/install.sh and pthfa/check_vendor.sh. KEY=value lines only.
+# PTH_COMMIT is the commit of the pth-flash-attn project this directory was vendored from, here the release tag v0.1.0
+# of https://github.com/noon-at-cgn/pth-flash-attn. It is a commit id only: nothing here fetches it, and --source takes a
+# local checkout that has the commit.
+PTH_COMMIT=b0d4f7ee228448ecc3d85a2015db208ed8d21954
+# What is vendored from PTH_COMMIT, and how (pthfa/check_vendor.sh --source re-does it and diffs):
+#   csrc/ and python/  the output of `tools/export_upstream.py --out` (the shipped subset, test hooks
+#                      stripped; tools/prove_export_sass.sh proves it compiles to the same SASS)
+#   setup.py pyproject.toml tools/build_flags.py LICENSE NOTICE   the files at PTH_COMMIT, unchanged
+VLLM_VERSION=0.31.0
+TORCH_VERSION=2.13.0
+# Compute capabilities with a cubin in _C.abi3.so (SASS only, no PTX: sm_90 and newer refuse, they do not JIT).
+TORCH_CUDA_ARCH_LIST="8.0;8.6;8.9"

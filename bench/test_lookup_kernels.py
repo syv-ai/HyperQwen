@@ -1,6 +1,6 @@
 """Correctness tests for the LABD kernels against a plain-Python reference.
 
-  python test_lookup_v2.py            # needs a GPU with ~200 MB free
+  venv/bin/python bench/test_lookup_kernels.py    # needs a GPU with ~200 MB free
 """
 import sys
 

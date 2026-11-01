@@ -31,7 +31,7 @@ Within a few percent throughout. **The README's table reproduces on Python 3.14.
 | profile | KV dtype | max_model_len | pool | perplexity¹ |
 |---|---|---:|---:|---:|
 | `CTX=fast` | bf16 | 65,536 | 68,605-72,992² | 3.1174 |
-| `CTX=long` | int8 per-token-head | 131,072 | 136,429 | 3.1100 |
+| `CTX=long` | int8 per-token-head (`SPEC=dflash2 FA2_FP8KV=0`) | 131,072 | 136,429 | 3.1100 |
 | `CTX=huge` | KVarN 4/2-bit | 245,760 | 268,169 | 3.1107 |
 
 ¹ Teacher-forced, identical 12,000-character passage, echo+logprobs. Only the KV dtype
@@ -166,7 +166,7 @@ Two things fall out, and the second is the one worth carrying away:
   here, 351 vs 517 there): not a tradeoff, a loss.
 - **The 4090's per-stream advantage widens with N: +16% at N=1 → +89% at N=8.** This is
   consistent with, and extends, the README's own explanation of its +1.9% 4090 row
-  ([#32](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/32)): *batch-1 decode is
+  ([#32](https://github.com/syv-ai/HyperQwen/issues/32)): *batch-1 decode is
   bandwidth-bound, the extra compute has nothing to bite on.* Raise N and the forward pass
   goes compute-bound, so sm_89 pulls away. **Sizing a card from a single-stream benchmark
   under-buys for concurrency by roughly 5× the error you think you are making.**
@@ -186,14 +186,18 @@ sampled every 250 ms, and our N=4 run lasts 1.70× longer than fermion's on the 
 budget, so it gets 1.70× the draws at catching the same transient. **A peak-of-poll compared
 across runs of different duration is structurally biased upward on the slower machine.**
 Compare `preempt` and tail-mode onset instead: discrete, duration-invariant, and they matched
-exactly. Separately, `conc_ladder.py:245` puts `int(time.time())` inside every prompt salt, so
-token counts differ per box, per run, per rep by design.
+exactly. Separately, `conc_ladder.py` puts `int(time.time())` inside every prompt salt by
+default, so token counts differ per box, per run, per rep by design, and two boots decode
+different prompts. Acceptance depends on the prompt: one cross-boot A/B read +10% per-stream
+at N=1, all of it tok/step at flat ms/pass, from the salt alone. A cross-boot comparison runs
+both arms with the same `--salt S` and pairs them by `(n, rep)` from the JSON's `reps`, not by
+the printed best-of-reps row.
 
 ## `VLLM_DFLASH2_LOOKUP`, and how to measure an env toggle at all
 
 Every env-toggle A/B on this stack is a **cross-boot** comparison (the toggle needs a
 restart), so it is only readable against a measured boot-to-boot floor. Ours, on this build
-(`fa11c73`, pre-[#38](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/38)), warmed,
+(`fa11c73`, pre-[#38](https://github.com/syv-ai/HyperQwen/issues/38)), warmed,
 median of 2 passes per boot, env read back from `/proc/<pid>/environ` rather than trusted from
 the shell:
 

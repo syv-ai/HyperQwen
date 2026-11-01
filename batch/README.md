@@ -1,3 +1,7 @@
+> **New here?** Start at [docs/quickstart.md](../docs/quickstart.md) for the
+> canonical Docker path, then come back. Setup steps live in [## Setup](#setup) below.
+
+
 # Batch mode
 
 For serving many concurrent requests: API backends, data processing pipelines,
@@ -14,11 +18,11 @@ config (fp16 recurrent state, int8 activations on the MLP GEMMs):
 | 128/512, 64 concurrent | **~1,094** | 942 | 62.2 ms | 3.0 s* |
 | 256/256, 64 concurrent | ~1,094 | 673 | 81.4 ms | 3.4 s* |
 
-(Re-measured on the current stack; two passes each, within 0.4% of one another. The 128/512
-row read 876 when this repo was first published — the difference is everything that landed
+(Baseline measured on vLLM 0.27.1; re-run after the v0.31.0 upgrade -- these figures now predate four pins. Two passes each were
+within 0.4% of one another. The 128/512 row read 876 when this repo was first published — the difference is everything that landed
 since. `INT8_LAYERS=.` — int8 activations on every linear, not just the MLP — reaches
-**1,042 tok/s** e2e and ~1,222 steady-state decode, but needs `GPU_UTIL=0.95`: it OOMs inside
-the GDN chunk kernel at the 0.972 default. Quality cost of that row: +3.7% perplexity,
+**1,042 tok/s** e2e and ~1,222 steady-state decode, but needs a `GPU_UTIL` below 0.972 (batch's default, 0.94 on
+0.31, clears its worst prefill step by 134-176 MiB): it OOMs inside the GDN chunk kernel at 0.28's 0.972. Quality cost of that row: +3.7% perplexity,
 [docs/quality.md](../docs/quality.md).)
 
 *TTFT at saturation is queue time — the bench fires all requests at once.
@@ -84,9 +88,9 @@ the prefix cache partially serve repeated bench prompts, which read one config
 Decode at C1 is unchanged by the int8 path (122±5 vs 121 tok/s over repeats);
 quality is the documented int8 trade
 ([docs/optimizations.md](../docs/optimizations.md), GSM8K 95.0 vs 96.5, PPL
-+4.1%). `SPEC=off` and `PREFIX_CACHE=0` each measure ~20% *slower* prefill
-than the dflash2 defaults — the drafter rides the V2 model runner and the
-prefix-cache path is the fast allocation path — so neither is a "lean" prefill
++4.1%). On vLLM 0.27.1, `SPEC=off` and `PREFIX_CACHE=0` (caching off) each measured
+~20% *slower* prefill than the dflash2 defaults — the drafter rides the V2 model runner and
+the prefix-cache path is the fast allocation path — so neither is a "lean" prefill
 configuration.
 
 Two things to plan capacity around. First, concurrency does nothing for
@@ -97,7 +101,7 @@ waits ~40 s). Second, the falloff with length is mild — ~45% from 1k to 100k
 on the int8 path, ~34% on W4A16 — because just 16 of 64 layers pay quadratic
 attention; this is one of the places the hybrid architecture genuinely helps.
 
-### Raw-engine cells (no speculation, no prefix caching)
+### Raw-engine cells (no speculation, no prefix caching, vLLM 0.27.1)
 
 For apples-to-apples comparison with other 3090 stacks, the standard "raw"
 protocol people ask for: `SPEC=off PREFIX_CACHE=0`, 7,681-token prompts,
@@ -105,7 +109,8 @@ protocol people ask for: `SPEC=off PREFIX_CACHE=0`, 7,681-token prompts,
 requests, distinct seeds per call. PP = total prompt tokens / wall time of
 1-token-output runs at the same concurrency; TG = C × 1000 / mean TPOT
 (true tokens per second — with speculation off every round emits exactly one
-token per request). RTX 3090 at 250 W, this checkpoint (W4A16-AutoRound-fast).
+token per request). RTX 3090 at 250 W, this checkpoint (W4A16-AutoRound-fast), vLLM 0.27.1.
+`PREFIX_CACHE=0` is caching off, as it was on 0.27.1.
 
 | cell | W4A16 raw: PP / TG-agg | + server-side int8 (`INT8_ACT=int8 PREFILL_ATTN=int8`): PP / TG-agg |
 |---|---|---|
@@ -127,20 +132,22 @@ comment), not raw decode. Raw single-stream decode for 16 GB of weights on a
 ## Shared prompts: `PREFIX_CACHE=1`
 
 If every request carries the same system prompt, few-shot block or document — the normal
-shape of an API backend — turn on prefix caching (`--enable-prefix-caching
---mamba-cache-mode align`, opt-in upstream for hybrid models). The attention KV of the shared
-prefix is reused and the recurrent (GDN) state resumes from the last cached block boundary,
-so the prefix is prefilled once instead of once per request:
+shape of an API backend — you want prefix caching (`--enable-prefix-caching
+--mamba-cache-mode align`). `PREFIX_CACHE=1`, the default, passes those flags, and
+`PREFIX_CACHE=0` passes `--no-enable-prefix-caching` and turns it off. The attention KV
+of the shared prefix is reused and the recurrent (GDN) state resumes from the last cached
+block boundary, so the prefix is prefilled once instead of once per request:
 
 | 64 requests sharing a 5,820-token system prompt, concurrency 32 | wall | output | median latency | p90 |
 |---|---|---|---|---|
-| default | 222.2 s | 10.6 tok/s | 94.9 s | 155.3 s |
+| default on vLLM 0.27.1 (caching off) | 222.2 s | 10.6 tok/s | 94.9 s | 155.3 s |
 | `PREFIX_CACHE=1` | **16.9 s** | **133.9 tok/s** | **8.0 s** | **15.2 s** |
 
-It costs ~14% of the KV pool (223,821 → 193,298 tokens, 1.29x concurrency at 150k instead of
-1.49x) — one extra recurrent-state page per request — and nothing on workloads with no shared
-prefix (870 tok/s on the 128 in / 512 out row, i.e. unchanged). Answers are identical; the
-state resume is exact.
+On vLLM 0.27.1 it cost ~14% of the KV pool (223,821 → 193,298 tokens, 1.29x concurrency at
+150k instead of 1.49x) — one extra recurrent-state page per request — and nothing on
+workloads with no shared prefix (870 tok/s on the 128 in / 512 out row, i.e. unchanged).
+Answers are identical; the state resume is exact. On 0.30 (a 4090 under WSL2,
+`GPU_UTIL=0.91`) caching cost 1.5% of the pool (212,041 → 208,762 tokens).
 
 One failure mode to know about on mixed workloads (a long-running conversation
 plus unrelated traffic on the same server): a hybrid cache hit needs the mamba
@@ -154,7 +161,7 @@ capacity caveat are in [docs/gotchas.md](../docs/gotchas.md) #49.
 
 ## Setup
 
-Do the [common setup](../README.md#setup) first (venv, model download,
+Do the [common setup](../docs/install.md) first (venv, model download,
 requantization, vLLM patches). Then:
 
 ```bash
@@ -188,15 +195,18 @@ All overridable as env vars, defaults in the script:
 
 | var | default | notes |
 |---|---|---|
-| `PREFIX_CACHE` | 0 | 1 = reuse a shared prompt prefix across requests (see above): 13x on shared-prompt workloads, ~14% smaller KV pool |
+| `PREFIX_CACHE` | 1 | 1 = prefix caching on (`--enable-prefix-caching --mamba-cache-mode align`, see above), 13x on shared-prompt workloads against caching off on vLLM 0.27.1. 0 = `--no-enable-prefix-caching`, for raw-engine benchmarks, A/Bs that must not reuse a prefix, quality comparisons and debugging the cache path. It costs every follow-up turn and shared prompt a full prefill. Other values refuse to boot. The last `--enable-prefix-caching` / `--no-enable-prefix-caching` in `EXTRA_ARGS` wins |
 | `KV` | `fp8` | `kvarn` switches to the KVarN 4/2-bit KV cache (run `bash kvarn/install.sh` once): 262k context, ~2× the token pool, slower decode — see the main README's "262k context" section |
 | `INT8_ACT` | `int8` | int8 activations on the Marlin GEMMs (int8 tensor cores, weights stay int4). Empty string = plain W4A16 |
 | `INT8_LAYERS` | `mlp` | regex on the layer name that gets int8 activations. `gate_up` for the gentle variant, `.` for everything, or a hand-picked list from `bench/act_calib.py` |
 | `MAX_SEQS` | 64 | scheduler slots; with fp16 state ~70 short requests fit the page pool |
 | `MAX_LEN` | 150000 | max context. Raising it much past this fails startup, the pool can't hold a longer request |
 | `TOOLS` | 1 | tool/function calling (`--enable-auto-tool-choice --tool-call-parser`). `TOOL_PARSER` (`qwen3_coder`) must match the XML call format this model's chat template emits — `hermes` parses the JSON a Qwen model does *not* produce here, and fails silently. 0 = off, and `tool_choice: "auto"` then 400s |
+| `KV_OFFLOAD_GB` | unset | N = a CPU tier of N GiB of pinned RAM behind the GPU prefix cache (`--kv-offloading-size N`, vLLM's OffloadingConnector): a prefix the GPU pool evicted comes back by a PCIe load instead of a recomputed prefill, and a preempted request resumes from it. Pinned in full at boot, in a file in `/dev/shm` that must fit there (gotcha 62). Size it in tokens, not GiB: a tier token costs ~2.3x a pool token under MTP because each block carries a recurrent-state snapshot (gotcha 38). Check it works on `/metrics`: `vllm:kv_offload_*_bytes_total` grow both ways. Measured with `PREFIX_CACHE=1` (align mode). On 0.31 size it above what it holds: a tier that fills while a request is still running loses chunks the next lookup needs (`docs/vllm-0.31.md`). An explicit flag in `EXTRA_ARGS` wins |
+| `TOOL_STRICT` | parameter | vLLM 0.31's `--tool-strict-level`. `parameter` holds every tool call to the tool's argument schema, as 0.30 did; upstream's default `auto` does so only for tools that send `strict: true`, so a forced call to a tool with no parameters invented arguments (20 of 20 seeds) where 0.30 sent `{}`. `auto` restores upstream's default |
 | `PORT` | 18020 | |
-| `GPU_UTIL` | 0.972 | do not raise, see gotchas in the main README. Use 0.93 when you want `prompt_logprobs` (quality checks) |
+| `PRINT_ARGV` | 0 | 1 = print the `vllm serve` argv, one argument per line, and exit 0 instead of starting the server. Every profile check, default and warning runs first, so it is a dry run that needs no GPU |
+| `GPU_UTIL` | 0.94 | do not raise: on 0.31, 0.95 runs out of memory when 64 new prompts land in one step (the launcher comment has the measurement); 0.972, the 0.28 default, OOMs in warmup on vLLM 0.29 (#182; the ladder is in `docs/vllm-0.29.md`). Use 0.93 when you want `prompt_logprobs` (quality checks) |
 
 ## Verify you're getting the numbers
 

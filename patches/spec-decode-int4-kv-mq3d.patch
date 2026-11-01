@@ -1,16 +1,26 @@
-diff --git a/vllm/v1/attention/ops/int4_per_token_head.py b/vllm/v1/attention/ops/int4_per_token_head.py
-index 6e8de72..1400469 100644
+multi-query 3D int4 verify path
+
+Kind: feature
+What: multi-query 3D int4 verify path
+Upstream: none
+Cut-against: 0.32.0
+Retires-when: rides with int4-kv-per-token-head
+
+--- exported from b530351ec (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
+index 68ef5348a..a9231396b 100644
 --- a/v1/attention/ops/int4_per_token_head.py
 +++ b/v1/attention/ops/int4_per_token_head.py
-@@ -12,6 +12,7 @@ kernel, the RHT transform, and the public ``reshape_and_cache_int4`` /
+@@ -12,6 +12,7 @@
  
  from __future__ import annotations
  
-+import os
++import vllm.envs as envs
  from typing import Any
  
  import torch
-@@ -741,16 +742,41 @@ def _launch_packed_attn(
+@@ -742,16 +743,41 @@
          head_size, sliding_window_val, q.element_size(), is_prefill=False
      )
  
@@ -23,7 +33,7 @@ index 6e8de72..1400469 100644
 +    # equivalence, so capacity is checked against the token-indexed scratch
 +    # buffers directly. Opt-in via VLLM_INT4_MQ_3D=1 (promotion gates open).
 +    _mq = max_seqlen_q > 1
-+    _mq_3d_enabled = os.environ.get("VLLM_INT4_MQ_3D", "0") == "1"
++    _mq_3d_enabled = envs.VLLM_INT4_MQ_3D
 +    _capacity_ok = (
 +        softmax_segm_output is not None
 +        and softmax_segm_max is not None
@@ -43,7 +53,7 @@ index 6e8de72..1400469 100644
          or num_seqs > seq_threshold_3D
          or is_batch_invariant
      )
-+    if os.environ.get("VLLM_INT4_MQ_3D_DEBUG") == "1":
++    if envs.VLLM_INT4_MQ_3D_DEBUG:
 +        print(
 +            f"[int4-mq3d] tokens={q.shape[0]} num_seqs={num_seqs} "
 +            f"max_seqlen_q={max_seqlen_q} use_3d={use_3d} "
@@ -53,11 +63,11 @@ index 6e8de72..1400469 100644
  
      # 3D never reads ``output_ptr`` and 2D never reads the segm tensors,
      # but Triton needs a non-null pointer everywhere; reuse ``out`` as
-diff --git a/vllm/v1/attention/ops/triton_unified_attention.py b/vllm/v1/attention/ops/triton_unified_attention.py
-index f4d9ba9..e92cc4c 100644
+diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
+index 0835c0a75..27dfbc556 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -715,6 +715,27 @@ def reduce_segments(
+@@ -728,6 +728,27 @@
      # sequence len for this particular sequence
      seq_len = tl.load(seq_lens_ptr + seq_idx)
  

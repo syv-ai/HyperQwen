@@ -1,5 +1,5 @@
 Split-KV attention for speculative-decode batches on the FLASH_ATTN backend
-(vLLM 0.27.1, Ampere), with query-row tiling so the verify block can be longer
+(vLLM 0.28.0, Ampere), with query-row tiling so the verify block can be longer
 than the drafter's.
 
 FlashAttention-2 only splits the KV sequence across thread blocks when a request
@@ -29,50 +29,86 @@ block - leaves the captured decode graph reading freed memory.
 Apply from the repo root:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/spec-decode-attn.patch
 
+Kind: feature
+What: split-KV verify attention on FLASH_ATTN with query-row tiling
+Upstream: none
+Cut-against: 0.32.0: the split-KV branch re-indented after #61126 removed cascade attention; its helpers
+  follow the kernel singleton
+Retires-when: upstreamed
+
+--- exported from 544c92fa9 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index cbc6f8382..a70a53923 100755
+--- a/envs.py
++++ b/envs.py
+@@ -184,6 +184,10 @@
+     VLLM_USE_BREAKABLE_CUDAGRAPH: bool = False
+     VLLM_DP_MASTER_IP: str = ""
+     VLLM_DP_MASTER_PORT: int = 0
++    # syv patch: split-KV verify attention, registered by the patch that reads it (#114)
++    VLLM_SPEC_DECODE_ATTN: bool = False
++    VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
++    VLLM_SPEC_ATTN_BLOCK_M: int = 0
+     VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
+     VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
+     VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
+@@ -1526,6 +1530,9 @@
+     "VLLM_DP_MASTER_IP": lambda: os.getenv("VLLM_DP_MASTER_IP", "127.0.0.1"),
+     # Port of the master node in the data parallel setting
+     "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
++    "VLLM_SPEC_DECODE_ATTN": lambda: os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1",
++    "VLLM_SPEC_DECODE_ATTN_QMAX": lambda: int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", "0")),
++    "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),
+     # Randomize inputs during dummy runs when using Data Parallel
+     "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
+         os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
+diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
+index 6e906bc52..5eba4d5b6 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1038,6 +1038,37 @@
-                     )
-                     causal = not has_window
+@@ -1396,6 +1396,37 @@
+                 block_table = block_table[:, :num_pages]
+                 num_splits = 1
  
-+                # syv patch: split-KV Triton attention for speculative-decode
-+                # batches (1 < queries/request <= 10). FA2 does not split the KV
-+                # sequence when max_seqlen_q > 1, leaving most SMs idle.
-+                if (
-+                    _spec_attn_enabled()
-+                    and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
-+                    and not is_quantized_kv_cache(self.kv_cache_dtype)
-+                    and (
-+                        sliding_window_size is None
-+                        or (sliding_window_size[0] < 0 and sliding_window_size[1] < 0)
-+                    )
-+                    and not self.logits_soft_cap
-+                    and self.alibi_slopes is None
-+                    and self.sinks is None
-+                    and causal is True
-+                    and mm_mask_mod is None
-+                    and rswa_mask_mod_fn is None
-+                ):
-+                    _spec_attn_run(
-+                        self,
-+                        query[:num_actual_tokens],
-+                        key_cache,
-+                        value_cache,
-+                        output[:num_actual_tokens],
-+                        cu_seqlens_q,
-+                        seqused_k,
-+                        block_table,
-+                        max_seqlen_q,
-+                    )
-+                    return output
++            # syv patch: split-KV Triton attention for speculative-decode
++            # batches (1 < queries/request <= 10). FA2 does not split the KV
++            # sequence when max_seqlen_q > 1, leaving most SMs idle.
++            if (
++                _spec_attn_enabled()
++                and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
++                and not is_quantized_kv_cache(self.kv_cache_dtype)
++                and (
++                    sliding_window_size is None
++                    or (sliding_window_size[0] < 0 and sliding_window_size[1] < 0)
++                )
++                and not self.logits_soft_cap
++                and self.alibi_slopes is None
++                and self.sinks is None
++                and causal is True
++                and mm_mask_mod is None
++                and rswa_mask_mod_fn is None
++            ):
++                _spec_attn_run(
++                    self,
++                    query[:num_actual_tokens],
++                    key_cache,
++                    value_cache,
++                    output[:num_actual_tokens],
++                    cu_seqlens_q,
++                    seqused_k,
++                    block_table,
++                    max_seqlen_q,
++                )
++                return output
 +
-                 flash_attn_varlen_func(
-                     q=query[:num_actual_tokens],
-                     k=key_cache,
-@@ -1688,3 +1719,61 @@
+             _FA4_DENSE_ATTENTION_KERNEL(
+                 q=query[:num_actual_tokens],
+                 k=key_cache,
+@@ -1872,3 +1903,59 @@
  
-     # Merge prefix and suffix outputs, and store the result in output.
-     merge_attn_states(output, prefix_output, prefix_lse, suffix_output, suffix_lse)
+ 
+ _FA4_DENSE_ATTENTION_KERNEL = FA4DenseAttentionKernel()
 +
 +
 +# ---- syv patch: split-KV spec-decode attention -------------------------------
@@ -80,9 +116,7 @@ Apply from the repo root:
 +
 +
 +def _spec_attn_enabled() -> bool:
-+    import os
-+
-+    return os.environ.get("VLLM_SPEC_DECODE_ATTN", "0") == "1"
++    return envs.VLLM_SPEC_DECODE_ATTN
 +
 +
 +_SPEC_ATTN_QMAX: int | None = None
@@ -106,7 +140,7 @@ Apply from the repo root:
 +            n = 1 + (spec.num_speculative_tokens if spec is not None else 0)
 +        except Exception:
 +            n = 0
-+        n = int(os.environ.get("VLLM_SPEC_DECODE_ATTN_QMAX", n or 0)) or n
++        n = envs.VLLM_SPEC_DECODE_ATTN_QMAX or n
 +        _SPEC_ATTN_QMAX = min(QMAX_TOKENS, max(n, BLOCK_M // group))
 +    return _SPEC_ATTN_QMAX
 +
@@ -131,9 +165,12 @@ Apply from the repo root:
 +        _SPEC_ATTN[key] = att
 +    att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q)
---- a/v1/attention/ops/spec_decode_attn.py
+diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
+new file mode 100644
+index 000000000..54e6e11c9
+--- /dev/null
 +++ b/v1/attention/ops/spec_decode_attn.py
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +"""Split-KV paged attention for speculative-decode batches (a few query tokens per
 +request, GQA), Triton.
 +
@@ -160,7 +197,7 @@ Apply from the repo root:
 +Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
 +window / softcap / alibi.
 +"""
-+import os
++import vllm.envs as envs
 +
 +import torch
 +import triton
@@ -220,6 +257,9 @@ Apply from the repo root:
 +        pos = t * TILE + tl.arange(0, TILE)
 +        k_ok = pos < kv_len
 +        blk = tl.load(bt_ptr + req * stride_bt + pos // BLOCK_SIZE, mask=k_ok, other=0)
++        # int64: blk * stride_kb (and the int8 scale strides) overflow int32 for high block ids in a
++        # large KV pool (issue #86: a 480k-token pool on a 64 GB card).
++        blk = blk.to(tl.int64)
 +        slot = pos % BLOCK_SIZE
 +        k_ptrs = k_ptr + blk[:, None] * stride_kb + slot[:, None] * stride_ks + kvh * stride_kh + d[None, :]
 +        v_ptrs = v_ptr + blk[:, None] * stride_vb + slot[:, None] * stride_vs + kvh * stride_vh + d[None, :]
@@ -292,10 +332,10 @@ Apply from the repo root:
 +    def _plan(self, q_len, G, D):
 +        """(BLOCK_M, tokens per tile, tile count, warps). One tile is preferred: every
 +        extra tile re-reads this request's KV segment."""
-+        override = os.environ.get("VLLM_SPEC_ATTN_BLOCK_M")
++        override = envs.VLLM_SPEC_ATTN_BLOCK_M
 +        rows = q_len * G
 +        if override:
-+            block_m = int(override)
++            block_m = override
 +        elif rows <= 32:
 +            block_m = 32
 +        elif rows <= 64:

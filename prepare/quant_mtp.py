@@ -11,38 +11,39 @@ is a pure speed knob. Measured acceptance change: int8 none.
 Usage: python prepare/quant_mtp.py /path/to/Qwen3.8-27B-W4A16-AutoRound [--bits 8|4] [--keep-fc]
 --keep-fc leaves mtp.fc (the 10240->5120 input projection, 105 MB) in bf16.
 
-Rewrites model_extra_tensors.safetensors, the safetensors index and
-config.json (backups next to the originals: .bak-mtp).
+Rewrites model_extra_tensors.safetensors, config.json and the safetensors index, in
+that order; the first pre-quant copy of each is kept as <file>.bak-mtp and never
+overwritten. Each file is written through prepare/atomic_publish.py (a temp file and a
+rename), and the index goes last: docker/prepare.sh's state() reads only the index, so
+a killed run leaves the step pending, and the next run completes it, reusing a shard
+that already holds the packed linears (#195).
+
+The config.json schema is checked before the first shard is read: a checkpoint
+these scripts cannot extend exits with one line and an untouched directory
+instead of a rewritten shard (#241).
 """
 
-import copy
 import json
-import shutil
 import sys
 
 import torch
 from safetensors import safe_open
-from safetensors.torch import save_file
-from compressed_tensors.compressors.pack_quantized.base import pack_to_int32
 
-GROUP = 128
+from atomic_publish import backup_once, save_tensors, write_json
+from quant_schema import GROUP, MTP_LINEARS, clone_group, index_packed, load_config, pack, packed_already
+
 BITS = int(sys.argv[sys.argv.index("--bits") + 1]) if "--bits" in sys.argv else 8
-QMAX = 2 ** (BITS - 1) - 1
 KEEP_FC = "--keep-fc" in sys.argv
-MTP_LINEARS = ([] if KEEP_FC else ["mtp.fc"]) + [
-    "mtp.layers.0.mlp.down_proj",
-    "mtp.layers.0.mlp.gate_proj",
-    "mtp.layers.0.mlp.up_proj",
-    "mtp.layers.0.self_attn.q_proj",
-    "mtp.layers.0.self_attn.k_proj",
-    "mtp.layers.0.self_attn.v_proj",
-    "mtp.layers.0.self_attn.o_proj",
-]
+LINEARS = [m for m in MTP_LINEARS if not (KEEP_FC and m == "mtp.fc")]
 
 d = sys.argv[1].rstrip("/") + "/"
+# Before anything is read or written: a checkpoint these scripts cannot extend used to
+# fail on qc["ignore"] after the shard had already been replaced (#241).
+c, qc = load_config(d)
+
 idx = json.load(open(d + "model.safetensors.index.json"))
 wm = idx["weight_map"]
-shards = {wm[m + ".weight"] for m in MTP_LINEARS}
+shards = {wm[m + ".weight"] for m in LINEARS}
 assert len(shards) == 1, f"mtp weights span several shards: {shards}"
 shard = shards.pop()
 print(f"mtp linears live in {shard}, quantizing to int{BITS} g{GROUP}")
@@ -53,35 +54,29 @@ with safe_open(d + shard, framework="pt") as f:
     for k in f.keys():
         tensors[k] = f.get_tensor(k)
 
-for m in MTP_LINEARS:
-    w = tensors.pop(m + ".weight").to(torch.float32)
-    out_f, in_f = w.shape
-    assert in_f % GROUP == 0, (m, w.shape)
-    g = w.reshape(out_f, in_f // GROUP, GROUP)
-    scale = torch.clamp(g.abs().amax(dim=-1, keepdim=True) / QMAX, min=1e-10)
-    q = torch.clamp(torch.round(g / scale), -QMAX - 1, QMAX).to(torch.int8).reshape(out_f, in_f)
-    deq = (q.reshape(out_f, -1, GROUP).to(torch.float32) * scale).reshape(out_f, in_f)
-    err = ((deq - w).norm() / w.norm()).item()
+changed = False
+for m in LINEARS:
+    if packed_already(tensors, m, shard, ".bak-mtp"):
+        continue
+    w = tensors.pop(m + ".weight")
+    packed, err = pack(m, w, BITS, torch.float16)
     print(f"  {m}: {tuple(w.shape)} round-trip rel error {err:.4f}")
-    tensors[m + ".weight_packed"] = pack_to_int32(q, BITS, packed_dim=1).contiguous()
-    tensors[m + ".weight_scale"] = scale.squeeze(-1).to(torch.float16).contiguous()
-    tensors[m + ".weight_shape"] = torch.tensor([out_f, in_f], dtype=torch.int64)
-    del wm[m + ".weight"]
-    for s in ("weight_packed", "weight_scale", "weight_shape"):
-        wm[f"{m}.{s}"] = shard
+    tensors.update(packed)
+    changed = True
 
-shutil.copy(d + shard, d + shard + ".bak-mtp")
-save_file(tensors, d + shard, metadata=meta or {"format": "pt"})
-shutil.copy(d + "model.safetensors.index.json", d + "model.safetensors.index.json.bak-mtp")
-json.dump(idx, open(d + "model.safetensors.index.json", "w"), indent=2)
+if changed:
+    backup_once(d + shard, ".bak-mtp")
+    save_tensors(tensors, d + shard, meta or {"format": "pt"})
+del tensors
 
-c = json.load(open(d + "config.json"))
-shutil.copy(d + "config.json", d + "config.json.bak-mtp")
-qc = c["quantization_config"]
-qc["ignore"] = [i for i in qc["ignore"] if i not in MTP_LINEARS]
-g = copy.deepcopy(qc["config_groups"]["group_0"])
-g["targets"] = ["re:^mtp\\.layers\\..*"] if KEEP_FC else ["re:^mtp\\..*"]
-g["weights"]["num_bits"] = BITS
-qc["config_groups"]["group_3"] = g
-json.dump(c, open(d + "config.json", "w"), indent=2)
+backup_once(d + "config.json", ".bak-mtp")
+qc["ignore"] = [i for i in qc["ignore"] if i not in LINEARS]
+clone_group(qc, "mtp-keep-fc" if KEEP_FC else "mtp", BITS)
+write_json(d + "config.json", c)
+
+# The index is the commit point, so it goes last.
+backup_once(d + "model.safetensors.index.json", ".bak-mtp")
+for m in LINEARS:
+    index_packed(wm, m, shard)
+write_json(d + "model.safetensors.index.json", idx)
 print("done")

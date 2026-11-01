@@ -38,12 +38,13 @@ from __future__ import annotations
 
 import functools
 import math
-import os
 from dataclasses import dataclass, field
 from typing import Any, ClassVar
 
 import torch
 import torch.nn.functional as F
+
+import vllm.envs as envs
 
 from vllm.config.cache import CacheDType
 from vllm.v1.attention.backend import (
@@ -57,6 +58,7 @@ from vllm.v1.attention.backend import (
     CommonAttentionMetadata,
     MultipleOf,
 )
+from vllm.v1.kv_cache_interface import KVCacheLayout, KVCacheSpec
 from vllm.v1.attention.backends.fa_utils import (
     get_flash_attn_version,
     is_flash_attn_varlen_func_available,
@@ -202,8 +204,22 @@ class KVarNAttentionBackend(AttentionBackend):
     def get_name() -> str:
         return "KVARN"
 
+    @classmethod
+    def supported_kv_cache_layouts(cls) -> tuple[KVCacheLayout, ...]:
+        # port(0.29): vLLM 0.29 derives every layer's physical layout from its
+        # spec ([B, H, N, C] bytes; get_kv_cache_shape is no longer consulted).
+        # KVarN needs the N per-token slots of one head to sit back to back so
+        # they fold into the one tile per (block, head) its kernels address:
+        # physical order [L, B, H, N, C], which is LBHNC (the enum letters are
+        # the physical order; LBNHC puts tokens outside heads and the fold's
+        # view() refuses it, which is the intended loud failure).
+        return (KVCacheLayout.LBHNC,)
+
     @staticmethod
-    def get_supported_kernel_block_sizes() -> list[int | MultipleOf]:
+    def get_supported_kernel_block_sizes(
+        kv_cache_spec: KVCacheSpec | None = None,
+    ) -> list[int | MultipleOf]:
+        # kv_cache_spec is unused: every group gets the active preset's tile.
         # One vLLM block == one KVarN tile (cfg.group).
         # port(0.27.1): report ONLY the active preset's group (plan §2.1.2).
         # 0.27.1's select_common_block_size (worker/utils.py) picks the LARGEST
@@ -411,7 +427,7 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
     # KVARN_FUSED_VERIFY=0 reverts to single-token-only support.
     _cudagraph_support: ClassVar[AttentionCGSupport] = (
         AttentionCGSupport.UNIFORM_BATCH
-        if os.environ.get("KVARN_FUSED_VERIFY", "1") == "1"
+        if envs.KVARN_FUSED_VERIFY
         else AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
     )
 
@@ -440,7 +456,7 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
         self._init_reorder_batch_threshold(
             1,
             supports_spec_as_decode=(
-                os.environ.get("KVARN_FUSED_VERIFY", "1") == "1"),
+                envs.KVARN_FUSED_VERIFY),
         )
         # KV-cache-group key, must match KVarNAttentionImpl._group_key for this
         # group's layers so the builder mutates the right group's slot allocator.
@@ -473,6 +489,20 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
         # valid tile) lazily, oldest first, only when slot allocation runs
         # dry — residency therefore never shrinks live capacity.
         self._retired_sinks: dict[int, None] = {}
+        # Recycled pages (issue #208): pages the scheduler has handed to ANOTHER
+        # KV-cache group since this builder last flushed, filled by
+        # note_scheduled_blocks() before the step's forward. On a hybrid model
+        # every group's layers share one tensor per layer position, so a page a
+        # mamba group now holds is the same bytes as this group's block of that
+        # id. Anything the pool still holds for such a page (a finished
+        # request's unflushed last block, a retired sink) is dead: allocating
+        # the page evicted its prefix-cache hash, so no request can read the
+        # tile again, and flushing it would overwrite the new owner's data.
+        # _page_tokens is this group's manager block (kernel blocks per page =
+        # _page_tokens // _group), set by the same call.
+        self._recycled_pages: set[int] = set()
+        self._page_tokens: int = 0
+        self._recycled_dropped = 0
 
         # Max model length (for the fixed FA grid bound + max_blocks_per_req).
         try:
@@ -563,6 +593,36 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
             impl for name, impl in self._impl_by_name.items()
             if KVarNMetadataBuilder._owner.get(name) is self
         ]
+
+    def _drop_recycled_pages(self, blocks_needed, dict_map, free_slots,
+                             b2s_t, is_sink_t, sinks) -> None:
+        """Release, without flushing, every pool slot held for a page that
+        another KV-cache group has taken (see _recycled_pages)."""
+        pages, self._recycled_pages = self._recycled_pages, set()
+        per_page = max(1, self._page_tokens // self._group)
+        dropped = [bid for bid in dict_map
+                   if bid // per_page in pages and bid not in blocks_needed]
+        for bid in dropped:
+            free_slots.append(dict_map.pop(bid))
+            self._block_fill.pop(bid, None)
+            self._retired_sinks.pop(bid, None)
+            if bid < b2s_t.shape[0]:
+                b2s_t[bid] = -1
+            if bid in sinks:
+                sinks.discard(bid)
+                if bid < is_sink_t.shape[0]:
+                    is_sink_t[bid] = False
+        if dropped:
+            from vllm.logger import init_logger
+            _log = init_logger(__name__)
+            if self._recycled_dropped == 0:
+                _log.info("KVarN: dropped the pending tiles of %d block(s) on "
+                          "pages another KV-cache group now holds (#208); "
+                          "later drops log at DEBUG", len(dropped))
+            else:
+                _log.debug("KVarN: dropped %d recycled block(s): %s",
+                           len(dropped), sorted(dropped))
+            self._recycled_dropped += len(dropped)
 
     def build_for_cudagraph_capture(
         self, common_attn_metadata: CommonAttentionMetadata
@@ -716,6 +776,19 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
             dict_map = KVarNAttentionImpl._block_to_slot_dict[gk]
             free_slots = KVarNAttentionImpl._free_slots[gk]
             sinks = KVarNAttentionImpl._global_sink_blocks[gk]
+
+            # (0) Forget pages another KV-cache group has taken (#208), before
+            # anything below can flush into them: the reclaim flushes a finished
+            # request's last full block one step after the request left, and the
+            # eviction in (3) flushes a retired sink whenever the pool runs dry,
+            # however long ago its request finished. Both runners write mamba
+            # state before this build (preprocess_state / preprocess_mamba), so
+            # when the page had become a mamba state page the int4 tile landed on
+            # live state, which read back as NaN, and the request printed token 0
+            # ("!!!!") from there on.
+            if _allow_flush and self._recycled_pages:
+                self._drop_recycled_pages(blocks_needed, dict_map, free_slots,
+                                          b2s_t, is_sink_t, sinks)
 
             # ORDER MATTERS: mark sinks → FLUSH (frees just-completed blocks'
             # slots) → ALLOCATE (the new tails, reusing the freed slots). Doing
@@ -1028,6 +1101,53 @@ class KVarNMetadataBuilder(AttentionMetadataBuilder[KVarNMetadata]):
         )
 
 
+def note_scheduled_blocks(scheduler_output, kv_cache_config) -> None:
+    """Called by the model runner once per step, after it has applied the
+    scheduler's block ids and before the forward: record, for each KVarN
+    builder, the pages this step put in any OTHER KV-cache group (#208).
+
+    Every block id in another group's table is either newly allocated there or
+    a hit on something that group wrote after allocating it; either way the
+    page has left this group since KVarN last held it, so whatever KVarN still
+    has pending for it must not be flushed. The builder's own group is left
+    out: its tables carry prefix-cache hits on this group's own blocks, and a
+    hit on a finished request's last block needs that block's flush.
+    """
+    builders = {b for b in KVarNMetadataBuilder._owner.values()}
+    if not builders:
+        return
+    groups = kv_cache_config.kv_cache_groups
+    if len(groups) < 2:
+        return
+    pages: list[set[int]] = [set() for _ in groups]
+
+    def _add(block_ids) -> None:
+        for i, ids in enumerate(block_ids):
+            if i < len(pages) and ids:
+                pages[i].update(ids)
+
+    for req in scheduler_output.scheduled_new_reqs:
+        _add(req.block_ids)
+    for block_ids in scheduler_output.scheduled_cached_reqs.new_block_ids:
+        if block_ids is not None:
+            _add(block_ids)
+    if not any(pages):
+        return
+    for b in builders:
+        own = getattr(b, "_kv_group_ids", None)
+        if own is None:
+            own = [i for i, g in enumerate(groups)
+                   if b._layer_names_set.intersection(g.layer_names)]
+            b._kv_group_ids = own
+            if own:
+                b._page_tokens = groups[own[0]].kv_cache_spec.block_size
+        if len(own) != 1:
+            continue
+        foreign = set().union(*(p for i, p in enumerate(pages) if i != own[0]))
+        foreign.discard(0)       # the null block
+        b._recycled_pages |= foreign
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Per-block fp16 tail buffer (in-progress tile staging)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1190,7 +1310,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # (head_size, num_kv_heads, sliding_window) uniquely identifies the group
         # and is computable identically by the per-group builder and each impl.
         self._group_key = (head_size, self.num_kv_heads, self.sliding_window)
-        if os.environ.get("KVARN_DBG_LAYERS") == "1":
+        if envs.KVARN_DBG_LAYERS:
             print(f"[KVARN_LAYER] head_size={head_size} num_heads={num_heads} "
                   f"num_kv_heads={self.num_kv_heads} sliding_window={self.sliding_window}",
                   flush=True)
@@ -1339,7 +1459,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             # memory budget — making the pool both exhaustion-safe (the scheduler
             # can never exceed it) and OOM-safe (it is <= the budget). No
             # per-model tuning; KVARN_POOL_SLOTS still pins the count exactly.
-            env_slots = int(os.environ.get("KVARN_POOL_SLOTS", "0"))
+            env_slots = envs.KVARN_POOL_SLOTS
             if env_slots > 0:
                 pool_size = max(env_slots, 64)
             else:
@@ -1558,7 +1678,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         Over-sizing costs 4 B per slot and nothing in-kernel: every kernel
         guards ``block_id < NUM_BLOCKS_LOOKUP``. ``KVARN_LOOKUP_BLOCKS`` pins it.
         0 when no bound can be derived (unit tests): the 1024 floor applies."""
-        env = int(os.environ.get("KVARN_LOOKUP_BLOCKS", "0"))
+        env = envs.KVARN_LOOKUP_BLOCKS
         if env > 0:
             return env
         try:
@@ -1582,7 +1702,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         16 / equality to 1 -- for the warmup launch and the first real launches,
         so a warmup-vs-serving variant mismatch can be read off the log rather
         than inferred (``--jit-monitor-verbose`` truncates the attrs)."""
-        if os.environ.get("KVARN_SPEC_DEBUG", "0") != "1":
+        if not envs.KVARN_SPEC_DEBUG:
             return
         cls = type(self)
         counts = cls.__dict__.get("_spec_debug_count")
@@ -1661,6 +1781,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             V_PACKED_OFFSET=cfg.v_packed_offset, V_S_COL_OFFSET=cfg.v_s_col_offset,
             V_S_ROW_OFFSET=cfg.v_s_row_offset, V_ZP_OFFSET=cfg.v_zp_offset,
             VQ_INDIRECT=False,
+            F16=envs.KVARN_FP16_DEQUANT,
         )
         # 1. Single-stage fused kernel — runs the @triton.autotune sweep.
         # (sl doubles as the unused Req_row_ptr dummy; see VQ_INDIRECT.)
@@ -1728,7 +1849,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # deployment, don't compile/autotune it here either.
         if (_qlen >= 2
                 and ((_qlen * qpk_pad) & (_qlen * qpk_pad - 1)) == 0
-                and os.environ.get("KVARN_SHARED_VERIFY", "0") == "1"):
+                and envs.KVARN_SHARED_VERIFY):
             from vllm.v1.attention.ops.triton_kvarn_decode import (
                 _kvarn_fused_verify_stage1,
             )
@@ -1804,6 +1925,18 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
 
     def _hadamard(self, device: torch.device) -> torch.Tensor:
         return _build_hadamard(self.head_size, device)
+
+    @staticmethod
+    def _as_tile_view(kv_cache: torch.Tensor) -> torch.Tensor:
+        """port(0.29): fold the runner's ``[B, H, N, C]`` byte view into the
+        ``(num_blocks, num_kv_heads, tile_bytes_aligned)`` view the kernels and
+        ``_flat_block`` address. The spec publishes one ``tile_bytes_aligned //
+        group`` slot per token, so N * C is exactly one tile; under LBNHC the
+        N and C dims are contiguous, and ``view`` (not ``reshape``) makes a
+        wrong layout fail loudly instead of silently copying."""
+        if kv_cache.dim() == 4:
+            return kv_cache.view(kv_cache.shape[0], kv_cache.shape[1], -1)
+        return kv_cache
 
     def _flat_block(self, kv_cache: torch.Tensor, block_id: int, head: int) -> torch.Tensor:
         """Contiguous ``[tile_bytes_aligned]`` uint8 view for one (block, head).
@@ -1958,7 +2091,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         layout; only the data movement is batched."""
         if not flush_pairs:
             return
-        if os.environ.get("KVARN_FAST_FLUSH", "1") != "1":
+        if not envs.KVARN_FAST_FLUSH:
             return cls._batched_flush_legacy(flush_pairs)
 
         cfg = flush_pairs[0][0].kvarn_config
@@ -2071,7 +2204,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
             V_stack = torch.stack(V_list, dim=0)
             # Optional: dump first chunk's raw (pre-Sinkhorn) tiles for outlier
             # analysis (KVARN_DUMP_TILES=/path/to/file.pt).
-            dump_path = os.environ.get("KVARN_DUMP_TILES", "")
+            dump_path = envs.KVARN_DUMP_TILES
             if dump_path and not getattr(cls, "_tiles_dumped", False):
                 cls._tiles_dumped = True
                 # Capture per-tile (layer_idx, block_id) for per-layer analysis.
@@ -2139,6 +2272,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         N = slot_mapping.shape[0]
         if N <= 0:
             return
+        kv_cache = self._as_tile_view(kv_cache)
         device = key.device
         Hk = self.num_kv_heads
         D = self.head_size
@@ -2201,6 +2335,7 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
     ) -> torch.Tensor:
         num_tokens = query.shape[0]
         device = query.device
+        kv_cache = self._as_tile_view(kv_cache)
 
         if output is None:
             output = torch.zeros(
@@ -2573,11 +2708,11 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         # continuations), where one materialization amortizes over thousands
         # of query tokens. KVARN_FUSED_VERIFY=0 forces materialize always.
         _group = self.kvarn_config.group
-        if (os.environ.get("KVARN_FUSED_VERIFY", "1") == "1"
+        if (envs.KVARN_FUSED_VERIFY
                 and md.max_query_len
-                <= int(os.environ.get("KVARN_FUSED_VERIFY_MAXQ", "8"))
+                <= envs.KVARN_FUSED_VERIFY_MAXQ
                 and (int(md.max_seq_len) + _group - 1) // _group
-                >= int(os.environ.get("KVARN_FUSED_VERIFY_MIN_BLOCKS", "64"))
+                >= envs.KVARN_FUSED_VERIFY_MIN_BLOCKS
                 and B > 0):
             return self._fused_verify_path(q, kv_cache, md)
         if (not _HAS_FLASH_ATTN or self.head_size > 256

@@ -7,8 +7,11 @@
 #
 # Knobs go in a .env file next to this file (never committed): VLLM_API_KEY=...,
 # and any of the start-script variables (CTX, KV, MAX_LEN, MAX_SEQS, GPU_UTIL, VISION,
-# SPEC_ATTN, DRAFT_TOKENS, EXTRA_ARGS, ...) — .env is passed straight into the
-# container. Fastest single-user decode, if the card is yours alone (README,
+# SPEC_ATTN, DRAFT_TOKENS, FA2_FP8KV, EXTRA_ARGS, ...) — .env is passed straight into the
+# container (on a compute capability 8.6 GPU SPEC=mtp CTX=long and SPEC=dflash2 CTX=long default to PTH_FA=1,
+# the pth-flash-attn kernel in the image; PTH_FA=0 opts out, and FA2_FP8KV defaults to 1 on SPEC=dflash2 CTX=long
+# there when PTH_FA does not apply, with the fa2/ plugin in the image; FA2_FP8KV=0 restores int8 + Triton).
+# Fastest single-user decode, if the card is yours alone (README,
 # "If you are the only user"; the drafter it needs is already downloaded by
 # prepare):
 #
@@ -20,14 +23,50 @@
 # PORT and MODELS_DIR are read here: models live in ./models by default
 # (the same layout as the venv install, so both can share one download).
 # One GPU: run either "single" or "batch", not both.
+#
+# More than one GPU (issues #68, #104) — no hand-edit of this file needed:
+#
+#   GPU_COUNT=2                                  # cards handed to the container
+#   EXTRA_ARGS="--tensor-parallel-size 2"        # cards the engine actually uses
+#
+# GPU_COUNT defaults to 1, which means "the first GPU the runtime enumerates",
+# i.e. GPU 0 — not the card you meant if the box has mixed hardware. To choose
+# *which* cards, expose them all and pin inside the container:
+#
+#   GPU_COUNT=all
+#   CUDA_VISIBLE_DEVICES=1,2
+#
+# The device reservation below decides which cards are visible, so setting
+# NVIDIA_VISIBLE_DEVICES in .env alone was not enough (#68); CUDA_VISIBLE_DEVICES
+# is read inside the container and is what docs/gotchas.md 53 recommends.
+# Pin the KV pool before you benchmark or trim context on a multi-GPU box: the
+# launcher skips the single-card KV_MEM pin under --tensor-parallel-size > 1,
+# so the pool is sized from GPU_UTIL and moves with compile-cache state
+# (README, "More than one GPU"; docs/gotchas.md 48).
+# Three or more GPUs: a single engine cannot span all of them for this model
+# (README, "More than one GPU" — TP=3/PP=3 are rejected), so "solo" runs a
+# second standalone engine, the same single-user launcher on its own card
+# and port. Expose every card and pin each engine inside its container:
+#
+#   GPU_COUNT=all
+#   CUDA_VISIBLE_DEVICES=0,1                 # the "single"/"batch" pair
+#   EXTRA_ARGS="--tensor-parallel-size 2"
+#
+#   docker compose --profile single --profile solo up -d
+#
+# "solo" sets its own CUDA_VISIBLE_DEVICES=2 below (an explicit environment:
+# entry wins over .env, so the pair stays on 0,1). With two serve containers
+# up, keep VLLM_OFFLOAD_KEEP_SHM=1 in .env: each launcher's stale-region
+# reaper sees only its own container's processes (#33) and would delete the
+# other engine's live offload region.
 
 x-qwen: &qwen
   # Prebuilt on every main push by .github/workflows/docker-image.yml; the
   # first `up` pulls it (~9.5 GB, pull_policy below) instead of the 20-minute
   # local build. `docker compose build` (or `up --build`) still builds the
   # identical image under the same tag name. Immutable per-commit tags:
-  # ghcr.io/syv-ai/qwen38-27b-rtx3090:sha-<7>.
-  image: ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+  # ghcr.io/syv-ai/hyperqwen:sha-<7>.
+  image: ghcr.io/syv-ai/hyperqwen:latest
   build: .
   pull_policy: missing
   ipc: host
@@ -43,7 +82,7 @@ x-qwen: &qwen
 x-serve: &serve
   <<: *qwen
   ports:
-    - "${PORT:-18020}:${PORT:-18020}"
+    - "${BIND:-127.0.0.1}:${PORT:-18020}:${PORT:-18020}"
   depends_on:
     prepare:
       condition: service_completed_successfully
@@ -52,7 +91,9 @@ x-serve: &serve
       reservations:
         devices:
           - driver: nvidia
-            count: 1
+            # 1 by default (= GPU 0). GPU_COUNT=2 / GPU_COUNT=all for TP; see
+            # the multi-GPU note in the header for picking specific cards.
+            count: ${GPU_COUNT:-1}
             capabilities: [gpu]
   restart: unless-stopped
   stop_grace_period: 30s
@@ -77,6 +118,31 @@ services:
     <<: *serve
     profiles: [batch]
     command: batch
+
+  # Second standalone engine on its own card (TP=1, same launcher, own
+  # port). Inert unless --profile solo; needs GPU_COUNT=all in .env so the
+  # reservation exposes the extra card. See the header for the layout.
+  solo:
+    <<: *serve
+    profiles: [solo]
+    command: single
+    environment:
+      # YAML merge keys are shallow, so this block replaces the anchor's
+      # environment rather than extending it — re-declare HOME, or the
+      # container gets /root and the torch.compile/FlashInfer JIT cache
+      # lands in its writable layer instead of the qwen-cache volume.
+      HOME: /cache
+      PORT: "${SOLO_PORT:-18021}"
+      CUDA_VISIBLE_DEVICES: "2"  # explicit value wins over .env's 0,1
+      EXTRA_ARGS: ""             # one card: .env's --tensor-parallel-size must not apply
+    ports:
+      - "${BIND:-127.0.0.1}:${SOLO_PORT:-18021}:${SOLO_PORT:-18021}"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:${SOLO_PORT:-18021}/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 900s
 
 volumes:
   qwen-cache:

@@ -1,0 +1,200 @@
+name: patch integrity
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model-verification:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check model verification and selection without a GPU
+        run: python bench/test_model_verification.py
+      - name: Check doctor health and failed configuration diagnostics
+        run: python bench/test_doctor.py
+      - name: Check state detection crash resilience without a GPU
+        run: python bench/test_prepare_state.py
+      - name: Check explicit chat-template targets and side-effect-free help
+        run: python bench/test_chat_hardening.py
+      - name: Check the MQ-3D split-KV capacity property holds without a GPU
+        run: python bench/mq3d_capacity_property.py
+      - name: Check the capacity property test still catches a broken derivation
+        run: python bench/mq3d_capacity_property.py --mutate seq-rows
+      - name: Check the demo rejects missing or insufficient document data
+        run: python bench/test_demo_corpus.py
+      - name: Check verbatim answer classification without a GPU
+        run: python bench/verbatim.py
+      - name: Check long-corpus source discovery and frozen byte preservation
+        run: python bench/test_long_corpus.py
+      - name: Check quality-battery arguments and actual GSM8K sample counts
+        run: python bench/test_quality_battery.py
+      - name: Check the bench harness (resolve_api_key.sh's key, the URL, streams and /metrics) without a GPU
+        run: python bench/test_harness.py
+      - name: Check Vision smoke verification against HTTP stubs without a GPU
+        run: python bench/test_vision_smoke.py
+      - name: Check conc_ladder --salt repeats its prompts and reports a prefix-cache hit without a GPU
+        run: python bench/test_conc_ladder_salt.py
+      - name: Check offload replay requires a positive load-byte delta
+        run: python bench/test_replay_offload.py
+      - name: Check labd_bench's TTFT and decode rate survive a wall clock that steps back, without a GPU
+        run: python bench/test_labd_bench_clock.py
+      - name: Check the LABD corpus comes from this checkout and existing corpora stay frozen
+        run: python bench/test_labd_corpus.py
+      - name: Check a launcher with no API key binds 127.0.0.1
+        run: bash bench/test_no_key_bind.sh
+      - name: Check PREFIX_CACHE sets the engine's prefix caching (unset/1 on, 0 off) and its safeguards follow
+        run: bash bench/test_prefix_cache_knob.sh
+      - name: Check KV_OFFLOAD_GB becomes one --kv-offloading-size in every launcher
+        run: bash bench/test_kv_offload_knob.sh
+      - name: Check DYNAMIC_K reaches --speculative-config in single-user/start_qwen.sh, and its refusals
+        run: bash bench/test_dynamic_k_knob.sh
+      - name: Check the launchers read -tp=N, any whitespace and _ in --flag names the way vLLM does
+        run: bash bench/test_tp_size.sh
+      - name: Check each launcher refuses a boolean knob that is neither 0 nor 1 (#310)
+        run: bash bench/test_bool_knobs.sh
+      - name: Check alternative.sh defaults GPU_UTIL to 0.93 under WSL2 and 0.95 natively (#401)
+        run: bash bench/test_alt_wsl_gpu_util.sh
+      - name: Check Vision limits, tower offload and boolean controls in every launcher without a GPU
+        run: python bench/test_vision_knobs.py
+      - name: Check the dflash2 seat note against the measured pools and resident counts
+        run: bash bench/test_resident_print.sh
+      - name: Check interrupted generation output resumes as valid JSONL
+        run: python bench/test_generation_state.py
+      - name: Check FA2_FP8KV selects fp8 on FLASH_ATTN only on SPEC=dflash2 CTX=long and refuses the rest
+        run: bash bench/test_fa2_fp8kv_knob.sh
+      - name: Check the T4 battery's plan, restart gate and verdict without a GPU
+        run: python bench/test_t4_battery.py
+      - name: Check PTH_FA in the launchers (argv, refusals, unset = unchanged) without a GPU
+        run: bash bench/test_pthfa_knob.sh
+      - name: Check pthfa/install.sh builds with an nvcc of torch's CUDA major and checks with a cuobjdump not older
+        run: bash bench/test_pthfa_install_toolchain.sh
+      - name: Rerun the launcher tests as a compute capability 8.6 host (stub nvidia-smi), where FA2_FP8KV and PTH_FA can default on
+        run: |
+          mkdir -p "$RUNNER_TEMP/cc86"
+          printf '#!/bin/sh\ncase "$*" in *compute_cap*) echo 8.6 ;; *) exit 9 ;; esac\n' > "$RUNNER_TEMP/cc86/nvidia-smi"
+          chmod +x "$RUNNER_TEMP/cc86/nvidia-smi"
+          export PATH="$RUNNER_TEMP/cc86:$PATH"
+          for t in no_key_bind prefix_cache_knob kv_offload_knob dynamic_k_knob tp_size bool_knobs resident_print fa2_fp8kv_knob pthfa_knob; do
+            bash "bench/test_$t.sh"
+          done
+
+  kvarn-torch-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The fp16-dequant numerics gate is pure torch (no vLLM, no GPU) and works with any
+      # torch build, so the job takes the current CPU wheel and has no pin to bump with vLLM.
+      - name: Install CPU torch
+        run: pip install torch --index-url https://download.pytorch.org/whl/cpu
+      - name: Check the KVARN_FP16_DEQUANT numerics gate without a GPU
+        run: python kvarn/tests/test_kvarn_fp16_dequant_torch.py
+
+  patch-index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check each graded() call in verify.sh names a patch that adds its marker
+        run: python scripts/check_verify_graded.py
+      - name: Check the PATCHES.md table matches the patch headers
+        run: |
+          python scripts/patches_md.py
+          git diff --exit-code PATCHES.md || { echo "::error::PATCHES.md is not current: run python3 scripts/patches_md.py and commit the result"; exit 1; }
+      - name: Check invalid pin bumps leave the checkout unchanged
+        run: python bench/test_pin_bump.py
+      - name: Check that a re-export keeps the file's preamble
+        run: bash scripts/test_export_patch.sh
+      - name: Check export and port tools with spaces in the vLLM checkout path
+        run: python bench/test_port_paths.py
+      - name: Check the vendored pth-flash-attn sources in pthfa/ against pthfa/SHA256SUMS
+        run: bash pthfa/check_vendor.sh
+
+  fa2-upstream:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Check docker/requirements.txt pins the vLLM version fa2/PIN names
+        run: |
+          . fa2/PIN
+          pinned=$(grep -E '^vllm==' docker/requirements.txt | cut -d= -f3)
+          [ "$pinned" = "$VLLM_VERSION" ] || { echo "::error::docker/requirements.txt pins vllm==$pinned but fa2/PIN says VLLM_VERSION=$VLLM_VERSION: re-run fa2/check_upstream.py against the new vLLM's flash-attention commit and update fa2/PIN"; exit 1; }
+      # fa2/ is checked against the flash-attention commit vLLM builds with, so a vLLM bump that moves
+      # that pin fails here instead of leaving the kernel sources checked against a stale commit.
+      - name: Check the pinned vLLM tag builds flash-attention at fa2/PIN's FA_COMMIT
+        run: |
+          . fa2/PIN
+          curl -fsSL "https://raw.githubusercontent.com/vllm-project/vllm/v$VLLM_VERSION/cmake/external_projects/vllm_flash_attn.cmake" -o "$RUNNER_TEMP/vllm_flash_attn.cmake"
+          tags=$(sed -n 's/^ *GIT_TAG  *\([0-9a-f]\{40\}\) *$/\1/p' "$RUNNER_TEMP/vllm_flash_attn.cmake")
+          [ "$(echo "$tags" | wc -l)" = 1 ] && [ -n "$tags" ] || { echo "::error::vllm v$VLLM_VERSION's vllm_flash_attn.cmake no longer has exactly one 40-hex GIT_TAG line: read the pin by hand and update this step"; exit 1; }
+          [ "$tags" = "$FA_COMMIT" ] || { echo "::error::vllm v$VLLM_VERSION pins flash-attention $tags but fa2/PIN has FA_COMMIT=$FA_COMMIT: re-run fa2/check_upstream.py against $tags and update fa2/PIN"; exit 1; }
+      - name: Fetch flash-attention at FA_COMMIT
+        run: |
+          . fa2/PIN
+          git init -q "$RUNNER_TEMP/fa"
+          git -C "$RUNNER_TEMP/fa" remote add origin "$FA_REPO"
+          git -C "$RUNNER_TEMP/fa" fetch -q --depth=1 origin "$FA_COMMIT"
+          git -C "$RUNNER_TEMP/fa" checkout -q --detach FETCH_HEAD
+      - name: Check fa2/ against flash-attention at FA_COMMIT (patch applies, 18 files byte for byte)
+        run: python fa2/check_upstream.py --fa-dir "$RUNNER_TEMP/fa"
+
+  git-apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check repository
+        uses: actions/checkout@v4
+
+      # The series is checked against the pin the image installs, read from docker/requirements.txt,
+      # so a pin bump and its regenerated patches are judged together instead of against a stale tag.
+      - name: Read the vLLM pin
+        id: pin
+        run: echo "tag=v$(grep -E '^vllm==' docker/requirements.txt | cut -d= -f3)" >> "$GITHUB_OUTPUT"
+
+      - name: Check pinned vLLM source
+        uses: actions/checkout@v4
+        with:
+          repository: vllm-project/vllm
+          ref: ${{ steps.pin.outputs.tag }}
+          path: .ci/vllm
+          fetch-depth: 1
+
+      - name: Validate patch series with git apply
+        run: bash patches/check_vllm_series.sh .ci/vllm/vllm
+
+  prepare-crash:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      # The prepare scripts run in the image, so the libraries they import come at the image's pins
+      # and a pin bump in docker/requirements.txt is tested with them. They use no CUDA, so torch is
+      # the CPU wheel, as in kvarn-torch-gate. psutil is installed by name: compressed-tensors 0.17.0
+      # imports it without declaring it, and the image gets it from vLLM.
+      - name: Install CPU torch and the prepare scripts' libraries at the image's pins
+        run: |
+          pip install torch --index-url https://download.pytorch.org/whl/cpu
+          grep -E '^(transformers|tokenizers|compressed-tensors|huggingface_hub)==' docker/requirements.txt > "$RUNNER_TEMP/prepare-req.txt"
+          [ "$(wc -l < "$RUNNER_TEMP/prepare-req.txt")" = 4 ] || { echo "::error::docker/requirements.txt no longer pins all four prepare libraries"; exit 1; }
+          pip install safetensors psutil -r "$RUNNER_TEMP/prepare-req.txt"
+      - name: Check the packed tensors and config groups the prepare scripts share
+        run: python bench/test_quant_schema.py
+      - name: Check the prepare scripts recover from a kill after every write without a GPU
+        run: python bench/test_prepare_crash.py

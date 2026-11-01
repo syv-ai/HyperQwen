@@ -1,0 +1,134 @@
+"""How the bench/ scripts reach the server: the key, the URL, the model, the request, the stream and /metrics.
+
+Every script runs as `python bench/<script>.py`, which puts bench/ on sys.path, so `import harness` needs no
+path setup. Stdlib only: the scripts run on the venv's bare Python.
+"""
+import json
+import os
+import sys
+import urllib.request
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+
+def client_key():
+    """resolve_client_key in resolve_api_key.sh: OPENAI_API_KEY, else VLLM_API_KEY, else api_key.txt, else
+    "EMPTY" (a server that bound no key ignores it). test_harness.py runs both and compares."""
+    for name in ("OPENAI_API_KEY", "VLLM_API_KEY"):
+        if os.environ.get(name):
+            return os.environ[name]
+    path = os.path.join(REPO, "api_key.txt")
+    if os.path.isfile(path):
+        with open(path, newline="") as f:
+            return f.read().rstrip("\n")
+    return "EMPTY"
+
+
+def base_url():
+    """The server root: VLLM_API if set, else http://127.0.0.1:${PORT:-18020}. A trailing /v1 on VLLM_API is
+    dropped, because five scripts documented VLLM_API with it."""
+    api = os.environ.get("VLLM_API", "").rstrip("/")
+    if api:
+        return api.removesuffix("/v1")
+    return "http://127.0.0.1:" + os.environ.get("PORT", "18020")
+
+
+def model():
+    """VLLM_MODEL if set, else the first id the server lists on /v1/models. vLLM serves a request that names no
+    model with that same model, so the scripts' payloads leave it out and only `vllm bench serve` needs this."""
+    if os.environ.get("VLLM_MODEL"):
+        return os.environ["VLLM_MODEL"]
+    with urllib.request.urlopen(request("/v1/models"), timeout=30) as r:
+        return json.load(r)["data"][0]["id"]
+
+
+def request(path, payload=None):
+    """A request to base_url() + path with the key; a payload makes it a JSON POST, naming VLLM_MODEL if set and
+    the payload names no model."""
+    headers = {"Authorization": "Bearer " + client_key()}
+    data = None
+    if payload is not None:
+        if os.environ.get("VLLM_MODEL"):
+            payload = {"model": os.environ["VLLM_MODEL"], **payload}
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(payload).encode()
+    return urllib.request.Request(base_url() + path, data=data, headers=headers)
+
+
+def post(path, payload, timeout=1200):
+    """JSON POST to base_url() + path; returns the decoded JSON body."""
+    with urllib.request.urlopen(request(path, payload), timeout=timeout) as r:
+        return json.load(r)
+
+
+def stream(path, payload, timeout=1800):
+    """POST a streaming request and yield each SSE data frame, decoded, until [DONE]. Lines that are not data
+    (the blank separators, a `: keep-alive` comment) are skipped. EOF before [DONE] is a failed request,
+    even if some tokens or usage arrived. An error frame is a failure even when followed by [DONE].
+    The caller times the frames itself."""
+    with urllib.request.urlopen(request(path, payload), timeout=timeout) as r:
+        for raw in r:
+            line = raw.decode().strip()
+            if not line.startswith("data:"):
+                continue
+            body = line[5:].strip()
+            if body == "[DONE]":
+                return
+            frame = json.loads(body)
+            if isinstance(frame, dict) and "error" in frame:
+                error = frame["error"]
+                detail = error.get("message", error) if isinstance(error, dict) else error
+                raise ConnectionError(f"SSE request failed: {detail}")
+            yield frame
+    raise ConnectionError("SSE stream closed before [DONE]; response is incomplete")
+
+
+def samples(timeout=30):
+    """GET /metrics as a list of (name, labels, value), one per sample line. labels is the raw "{...}" text,
+    "" when the line has none. Label values may hold spaces, so the labels end at the last "}"."""
+    with urllib.request.urlopen(request("/metrics"), timeout=timeout) as r:
+        text = r.read().decode()
+    out = []
+    for line in text.splitlines():
+        if not line or line[0] == "#":
+            continue
+        brace, space = line.find("{"), line.find(" ")
+        if 0 <= brace < space:
+            end = line.rindex("}") + 1
+            name, labels, rest = line[:brace], line[brace:end], line[end:]
+        else:
+            name, labels, rest = line[:space], "", line[space:]
+        out.append((name, labels, float(rest.split()[0])))
+    return out
+
+
+def metrics(*names, timeout=30):
+    """{name: value summed over its label sets, so over engines} for each of names present on /metrics. Names
+    match exactly, so a counter's <name>_created line never adds to <name>_total."""
+    out = {}
+    for name, _, value in samples(timeout):
+        if name in names:
+            out[name] = out.get(name, 0.0) + value
+    return out
+
+
+SPEC = ("vllm:spec_decode_num_drafts_total", "vllm:spec_decode_num_accepted_tokens_total")
+
+
+def spec():
+    """(drafts, accepted tokens) so far. Over a window, tokens/step is 1 + accepted delta / drafts delta."""
+    m = metrics(*SPEC)
+    return m.get(SPEC[0], 0.0), m.get(SPEC[1], 0.0)
+
+
+if __name__ == "__main__":
+    # The bash scripts call `python3 bench/harness.py spec` for "drafts accepted" and `model` for the name to
+    # give `vllm bench serve`. With no server, or a reply they cannot read, they print nothing on stdout, as
+    # `curl -s` did, and one line on stderr instead of a traceback.
+    commands = {"spec": lambda: print(*spec()), "model": lambda: print(model())}
+    if len(sys.argv) != 2 or sys.argv[1] not in commands:
+        sys.exit("usage: harness.py spec|model")
+    try:
+        commands[sys.argv[1]]()
+    except (OSError, ValueError, LookupError) as e:
+        sys.exit(f"harness.py {sys.argv[1]}: {e}")

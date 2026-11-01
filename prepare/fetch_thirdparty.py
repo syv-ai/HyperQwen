@@ -10,8 +10,9 @@ head preserved.
 ~18.6 GB for the default. A checkpoint like it is NOT servable on 24 GB as it
 ships, for the same reason the base model is not (bf16 lm_head, bf16
 embeddings, bf16 MTP module) -- and the three prepare/quant_*.py scripts
-cannot fix a single-shard asymmetric-AWQ export; prepare/quant_heads_stream.py
-handles both. This script prints the exact commands when the download finishes.
+read a shard into RAM whole, so they cannot rewrite its one 18.6 GB shard;
+prepare/quant_heads_stream.py streams it. This script prints the exact
+commands when the download finishes.
 (A ready-made alternative needing none of this is listed in the README's
 "Third-party checkpoints" section.)
 """

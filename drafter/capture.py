@@ -14,6 +14,12 @@ Row t of a sequence is the hidden state after consuming token t (it predicts tok
 import os, sys, json, time
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
 os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
+# The hooks below patch the V1 runner (vllm.v1.worker.gpu_model_runner). 0.28.0 runs this
+# hybrid model on V1 by default; vLLM 0.29 picks the V2 runner (vllm.v1.worker.gpu.model_runner)
+# unless told otherwise, and then the hooks never fire: the capture runs to the end with
+# rows=0 and every sequence incomplete. No speculation happens here, so V1 is the right one.
+os.environ.setdefault("VLLM_USE_V2_MODEL_RUNNER", "0")
+os.environ.setdefault("FLASHINFER_DISABLE_VERSION_CHECK", "1")
 os.environ.setdefault("VLLM_USE_FLASHINFER_SAMPLER", "0")
 os.environ.setdefault("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True")
 import numpy as np

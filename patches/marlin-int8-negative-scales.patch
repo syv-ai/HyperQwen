@@ -12,11 +12,21 @@ rare code -8 becomes -7 (one LSB) in flipped groups.
 Apply from the installed vllm package directory:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/marlin-int8-negative-scales.patch
 
-Written against vLLM 0.27.1.
+Validated against vLLM 0.28.0.
 
+Kind: fix
+What: Marlin W4A8 reads group scales as unsigned; AutoRound exports negative ones
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from 43d683117 (marlin-int8-negative-scales); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
+index 60687fc86..13591a141 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
-@@ -96,6 +96,38 @@
+@@ -81,6 +81,37 @@
                  "W8A8 is not supported by marlin kernel."
              )
  
@@ -29,7 +39,6 @@ Written against vLLM 0.27.1.
 +        if (
 +            c.act_type == torch.int8
 +            and c.group_size != -1
-+            and not c.has_g_idx
 +            and not c.zero_points
 +        ):
 +            _wq = getattr(layer, self.w_q_name)

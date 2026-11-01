@@ -16,23 +16,31 @@ Run it once per lane, against a server started in that configuration:
 
 Writes <out>/<lane>.json: per-prompt token arrival times relative to the first token,
 so the renderer never has to guess. Decode rate excludes prefill, the same convention
-the READMEs use.
+the READMEs use. The video is built from these files by bench/demo/build_data.py and
+rendered by bench/demo/render.mjs.
 """
 import json
 import os
 import sys
 import time
-import urllib.request
 
-KEY = open(os.path.expanduser("~/qwen-serving/api_key.txt")).read().strip()
-BASE = os.environ.get("DEMO_BASE", "http://127.0.0.1:18020")
+import harness
+
 LANE = sys.argv[1] if len(sys.argv) > 1 else "lane"
 OUT = os.path.expanduser(
     sys.argv[sys.argv.index("--out") + 1] if "--out" in sys.argv else "~/bench/demo")
 
 DOC_TOKENS = 25000
 _corpus = os.path.expanduser("~/bench/labd_corpus.txt")
-doc = open(_corpus).read()[: int(DOC_TOKENS * 2.9)] if os.path.exists(_corpus) else ""
+try:
+    with open(_corpus, encoding="utf-8") as f:
+        doc = f.read()[: int(DOC_TOKENS * 2.9)]
+except FileNotFoundError:
+    print(f"INVALID: {_corpus} is missing; run bench/labd_bench.py once to build the frozen LABD corpus before recording", file=sys.stderr)
+    sys.exit(2)
+if not doc.strip() or len(doc) < int(DOC_TOKENS * 2.9):
+    print(f"INVALID: {_corpus} is blank or too short for the document demo", file=sys.stderr)
+    sys.exit(2)
 
 # English throughout: the demo is the repo's front page, and the frame should be
 # readable by anyone landing on it. No max_tokens -- each answer runs to its own
@@ -52,40 +60,27 @@ PROMPTS = [
 
 
 def run(key, label, content, max_tokens=None):
-    payload = {"model": "qwen3.8-27b",
-               "messages": [{"role": "user", "content": content}],
+    payload = {"messages": [{"role": "user", "content": content}],
                "temperature": 0, "stream": True,
                "stream_options": {"include_usage": True},
                "chat_template_kwargs": {"enable_thinking": False}}
     if max_tokens:
         payload["max_tokens"] = max_tokens
-    req = urllib.request.Request(BASE + "/v1/chat/completions",
-                                 data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json",
-                                          "Authorization": "Bearer " + KEY})
-    t0 = time.time()
+    t0 = time.perf_counter()
     first = None
     toks = []          # (ms since first token, text)
     usage = {}
-    with urllib.request.urlopen(req, timeout=1800) as r:
-        for raw in r:
-            line = raw.decode().strip()
-            if not line.startswith("data: "):
-                continue
-            body = line[6:]
-            if body == "[DONE]":
-                break
-            ev = json.loads(body)
-            if ev.get("usage"):
-                usage = ev["usage"]
-            for ch in ev.get("choices", []):
-                piece = ch.get("delta", {}).get("content")
-                if piece:
-                    now = time.time()
-                    if first is None:
-                        first = now
-                    toks.append([round((now - first) * 1000, 1), piece])
-    end = time.time()
+    for ev in harness.stream("/v1/chat/completions", payload):
+        if ev.get("usage"):
+            usage = ev["usage"]
+        for ch in ev.get("choices", []):
+            piece = ch.get("delta", {}).get("content")
+            if piece:
+                now = time.perf_counter()
+                if first is None:
+                    first = now
+                toks.append([round((now - first) * 1000, 1), piece])
+    end = time.perf_counter()
     ttft = (first or end) - t0
     decode_s = end - (first or end)
     n = usage.get("completion_tokens", len(toks))

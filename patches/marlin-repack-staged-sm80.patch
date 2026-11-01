@@ -36,28 +36,43 @@ reuse and regrowth): kernel inputs and outputs torch.equal in all cases.
 
 Costs and gating: the buffer stays resident after load — up to ~1.2 GiB on
 this stack, because the quantized embedding/lm_head whales set its size.
-That is why it defaults ON only for compute capability 8.0 exactly (the
-card class that ships 40-64 GiB, where 1.2 GiB is cheap and load time is
-9x), and OFF everywhere else. Override with VLLM_MARLIN_REPACK_STAGED=0/1.
+It is opt-in on every card: VLLM_MARLIN_REPACK_STAGED=1. It used to default ON
+for compute capability 8.0 exactly, on the 170HX's 9x load time, but that 9x was
+against the CPU fallback; on a real A100 40 GB against the stock GPU path,
+staging saves 0.85 s of load (9.30 against 10.15 s) and holds 1.19 GiB, 5.8% of
+the pool. The GA100 mining cards whose alternative is the CPU fallback turn it
+on (docs/gotchas.md #37).
 ahnguyen17's CPU-fallback patch remains the zero-VRAM alternative.
 
 Status: validated on the 170HX (4 boot cycles + a full serving session,
 bit-exact, 0 Xid) and in production there — but as load-time hygiene, not
 as the wedge fix this header originally proposed; see the history above.
 
---- generated hunks below ---
+Kind: local
+What: one grow-only staging buffer for the sm80 Marlin repack (fork #27), opt-in with
+  `VLLM_MARLIN_REPACK_STAGED=1`
+Upstream: none
+Cut-against: 0.32.0
+Retires-when: stays
+
+--- exported from 883bf9fd8 (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
+index 13591a141..a3200a3d4 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
-@@ -2,6 +2,8 @@
+@@ -2,8 +2,10 @@
  # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
  
  
-+import os
 +
  import torch
  
++import vllm.envs as envs
  from vllm import _custom_ops as ops
-@@ -29,6 +31,55 @@
+ from vllm.model_executor.layers.quantization.utils.marlin_utils import (
+     MARLIN_SUPPORTED_GROUP_SIZES,
+@@ -24,6 +26,50 @@
  from vllm.platforms import current_platform
  from vllm.scalar_type import scalar_types
  
@@ -73,18 +88,13 @@ as the wedge fix this header originally proposed; see the history above.
 +# the repack kernel, get bit-identical output. Costs one max-layer-sized buffer
 +# (~141 MB on this stack) that stays resident after load on the cards where it
 +# is on -- the card class where the alternative is a wedge-until-reboot.
-+# Default: on for compute capability 8.0 exactly, off elsewhere; override with
-+# VLLM_MARLIN_REPACK_STAGED=0/1.
++# Opt-in: VLLM_MARLIN_REPACK_STAGED=1 turns it on (the GA100 mining cards, where the
++# alternative was a CPU fallback); unset or any other value keeps the stock repack.
 +_REPACK_STAGING: dict = {}
 +
 +
 +def _use_staged_repack(device: torch.device) -> bool:
-+    env = os.environ.get("VLLM_MARLIN_REPACK_STAGED")
-+    if env is not None:
-+        return env == "1"
-+    if device.type != "cuda":
-+        return False
-+    return torch.cuda.get_device_capability(device) == (8, 0)
++    return envs.VLLM_MARLIN_REPACK_STAGED == "1"
 +
 +
 +def _staged_pad_qweight(
@@ -113,7 +123,7 @@ as the wedge fix this header originally proposed; see the history above.
  from .MPLinearKernel import MPLinearKernel, MPLinearLayerConfig
  
  
-@@ -159,6 +210,23 @@
+@@ -129,6 +175,22 @@
          def transform_w_q(x):
              assert isinstance(x, BasevLLMParameter)
              permute_param_layout_(x, input_dim=0, output_dim=1, packed_dim=0)
@@ -127,7 +137,6 @@ as the wedge fix this header originally proposed; see the history above.
 +                x.data = torch.empty(0, dtype=staged.dtype, device=staged.device)
 +                x.data = ops.gptq_marlin_repack(
 +                    staged,
-+                    perm=layer.g_idx_sort_indices,
 +                    size_k=padded_k,
 +                    size_n=padded_n,
 +                    num_bits=c.weight_type.size_bits,

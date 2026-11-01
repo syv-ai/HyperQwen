@@ -76,13 +76,23 @@ Apply from the installed vllm package directory:
 
 Written against vLLM 0.27.1.
 
+Kind: fix
+What: keep reachable Mamba state snapshots alive until request end (fork #52)
+Upstream: vllm #45238 (not merged)
+Cut-against: 0.32.0
+Retires-when: check against upstream #52789 (internal prefill checkpoints, in 0.29) at each pin
+
+--- exported from 01785b8d7 (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
+index 2e4fe55b9..d779d5640 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -1,7 +1,18 @@
+@@ -1,7 +1,16 @@
  # SPDX-License-Identifier: Apache-2.0
  # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
  import itertools
-+import os
++import vllm.envs as envs
  from abc import ABC, abstractmethod
 +
 +# Opt-in for issue #52: hold each running request's reachable mamba "align"
@@ -90,17 +100,15 @@ Written against vLLM 0.27.1.
 +# prompt-region boundaries, <= 3 blocks per request per group) until the
 +# request finishes, and free them last. Costs a few held blocks per running
 +# request; no effect on hit semantics or model output.
-+_KEEP_ALIGN_CHECKPOINTS = (
-+    os.environ.get("VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS") == "1"
-+)
++_KEEP_ALIGN_CHECKPOINTS = envs.VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS
 +
  from collections import defaultdict
  from collections.abc import Sequence
- from typing import ClassVar
-@@ -1297,6 +1308,13 @@
-             # into a private cow_block; we record that block for connector
-             # offload (see _pending_partial_tail_offloads).
-             self._producer_partial_tail_reqs: dict[str, int] = {}
+ from typing import TYPE_CHECKING, ClassVar
+@@ -1449,6 +1458,13 @@
+             # connector; a request that finishes first hands off this table
+             # source directly.
+             self._producer_partial_tail_reqs: dict[str, tuple[KVCacheBlock, int]] = {}
 +            # Cached state blocks at the last prompt-region boundaries, held
 +            # until request end instead of being freed mid-decode. They are the
 +            # only mamba blocks a follow-up strict-extension request can hit,
@@ -111,7 +119,7 @@ Written against vLLM 0.27.1.
  
      @classmethod
      def find_longest_cache_hit(
-@@ -1461,8 +1479,37 @@
+@@ -1636,8 +1652,37 @@
                  < cdiv(processed_computed_tokens, self.block_size) - 1
              ):
                  blocks = self.req_to_blocks[request_id]
@@ -150,8 +158,8 @@ Written against vLLM 0.27.1.
 +                        self.block_pool.free_blocks([blk])
                      blocks[last_state_block_idx] = self._null_block
  
-     def get_num_common_prefix_blocks(self, running_request_id: str) -> int:
-@@ -1663,9 +1710,41 @@
+     def _needs_internal_checkpoint(
+@@ -1896,9 +1941,41 @@
                              # The moved entry is only filled by this step's
                              # copy, so defer same-step hits on it.
                              self.cached_blocks_this_step.add(cow_block.block_hash)
@@ -193,8 +201,8 @@ Written against vLLM 0.27.1.
                  req_blocks.extend(new_blocks)
                  self._allocated_block_reqs.add(request_id)
                  self._partial_hit_reqs.pop(request_id, None)
-@@ -1684,6 +1763,13 @@
-                 for entry in self._pending_partial_tail_offloads
+@@ -1949,6 +2026,13 @@
+                 for entry in self._pending_boundary_state_offloads
                  if entry[0] != request_id
              ]
 +            deferred = self._deferred_state_blocks.pop(request_id, None)

@@ -219,3 +219,165 @@ The boot log states the capacity formula as a sentence. The inputs and the resul
 and can be recomputed, which is how the second mutation was caught, but the sentence could go
 stale relative to the code. Left as a follow-up rather than folded in because the independent
 check verified these exact bytes.
+
+## Follow-up: the scratch is now inside the memory budget
+
+`spec-decode-scratch-within-budget.patch`, applied after this one.
+
+### What was wrong
+
+The metadata builder that owns the three `softmax_segm_*` buffers is constructed in
+`initialize_attn_backend`, which `initialize_kv_cache` runs after `determine_available_memory`
+has already fixed the KV budget (`gpu_worker.py`: the `memory_profiling` block wraps only
+`profile_run`; `initialize_from_config` comes later). Nothing in the profiled window touches the
+builder, so the buffers were allocated after the budget was set and came out of the headroom the
+profile had reserved for activations. The merge review measured it as +182 MiB resident at
+`max_num_seqs=64` with a byte-identical KV pool. The resident figure is itself an under-read:
+the caching allocator serves the scratch from segments the profiler already reserved, so
+`nvidia-smi` sees little of it. There are four builders on this model (two attention groups, two
+head counts), so the unaccounted total was four buffer sets, not the one the boot line reported:
+112.88 MiB at `MAX_SEQS=4`, 451.50 MiB at 16, 903 MiB at 32 and above (the capacity formula's
+ceiling on this config). On the reference 3090 the scratch stepped +226 / +452 / +0 MiB from 8 to
+16 to 32 to 64 sequences while the KV budget stepped +30 / +180 / +250 MiB: uncorrelated, the
+budget was tracking per-sequence state and never the scratch. At `MAX_SEQS=32` that left 319 MiB
+free after boot, inside the burst zone gotcha 39 describes.
+
+### The fix
+
+The attention `Impl` is constructed during `load_model`, inside the window whose consumption the
+profile counts (`memory_profiling.total_consumed` is free memory at worker init minus free memory
+after the profile, and `Model loading took` reports it). So the first `Impl` of a given geometry
+allocates the scratch into a module-level pool, and every builder of that geometry adopts it. The
+derivation did not change; it moved into `mq3d_scratch_plan`, and the property test still holds
+with both negative controls red. Two rules fell out of the first boot:
+
+- **Geometry is the model config's, not the layer's.** The builder sizes rows from
+  `vllm_config.model_config` (head size, KV heads); the drafter's layers carry their own numbers
+  (head 128, 8 KV heads here) and a pool keyed on those is one the drafter's builder can never
+  adopt. The first cut did exactly that, and its smoke boot showed the drafter's builder on the
+  WARNING path with 32.25 MiB still outside the budget.
+- **One set per geometry, not per builder.** At model load the number of KV cache groups is not
+  known, so builders of one geometry share a set. This is safe for the reason the existing sharing
+  across a group's layers is safe: an attention call writes and reduces the scratch within the
+  call, on one stream. It halves the footprint (four builders, two geometries). Under ubatching
+  (DBO) a group's builders run on separate streams, so a builder then passes `exclusive` and adopts
+  only a set no builder has adopted; the rest allocate their own, after the profile, and say so.
+  `use_ubatching` is off in every launcher here.
+
+A builder that finds nothing to adopt still allocates and says so at WARNING (`allocated at
+metadata builder (AFTER the memory profile: these bytes are not in the KV budget)`), so the
+unaccounted case cannot recur silently. `resolve_cudagraph_mode_and_sizes` can re-round the
+capture sizes after the model loads, so a builder may derive a capacity the `Impl` did not:
+smaller adopts the larger pool (the declared capacity is the pool's, asserted `>=` derived),
+larger takes the WARNING path. `bench/mq3d_scratch_pool_test.py` exercises the pool on CPU
+tensors (share, adopt-smaller, replace-larger, exclusive, distinct geometry) and ends with a
+negative control (guard off, the second builder shares); it ran inside the image on the 4090 box.
+
+### Measured
+
+Oracle: at the same `MAX_SEQS`, `Available KV cache memory` (and the KV token count) drops by the
+bytes allocated at model load, `Model loading took` rises by the same, every builder line reads
+`adopted`, and no line reads `AFTER the memory profile`. Resident memory is not an oracle.
+
+**Reference 3090** (native, `alternative.sh` int4, `MAX_LEN=180000`, `SPEC=dflash2`, fresh compile
+cache per boot; stock repeated at 8 and 32, identical to the token). Patched minus stock:
+
+| `MAX_SEQS` | allocated at load | `Model loading took` | `Available KV` | KV tokens | free VRAM after boot | builder lines | 3.7k prompt |
+|---|---|---|---|---|---|---|---|
+| 8 | 112.88 MiB | +113 MiB | -164 MiB | -7,798 | +280 MiB | 4 adopted / 0 after | ok |
+| 16 | 225.75 MiB | +225 MiB | -266 MiB | -12,347 | +462 MiB | 4 adopted / 0 after | ok |
+| 32 | 451.50 MiB | +461 MiB | -471 MiB | -22,094 | +1,004 MiB | 4 adopted / 0 after | ok |
+| 64 | 451.50 MiB | +461 MiB | -420 MiB | -20,144 | +824 MiB | 4 adopted / 0 after | ok |
+
+The model-load figure rises by the allocation; the torch peak is unchanged; the budget falls by
+the allocation plus -31 to +51 MiB. With stock boots reproducing to the token, that remainder is
+the allocator's segment behaviour at load, the true cost, with the right sign. At `MAX_SEQS=32`
+free VRAM after boot goes 319 to 1,323 MiB, out of the burst zone, for about 22k of 230k KV tokens.
+That is the price the review asked to have made visible. One more condition for anyone adding rows: the
+same 3090 booted from the container image instead of the native venv gives identical builders, capacity,
+scratch and model-load figures but a profiled budget about 30 MiB larger and a resident figure about
+500 MiB smaller, before any patch (native stock repeats were digit-identical, so that is the container
+environment, not noise). Compare patched against stock within one arm; never a native row against an
+image row.
+
+**4090, WSL2** (`CTX=long`, `MAX_LEN=81920`, k=7, `PREFIX_CACHE=1`, `GPU_UTIL=0.93`; compile cache
+disabled on every boot, so each profiles cold: the first series mixed a cold and a warm stock boot
+and got 4.86 versus 5.77 GiB of KV budget at the same config, gotcha 13 landing inside the profiled
+window; stock repeated at 4, identical to the token). Then a 6.7k and a 68k prompt:
+
+| `MAX_SEQS` | arm | scratch lines | `Model loading took` | `Available KV` | KV tokens | prompts |
+|---|---|---|---|---|---|---|
+| 4 | stock (x2) | 4 x after profile, 112.88 MiB | 15.92 GiB | 4.85 GiB | 184,701 | ok / ok |
+| 4 | patched | 56.44 MiB at load, 4 adopted, 0 after | 15.98 GiB | 4.79 GiB | 182,666 (-2,035) | ok / ok |
+| 16 | stock | 4 x after profile, 451.50 MiB | 15.93 GiB | 4.76 GiB | 181,139 | ok / ok |
+| 16 | patched | 225.75 MiB at load, 4 adopted, 0 after | 16.14 GiB | 4.54 GiB | 172,998 (-8,141) | ok / ok |
+| 32 | stock | 4 x after profile, 903.00 MiB | 15.93 GiB | 4.62 GiB | 175,542 | ok / ok |
+| 32 | patched | 451.50 MiB at load, 4 adopted, 0 after | 16.37 GiB | 4.18 GiB | 158,751 (-16,791) | ok / ok |
+
+At 28.2 KB per KV token the token drops are 55, 219 and 452 MiB against 56.44, 225.75 and 451.50
+allocated; the pool is allocated in blocks, so the count quantizes at a few MiB. Resident memory
+after boot at `MAX_SEQS=32`: 23,270 MB stock, 22,372 MB patched. The 903 MiB the stock arm took
+outside the budget is gone; half of it is the pool's now and half came back as headroom.
+
+### Known nit, carried
+
+The boot line still states the capacity formula as a sentence (above). It now also states where
+each set was allocated and which builders adopted it, which is the part this follow-up needed
+auditable.
+
+### Depth 15, the band the sizing was written for (2026-09-03)
+
+With #63 in (dfee877) depth 15 boots on the int4 path. RTX 4090 under WSL2, the container image built
+from main, `alternative.sh` int4, `DFLASH_TOKENS=15`, `MAX_LEN=32768`, `MAX_SEQS=4`, `VLLM_INT4_MQ_3D=1`,
+`VLLM_INT4_MQ_3D_DEBUG=1`, two tool-calling conversations (about 60 chat completions each) plus one
+short bench per boot:
+
+- Stock main: pool 43,866 tokens; the scratch declares capacity 64 query tokens (min(max_num_seqs=4,
+  seq_threshold_3D=32) x max_query_len_3d=16). Dispatch census: 712 verify-shaped batches
+  (max_seqlen_q <= 16), all 712 on the 3D path, 0 capacity fallbacks, breach_count 0, no DEGRADED
+  line; every width in the 9..16 band present (4 sequences at 10, 12, 14 and 16 query tokens; 1 to 3
+  sequences at 16). The 4,223 prefill chunks (max_seqlen_q 1840) took 2D by the query-length policy.
+- This patch applied at boot: two sets allocated at model load (24.19 MiB at 396,288 B/row and 32.25 MiB
+  at 528,384 B/row, 56.44 MiB together), all four builders adopted, zero "AFTER the memory profile"
+  lines. `Model loading took` 15.92 to 15.98 GiB, `Available KV cache memory` 4.81 to 4.75 GiB, pool
+  43,866 to 43,338 tokens. Same census, same no-fallback result.
+- Quality (thinking off): stock, judgment 8/8, mission 14/18 twice; 3D path off, judgment 6/8, mission
+  15/18 twice; this patch, judgment 6/8, mission 16/18. No repetition or truncation in any row; the
+  judgment bench moves two decisions between boots of the same configuration, so those are noise-shaped.
+
+### Captured-path A/B on the native 3090 (maintainer's rows, review of #93, 2026-09-13)
+
+One 3090 at 250 W, production stopped, `MAX_LEN=98304 GPU_UTIL=0.93 PREFIX_CACHE=0 MAX_SEQS=1`, `SPEC=dflash2` k=7,
+torch.compile cache wiped before each boot, all three boots on the same pool (185,373 tokens, concurrency 1.89x).
+Wiring verified from `/proc/<pid>/environ`: arm A `VLLM_INT4_MQ_3D=0`, arm B (nothing set) `VLLM_INT4_MQ_3D=1`.
+This is the captured-graph path (`max_cudagraph_capture_size=8`, k=7), the row `bench/mq3d_layer2_oracle.py` does
+not cover (its own config line says `cudagraph: NONE (eager)`).
+
+Quality, `bench/quality_battery.py`, 200 GSM8K rows, greedy, thinking off:
+
+```
+2D  PPL all 8.2079   GSM8K n=200 acc=0.945  mean_tokens=381
+3D  PPL all 8.2087   GSM8K n=200 acc=0.955  mean_tokens=375
+```
+
+Perplexity agrees to four significant figures on every split (en -0.05%, da +0.02%, code +0.08%, all +0.010%);
+GSM8K is 1.0 absolute point apart, two questions, which n=200 cannot resolve as signal or noise.
+
+Decode, isolated as `255/(t_256 - t_1tok)` on a prefix-cached prompt so prefill is excluded:
+
+```
+degenerate repeat prompt        2D      3D
+  24k   decode tok/s         119.09  205.34   1.72x
+  49k                         75.21  159.79   2.12x
+  88k                         19.04   46.06   2.42x
+
+wikitext-2 prose
+  24k                         44.17   78.80   1.78x
+  49k                         35.12   46.83   1.33x
+  88k                         15.18   38.02   2.50x
+```
+
+Prefill is untouched at every depth in both prompt sets (worst gap 1.35%, prompt_tokens identical per depth). The
+range on this card is 1.3x to 2.5x; the larger multiple quoted earlier in this repo's history is the WSL2 4090 row at 88k
+and does not reproduce in magnitude here. The arms diverge at T=0 on the long prose prompts (49k and 88k; 24k
+identical): the 3D reducer is a different reduction order, so bit-for-bit equal text between the two arms is not a claim this flip makes.

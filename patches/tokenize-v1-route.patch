@@ -1,0 +1,34 @@
+Serve /tokenize and /detokenize under /v1 as well as at the root.
+
+Every OpenAI SDK client (and most gateways) points base_url at a URL ending
+in /v1 and resolves every endpoint relative to it, so the root-only routes
+were a genuine 404 for them: the tokenization endpoints were unusable from
+stock clients. The router is now included twice, once as-is and once with
+prefix="/v1"; FastAPI derives each route's operation id from name + path +
+method, so the two mounts carry distinct ids (tokenize_tokenize_post /
+tokenize_v1_tokenize_post) and the OpenAPI schema stays valid.
+
+Kind: feature
+What: /tokenize and /detokenize also served under /v1 for OpenAI-SDK base_urls; operation ids stay
+  unique (name+path+method)
+Upstream: none (vllm #59891 was closed: upstream keeps `/v1` for the official OpenAI endpoints)
+Cut-against: 0.32.0
+Retires-when: stays
+
+--- exported from bd51c096d (tokenize-v1-route); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/entrypoints/serve/tokenize/api_router.py b/entrypoints/serve/tokenize/api_router.py
+index cd515d31d..02fe0ea6c 100644
+--- a/entrypoints/serve/tokenize/api_router.py
++++ b/entrypoints/serve/tokenize/api_router.py
+@@ -99,3 +99,10 @@
+             )
+ 
+     app.include_router(router)
++    # Also under /v1: OpenAI SDK clients and most gateways point base_url at
++    # a URL ending in /v1 and resolve every endpoint relative to it, so the
++    # root-only routes were a genuine 404 for them. FastAPI derives a route's
++    # operation id from name + path + method, so the two mounts carry
++    # distinct ids (tokenize_tokenize_post / tokenize_v1_tokenize_post) and
++    # the OpenAPI schema stays valid.
++    app.include_router(router, prefix="/v1")

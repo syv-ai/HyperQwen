@@ -38,15 +38,54 @@ Measured on the 3090, SPEC=dflash2 DFLASH_TOKENS=7, --kv-cache-memory=5583457484
 138,696 against bf16's 69,758 is 1.99x the context in the same pool. bf16 is untouched
 because its pages already divide.
 
+The promoted block must also DIVIDE the primary block (#63). Covering the maximum page is
+only half the requirement: the scheduler's granularity is the LCM of the primary groups'
+blocks, and kv_cache_coordinator asserts that every group's block divides it. The first
+version of this patch only made the page cover, and got away with it at DFLASH_TOKENS=7
+by luck -- the drafter landed on 848 against a primary block of 1696, exactly half. The
+mamba page grows with the spec-decode state, so at DFLASH_TOKENS=15 the primary block
+moves 1696 -> 1840 while the drafter's covering block is 928, which divides nothing the
+scheduler can use, and the engine died in a bare `assert` three layers down. So round the
+promotion up to the smallest divisor of the primary block that still covers, and bail out
+(back to the expensive-but-working padding) if there is none.
+
+Measured on the 3090, alternative.sh (int4_per_token_head), MAX_LEN=32768:
+
+  DFLASH_TOKENS=7   1696 / 848  scheduler 1696, unchanged by this fix, pool 142,843 tokens
+  DFLASH_TOKENS=15  1840 / 928  AssertionError in kv_cache_coordinator.py -> boots:
+                    drafter 16 -> 1840, primary scales 1840 -> 3680, pool 53,908 tokens
+
+At 15 the whole 256k default no longer fits (estimated maximum model length 180,320), which
+is the documented cost of a wider verify block, not a new failure. CTX=huge (KVarN) at
+DFLASH_TOKENS=15 is untouched: 228,296 tokens, same as before.
+
 Apply from the repo root, after hybrid-kv-groups-v2-cudagraph.patch:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/hybrid-sw-block-promote.patch
 
-Written against vLLM 0.27.1. Reapply after upgrades.
+Validated against vLLM 0.28.0. Reapply after upgrades.
 
+Ported to 0.29: AttentionSpec no longer carries indexes_kv_by_block_stride (the KVCacheLayout refactor moved block
+strides onto KVCacheTensor placement, and upstream's own pad branch in unify_kv_cache_spec_page_size now pads any
+non-MLA attention layer). The "can this layer pad" check mirrors that: not isinstance(spec, MLAAttentionSpec).
+(Struck, first port attempt: reading the removed flag with getattr defaulted it to False, which refused the
+promotion on every target layer; on 0.28 attn_utils set the flag from the backend for every attention spec, so the
+branch was taken there. The int4 profile then padded the five drafter layers at block 16 and could not fit 120k.)
+
+Kind: fix
+What: promote a draft SW layer's block to a divisor of the primary block instead of padding its page
+Upstream: none yet (upstream pads)
+Cut-against: 0.32.0: re-anchored after #57169 deleted the GLM5-next helpers it sat beside; only
+  _promote_indivisible_block_sizes is added
+Retires-when: upstream PR
+
+--- exported from 0a817e021 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
+index 85a90ce9c..8628b5f98 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1067,6 +1067,93 @@
-     return len(page_sizes) == 1
+@@ -1289,6 +1289,148 @@
+     return [KVCacheGroupSpec(list(spec.kv_cache_specs.keys()), spec)]
  
  
 +def _promote_indivisible_block_sizes(
@@ -88,6 +127,25 @@ Written against vLLM 0.27.1. Reapply after upgrades.
 +    if not candidates:
 +        return kv_cache_spec, max_page_size
 +
++    # (syv) The promoted block must also satisfy the scheduler's invariant: the
++    # scheduling granularity is the LCM of the primary groups' blocks, and every
++    # group's block has to divide it (kv_cache_coordinator's assert). Covering
++    # max_page_size does not give that for free -- at DFLASH_TOKENS=7 the drafter
++    # landed on 848 against a primary block of 1696 by luck. At 15 the mamba page
++    # grows with the spec-decode state, the primary block moves 1696 -> 1840, and
++    # 928 divides nothing the scheduler can use, so the engine died in an
++    # assert three layers down (#63). Round each promotion up to a *divisor* of
++    # the primary block; the primary layers then scale up by that integer ratio
++    # in unify, which is the branch they already take.
++    primary_blocks = {
++        spec.block_size
++        for name, spec in kv_cache_spec.items()
++        if isinstance(spec, AttentionSpec)
++        and name not in candidates
++        and spec.page_size_bytes == max_page_size
++    }
++    primary_block = next(iter(primary_blocks)) if len(primary_blocks) == 1 else None
++
 +    new_max = max_page_size
 +    promoted: dict[str, KVCacheSpec] = {}
 +    for name, spec in candidates.items():
@@ -96,6 +154,42 @@ Written against vLLM 0.27.1. Reapply after upgrades.
 +            return kv_cache_spec, max_page_size
 +        ratio = cdiv(max_page_size, spec.page_size_bytes)
 +        new_block_size = spec.block_size * ratio
++        if primary_block is not None and primary_block % new_block_size != 0:
++            # Both constraints must hold: divide the primary block (scheduler
++            # LCM invariant, kv_cache_coordinator asserts scheduler %
++            # group_block == 0) AND stay a whole multiple of this layer's own
++            # kernel granularity (spec.block_size, 16 for the SW drafter).
++            # Upstream unify scales by whole ratios for the same reason; a
++            # divisor like 460/920 of 1840 satisfies the first but breaks the
++            # second (460 % 16 == 12, 920 % 16 == 8) and dies downstream or
++            # mis-aligns KV pages.
++            # spec.block_size is the layer's *current framework* block, not
++            # the backend's get_supported_kernel_block_sizes(). It is the
++            # kernel granularity here only because nothing has promoted this
++            # layer yet; for a layer whose block was already promoted the two
++            # diverge, and this condition would then be the weaker of the two.
++            divisor = next(
++                (
++                    d
++                    for d in range(new_block_size, primary_block + 1)
++                    if primary_block % d == 0 and d % spec.block_size == 0
++                ),
++                None,
++            )
++            if divisor is None:
++                # Nothing between the covering block and the primary block
++                # divides it. Leave the config alone rather than break the
++                # scheduler: unify then pads this layer's page at block 16,
++                # which is expensive but boots.
++                logger.info(
++                    "Not promoting draft block sizes: no divisor of the primary "
++                    "block %d is >= layer %s's covering block %d.",
++                    primary_block,
++                    name,
++                    new_block_size,
++                )
++                return kv_cache_spec, max_page_size
++            new_block_size = divisor
 +        new_spec = replace(spec, block_size=new_block_size)
 +        if new_spec.page_size_bytes < max_page_size:
 +            return kv_cache_spec, max_page_size
@@ -111,7 +205,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
 +            continue
 +        if new_max % spec.page_size_bytes == 0:
 +            continue
-+        if isinstance(spec, AttentionSpec) and spec.indexes_kv_by_block_stride:
++        if isinstance(spec, AttentionSpec) and not isinstance(spec, MLAAttentionSpec):
 +            continue
 +        logger.info(
 +            "Not promoting draft block sizes: layer %s can neither scale nor pad "
@@ -139,7 +233,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
  def unify_kv_cache_spec_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> dict[str, KVCacheSpec]:
-@@ -1094,6 +1181,12 @@
+@@ -1319,6 +1461,12 @@
          return kv_cache_spec
  
      max_page_size = max(page_sizes)

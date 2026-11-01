@@ -1,0 +1,687 @@
+diff --git a/csrc/flash_attn/src/flash.h b/csrc/flash_attn/src/flash.h
+--- a/csrc/flash_attn/src/flash.h
++++ b/csrc/flash_attn/src/flash.h
+@@ -45,6 +45,7 @@
+ ////////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ struct Flash_fwd_params : public Qkv_params {
++    int query_group_size = 1;
+ 
+     // The O matrix (output).
+     void * __restrict__ o_ptr;
+@@ -68,6 +69,8 @@
+     // The scaling factors for the kernel.
+     float scale_softmax;
+     float scale_softmax_log2;
++    const float* k_descale_ptr;
++    const float* v_descale_ptr;
+ 
+     // array of length b+1 holding starting offset of each sequence.
+     int * __restrict__ cu_seqlens_q;
+diff --git a/csrc/flash_attn/src/flash_fwd_kernel.h b/csrc/flash_attn/src/flash_fwd_kernel.h
+--- a/csrc/flash_attn/src/flash_fwd_kernel.h
++++ b/csrc/flash_attn/src/flash_fwd_kernel.h
+@@ -292,7 +292,7 @@
+     FLASH_NAMESPACE::Softmax<2 * size<1>(acc_o)> softmax;
+ 
+     const float alibi_slope = !Has_alibi || params.alibi_slopes_ptr == nullptr ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
+-    FLASH_NAMESPACE::Mask<Is_causal, Is_local, Has_alibi> mask(binfo.actual_seqlen_k, binfo.actual_seqlen_q, params.window_size_left, params.window_size_right, alibi_slope);
++    FLASH_NAMESPACE::Mask<Is_causal, Is_local, Has_alibi> mask(binfo.actual_seqlen_k, binfo.actual_seqlen_q / params.query_group_size, params.window_size_left, params.window_size_right, alibi_slope, params.query_group_size);
+ 
+     // For performance reason, we separate out two kinds of iterations:
+     // those that need masking on S, and those that don't.
+@@ -506,6 +506,9 @@
+ inline __device__ void compute_attn_1rowblock_splitkv(const Params &params, const int bidb, const int bidh, const int m_block, const int n_split_idx, const int num_n_splits) {
+ 
+     using Element = typename Kernel_traits::Element;
++    using ElementKV = typename Kernel_traits::ElementKV;
++    const float k_descale = params.k_descale_ptr == nullptr ? 1.0f : *params.k_descale_ptr;
++    const float v_descale = params.v_descale_ptr == nullptr ? 1.0f : *params.v_descale_ptr;
+     using ElementAccum = typename Kernel_traits::ElementAccum;
+     using index_t = typename Kernel_traits::index_t;
+ 
+@@ -532,24 +535,29 @@
+     // if (threadIdx.x == 0 && blockIdx.y == 1 && blockIdx.z == 0) { printf("params.knew_ptr = %p, seqlen_k_cache + seqlen_knew = %d\n", params.knew_ptr, binfo.seqlen_k_cache + (params.knew_ptr == nullptr ? 0 : params.seqlen_knew)); }
+     if (m_block * kBlockM >= binfo.actual_seqlen_q) return;
+ 
+-    const int n_blocks_per_split = ((binfo.actual_seqlen_k + kBlockN - 1) / kBlockN + num_n_splits - 1) / num_n_splits;
+-    const int n_block_min = !Is_local
+-        ? n_split_idx * n_blocks_per_split
+-        : std::max(n_split_idx * n_blocks_per_split, (m_block * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q - params.window_size_left) / kBlockN);
+-    int n_block_max = std::min(cute::ceil_div(binfo.actual_seqlen_k, kBlockN), (n_split_idx + 1) * n_blocks_per_split);
+-    if (Is_causal || Is_local) {
+-        n_block_max = std::min(n_block_max,
+-                               cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q + params.window_size_right, kBlockN));
+-    }
++    const int first_block = Is_local ? std::max(0,
++        (m_block * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q - params.window_size_left) / kBlockN) : 0;
++    const int last_block = Is_causal || Is_local
++        ? std::min(cute::ceil_div(binfo.actual_seqlen_k, kBlockN),
++            cute::ceil_div((m_block + 1) * kBlockM + binfo.actual_seqlen_k - binfo.actual_seqlen_q + params.window_size_right, kBlockN))
++        : cute::ceil_div(binfo.actual_seqlen_k, kBlockN);
++    // Split the visible window itself so SWA does not leave almost every CTA idle.
++    const int n_blocks_per_split = cute::ceil_div(std::max(0, last_block - first_block), num_n_splits);
++    const int n_block_min = first_block + n_split_idx * n_blocks_per_split;
++    const int n_block_max = std::min(last_block, first_block + (n_split_idx + 1) * n_blocks_per_split);
+     if (n_block_min >= n_block_max) {  // This also covers the case where n_block_max <= 0
+         // We exit early and write 0 to gOaccum and -inf to gLSEaccum.
+         // Otherwise we might read OOB elements from gK and gV,
+         // or get wrong results when we combine gOaccum from different blocks.
+         const index_t row_offset_o = binfo.q_offset(params.o_batch_stride, params.o_row_stride, bidb)
+             + m_block * kBlockM * params.o_row_stride + bidh * params.o_head_stride;
+-        const index_t row_offset_oaccum = (((n_split_idx * params.b + bidb) * params.h + bidh) * params.seqlen_q
++        const index_t row_offset_oaccum = (((index_t(n_split_idx) * params.b + bidb) * params.h + bidh) * params.seqlen_q
+             + m_block * kBlockM) * params.d_rounded;
+-        const index_t row_offset_lseaccum = ((n_split_idx * params.b + bidb) * params.h + bidh) * params.seqlen_q + m_block * kBlockM;
++        // Empty causal tiles use the same packed LSE layout as nonempty tiles.
++        // The padded split layout overruns LSE for ragged, unsplit batches.
++        const index_t row_offset_lseaccum = (Split || !params.unpadded_lse ?
++                ((index_t(n_split_idx) * params.b + bidb) * params.h + bidh) * params.seqlen_q : index_t(bidh) * params.total_q + binfo.q_offset(params.seqlen_q, 1, bidb)
++            ) + m_block * kBlockM;
+         Tensor gOaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementO *>(Split ? params.oaccum_ptr : params.o_ptr) + (Split ? row_offset_oaccum : row_offset_o)),
+                                       Shape<Int<kBlockM>, Int<kHeadDim>>{},
+                                      make_stride(Split ? kHeadDim : params.o_row_stride, _1{}));
+@@ -603,11 +611,11 @@
+                             make_stride(params.q_row_stride, params.q_head_stride, _1{}));
+     Tensor gQ = local_tile(mQ(_, bidh, _), Shape<Int<kBlockM>, Int<kHeadDim>>{},
+                            make_coord(m_block, 0));  // (kBlockM, kHeadDim)
+-    Tensor gK = make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.k_ptr) + row_offset_k),
++    Tensor gK = make_tensor(make_gmem_ptr(reinterpret_cast<ElementKV *>(params.k_ptr) + row_offset_k),
+                             Shape<Int<kBlockN>, Int<kHeadDim>>{},
+                             make_stride(params.k_row_stride, _1{}));
+     // if (threadIdx.x == 0 && blockIdx.y == 0 && blockIdx.z == 0) { printf("k_ptr = %p, row_offset_k = %d, gK_ptr = %p\n", params.k_ptr, row_offset_k, gK.data()); }
+-    Tensor gV = make_tensor(make_gmem_ptr(reinterpret_cast<Element *>(params.v_ptr) + row_offset_v),
++    Tensor gV = make_tensor(make_gmem_ptr(reinterpret_cast<ElementKV *>(params.v_ptr) + row_offset_v),
+                             Shape<Int<kBlockN>, Int<kHeadDim>>{},
+                             make_stride(params.v_row_stride, _1{}));
+ 
+@@ -635,6 +643,20 @@
+     Tensor tKsK = make_tensor(tKsK_.data(), reshape_thread_tile(tKsK_.layout()));
+     Tensor tVgV = make_tensor(tVgV_.data(), reshape_thread_tile(tVgV_.layout()));
+     Tensor tVsV = make_tensor(tVsV_.data(), reshape_thread_tile(tVsV_.layout()));
++
++#if FA2_FP8KV_PIPELINE
++    Tensor sKfp8 = make_tensor(
++        make_smem_ptr(reinterpret_cast<ElementKV*>(smem_ + Kernel_traits::kBaseSmemSize)),
++        typename Kernel_traits::SmemLayoutKV{});
++    Tensor sVfp8 = make_tensor(sKfp8.data() + size(sKfp8), typename Kernel_traits::SmemLayoutKV{});
++    Tensor tKsKfp8_ = gmem_thr_copy_KV.partition_D(sKfp8);
++    Tensor tVsVfp8_ = gmem_thr_copy_KV.partition_D(sVfp8);
++    Tensor tKsKLoad = make_tensor(tKsKfp8_.data(), reshape_thread_tile(tKsKfp8_.layout()));
++    Tensor tVsVLoad = make_tensor(tVsVfp8_.data(), reshape_thread_tile(tVsVfp8_.layout()));
++#else
++    Tensor tKsKLoad = tKsK;
++    Tensor tVsVLoad = tVsV;
++#endif
+ 
+     if (block_table != nullptr) {
+         auto final_block_size = binfo.actual_seqlen_k - (n_block_max - 1) * kBlockN;
+@@ -855,8 +877,8 @@
+ 
+     int n_block = n_block_max - 1;
+     // We don't need to clear the sK smem tiles since we'll mask out the scores anyway.
+-    FLASH_NAMESPACE::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_KV, tKgK, tKsK, tKVcKV, tKVpKV,
+-                                                 binfo.actual_seqlen_k - n_block * kBlockN);
++    FLASH_NAMESPACE::copy<Is_even_MN, Is_even_K>(gmem_tiled_copy_KV, tKgK, tKsKLoad, tKVcKV, tKVpKV,
++                                                 binfo.actual_seqlen_k - n_block * kBlockN, k_descale);
+     cute::cp_async_fence();
+ 
+     // FLASH_NAMESPACE::cp_async_wait<0>();
+@@ -869,7 +891,27 @@
+     FLASH_NAMESPACE::Softmax<2 * size<1>(acc_o)> softmax;
+ 
+     const float alibi_slope = !Has_alibi ? 0.0f : reinterpret_cast<float *>(params.alibi_slopes_ptr)[bidb * params.alibi_slopes_batch_stride + bidh] / params.scale_softmax;
+-    FLASH_NAMESPACE::Mask<Is_causal, Is_local, Has_alibi> mask(binfo.actual_seqlen_k, binfo.actual_seqlen_q, params.window_size_left, params.window_size_right, alibi_slope);
++    FLASH_NAMESPACE::Mask<Is_causal, Is_local, Has_alibi> mask(binfo.actual_seqlen_k, binfo.actual_seqlen_q / params.query_group_size, params.window_size_left, params.window_size_right, alibi_slope, params.query_group_size);
++    // A boundary tile can include pages discarded by sliding-window eviction.
++    // Masking scores alone is insufficient: zero probability times NaN V is NaN.
++    auto clear_window_values = [&]() {
++        if constexpr (Is_local) {
++            const int first_query = m_block * kBlockM / params.query_group_size;
++            const int last_query = min((m_block + 1) * kBlockM, binfo.actual_seqlen_q)
++                / params.query_group_size - 1;
++            const int shift = binfo.actual_seqlen_k - binfo.actual_seqlen_q / params.query_group_size;
++            const int first_key = first_query + shift - params.window_size_left;
++            const int last_key = last_query + shift + params.window_size_right;
++            #pragma unroll
++            for (int row = 0; row < size<1>(tVsV); ++row) {
++                const int key = n_block * kBlockN + get<0>(tKVcKV(0, row, 0));
++                if (key < first_key || key > last_key) {
++                    clear(tVsV(_, row, _));
++                }
++            }
++            __syncthreads();
++        }
++    };
+ 
+     // For performance reason, we separate out two kinds of iterations:
+     // those that need masking on S, and those that don't.
+@@ -888,6 +930,10 @@
+         clear(acc_s);
+         FLASH_NAMESPACE::cp_async_wait<0>();
+         __syncthreads();
++#if FA2_FP8KV_PIPELINE
++        FLASH_NAMESPACE::copy<true, Is_even_K>(gmem_tiled_copy_KV, tKsKLoad, tKsK, tKVcKV, tKVpKV, 0, k_descale);
++        __syncthreads();
++#endif
+ 
+         // Advance gV
+         if (masking_step > 0) {
+@@ -897,11 +943,11 @@
+                 tVgV.data() = gV.data() + flash::resolve_thread_kv_page_slice_offset<Kernel_traits>(tidx, n_block, params.page_block_size,
+                     block_table, params.v_batch_stride, params.v_row_stride);
+             }
+-            FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tVgV, tVsV, tKVcKV, tKVpKV);
++            FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tVgV, tVsVLoad, tKVcKV, tKVpKV, 0, v_descale);
+         } else {
+             // Clear the smem tiles to account for predicated off loads
+             FLASH_NAMESPACE::copy<Is_even_MN, Is_even_K, /*Clear_OOB_MN=*/true>(
+-                gmem_tiled_copy_KV, tVgV, tVsV, tKVcKV, tKVpKV, binfo.actual_seqlen_k - n_block * kBlockN
++                gmem_tiled_copy_KV, tVgV, tVsVLoad, tKVcKV, tKVpKV, binfo.actual_seqlen_k - n_block * kBlockN, v_descale
+             );
+         }
+         cute::cp_async_fence();
+@@ -923,8 +969,13 @@
+         FLASH_NAMESPACE::cp_async_wait<0>();
+         __syncthreads();
+         // if (tidx == 0 && blockIdx.y == 0 && blockIdx.z == 0) { print(tVsV); }
++#if FA2_FP8KV_PIPELINE
++        FLASH_NAMESPACE::copy<true, Is_even_K>(gmem_tiled_copy_KV, tVsVLoad, tVsV, tKVcKV, tKVpKV, 0, v_descale);
++        __syncthreads();
++#endif
+         // __syncthreads();
+ 
++        clear_window_values();
+         if (n_block > n_block_min) {
+             // Advance gK
+             if (block_table == nullptr) {
+@@ -933,7 +984,7 @@
+                 tKgK.data() = gK.data() + flash::resolve_thread_kv_page_slice_offset<Kernel_traits>(tidx, n_block - 1, params.page_block_size, 
+                     block_table, params.k_batch_stride, params.k_row_stride);
+             }
+-            FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tKgK, tKsK, tKVcKV, tKVpKV);
++            FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tKgK, tKsKLoad, tKVcKV, tKVpKV, 0, k_descale);
+             // This cp_async_fence needs to be in the if block, otherwise the synchronization
+             // isn't right and we get race conditions.
+             cute::cp_async_fence();
+@@ -966,6 +1017,10 @@
+         clear(acc_s);
+         FLASH_NAMESPACE::cp_async_wait<0>();
+         __syncthreads();
++#if FA2_FP8KV_PIPELINE
++        FLASH_NAMESPACE::copy<true, Is_even_K>(gmem_tiled_copy_KV, tKsKLoad, tKsK, tKVcKV, tKVpKV, 0, k_descale);
++        __syncthreads();
++#endif
+         // Advance gV
+         if (block_table == nullptr) {
+             tVgV.data() = tVgV.data() + (-int(kBlockN * params.v_row_stride));
+@@ -974,7 +1029,7 @@
+                 block_table, params.v_batch_stride, params.v_row_stride);
+         }
+ 
+-        FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tVgV, tVsV, tKVcKV, tKVpKV);
++        FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tVgV, tVsVLoad, tKVcKV, tKVpKV, 0, v_descale);
+         cute::cp_async_fence();
+ 
+         FLASH_NAMESPACE::gemm(
+@@ -987,6 +1042,11 @@
+ 
+         FLASH_NAMESPACE::cp_async_wait<0>();
+         __syncthreads();
++#if FA2_FP8KV_PIPELINE
++        FLASH_NAMESPACE::copy<true, Is_even_K>(gmem_tiled_copy_KV, tVsVLoad, tVsV, tKVcKV, tKVpKV, 0, v_descale);
++        __syncthreads();
++#endif
++        clear_window_values();
+         if (n_block > n_block_min) {
+             // Advance gK
+             if (block_table == nullptr) {
+@@ -995,7 +1055,7 @@
+                 tKgK.data() = gK.data() + flash::resolve_thread_kv_page_slice_offset<Kernel_traits>(tidx, n_block - 1, params.page_block_size, 
+                     block_table, params.k_batch_stride, params.k_row_stride);            
+             }
+-            FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tKgK, tKsK, tKVcKV, tKVpKV);
++            FLASH_NAMESPACE::copy</*Is_even_MN=*/true, Is_even_K>(gmem_tiled_copy_KV, tKgK, tKsKLoad, tKVcKV, tKVpKV, 0, k_descale);
+             // This cp_async_fence needs to be in the if block, otherwise the synchronization
+             // isn't right and we get race conditions.
+             cute::cp_async_fence();
+@@ -1040,10 +1100,10 @@
+ 
+     const index_t row_offset_o = binfo.q_offset(params.o_batch_stride, params.o_row_stride, bidb)
+         + m_block * kBlockM * params.o_row_stride + bidh * params.o_head_stride;
+-    const index_t row_offset_oaccum = (((n_split_idx * params.b + bidb) * params.h + bidh) * params.seqlen_q
++    const index_t row_offset_oaccum = (((index_t(n_split_idx) * params.b + bidb) * params.h + bidh) * params.seqlen_q
+                                          + m_block * kBlockM) * params.d_rounded;
+     const index_t row_offset_lseaccum = (Split || !params.unpadded_lse ?
+-            ((n_split_idx * params.b + bidb) * params.h + bidh) * params.seqlen_q : bidh * params.total_q + binfo.q_offset(params.seqlen_q, 1, bidb)
++            ((index_t(n_split_idx) * params.b + bidb) * params.h + bidh) * params.seqlen_q : index_t(bidh) * params.total_q + binfo.q_offset(params.seqlen_q, 1, bidb)
+         ) + m_block * kBlockM;
+ 
+     Tensor gOaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementO *>(Split ? params.oaccum_ptr : params.o_ptr) + (Split ? row_offset_oaccum : row_offset_o)),
+@@ -1150,7 +1210,7 @@
+     const int tidx = threadIdx.x;
+     const int bidx = blockIdx.x;
+ 
+-    const index_t lse_size = params.b * params.h * params.seqlen_q;
++    const index_t lse_size = index_t(params.b) * params.h * params.seqlen_q;
+ 
+     const index_t row_offset_lse = bidx * kBlockM;
+     Tensor gLSEaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.softmax_lseaccum_ptr) + row_offset_lse),
+@@ -1222,7 +1282,19 @@
+         if (params.unpadded_lse) {
+             const index_t lse_offset = row_offset_lse + tidx / kRowsPerLoadTranspose;
+             if (lse_offset < lse_size) {
+-                gLSE_unpadded(lse_offset) = lse_logsum;
++                // Varlen split-KV remapping from upstream flash-attention PR #190.
++                if (params.cu_seqlens_q != nullptr && !params.seqlenq_ngroups_swapped) {
++                    const int b_i = lse_offset / (params.h * params.seqlen_q);
++                    const int h_i = (lse_offset - index_t(b_i) * params.h * params.seqlen_q) / params.seqlen_q;
++                    const int r_i = lse_offset - (index_t(b_i) * params.h + h_i) * params.seqlen_q;
++                    const int q_start = params.cu_seqlens_q[b_i];
++                    if (r_i < params.cu_seqlens_q[b_i + 1] - q_start) {
++                        reinterpret_cast<ElementAccum *>(params.softmax_lse_ptr)[
++                            index_t(h_i) * params.total_q + q_start + r_i] = lse_logsum;
++                    }
++                } else {
++                    gLSE_unpadded(lse_offset) = lse_logsum;
++                }
+             }
+         } else {
+             gLSE(tidx / kRowsPerLoadTranspose) = lse_logsum;
+@@ -1237,7 +1309,7 @@
+     }
+     __syncthreads();
+ 
+-    const index_t row_offset_oaccum = bidx * kBlockM * params.d_rounded;
++    const index_t row_offset_oaccum = index_t(bidx) * kBlockM * params.d_rounded;
+     Tensor gOaccum = make_tensor(make_gmem_ptr(reinterpret_cast<ElementAccum *>(params.oaccum_ptr) + row_offset_oaccum),
+                                  Shape<Int<kBlockM>, Int<kHeadDim>>{},
+                                  Stride<Int<kHeadDim>, _1>{});
+@@ -1281,7 +1353,7 @@
+             }
+         // if (cute::thread0()) { printf("lse_scale = %f, %f\n", sLSE[split][0], sLSE[split][1]); print(tOrOaccum); }
+         }
+-        tOgOaccum.data() = tOgOaccum.data() + params.b * params.h * params.seqlen_q * params.d_rounded;
++        tOgOaccum.data() = tOgOaccum.data() + index_t(params.b) * params.h * params.seqlen_q * params.d_rounded;
+     }
+     // if (cute::thread0()) { print_tensor(tOrO); }
+ 
+@@ -1295,8 +1367,17 @@
+             const int head_idx = (idx - batch_idx * (params.h * params.seqlen_q)) / params.seqlen_q;
+             // The index to the rows of Q
+             const int row = idx - batch_idx * (params.h * params.seqlen_q) - head_idx * params.seqlen_q;
+-            auto o_ptr = reinterpret_cast<Element *>(params.o_ptr) + batch_idx * params.o_batch_stride
+-                + head_idx * params.o_head_stride + row * params.o_row_stride;
++            index_t o_row_offset;
++            if (params.cu_seqlens_q != nullptr && !params.seqlenq_ngroups_swapped) {
++                const int q_start = params.cu_seqlens_q[batch_idx];
++                if (row >= params.cu_seqlens_q[batch_idx + 1] - q_start) { continue; }
++                o_row_offset = index_t(q_start + row) * params.o_row_stride
++                    + head_idx * params.o_head_stride;
++            } else {
++                o_row_offset = batch_idx * params.o_batch_stride
++                    + head_idx * params.o_head_stride + row * params.o_row_stride;
++            }
++            auto o_ptr = reinterpret_cast<Element *>(params.o_ptr) + o_row_offset;
+             #pragma unroll
+             for (int k = 0; k < size<2>(rO); ++k) {
+                 if (Is_even_K || tOpOaccum(k)) {
+diff --git a/csrc/flash_attn/src/mask.h b/csrc/flash_attn/src/mask.h
+--- a/csrc/flash_attn/src/mask.h
++++ b/csrc/flash_attn/src/mask.h
+@@ -114,15 +114,17 @@
+     const int max_seqlen_k, max_seqlen_q;
+     const int window_size_left, window_size_right;
+     const float alibi_slope;
++    const int query_group_size;
+ 
+     __forceinline__ __device__ Mask(const int max_seqlen_k, const int max_seqlen_q,
+                                     const int window_size_left, const int window_size_right,
+-                                    const float alibi_slope=0.f)
++                                    const float alibi_slope=0.f, const int query_group_size=1)
+         : max_seqlen_k(max_seqlen_k)
+         , max_seqlen_q(max_seqlen_q)
+         , window_size_left(window_size_left)
+         , window_size_right(window_size_right)
+-        , alibi_slope(!Has_alibi ? 0.0 : alibi_slope) {
++        , alibi_slope(!Has_alibi ? 0.0 : alibi_slope)
++        , query_group_size(query_group_size) {
+     };
+ 
+     // Causal_mask: whether this particular iteration needs causal masking
+@@ -168,7 +170,7 @@
+                     const int row_idx_base = row_idx_offset + mi * warp_row_stride;
+                     #pragma unroll
+                     for (int i = 0; i < size<0, 0>(tensor); ++i) {
+-                        const int row_idx = row_idx_base + i * 8;
++                        const int row_idx = (row_idx_base + i * 8) / query_group_size;
+                         const int col_idx_limit_left = std::max(0, row_idx + max_seqlen_k - max_seqlen_q - window_size_left);
+                         const int col_idx_limit_right = std::min(max_seqlen_k, row_idx + 1 + max_seqlen_k - max_seqlen_q + window_size_right);
+                         #pragma unroll
+diff --git a/csrc/flash_attn/src/utils.h b/csrc/flash_attn/src/utils.h
+--- a/csrc/flash_attn/src/utils.h
++++ b/csrc/flash_attn/src/utils.h
+@@ -363,7 +363,8 @@
+           typename Engine2, typename Layout2, typename Engine3, typename Layout3>
+ __forceinline__ __device__ void copy(TiledCopy tiled_copy, Tensor<Engine0, Layout0> const &S,
+                             Tensor<Engine1, Layout1> &D, Tensor<Engine2, Layout2> const &identity_MN,
+-                            Tensor<Engine3, Layout3> const &predicate_K, const int max_MN=0) {
++                            Tensor<Engine3, Layout3> const &predicate_K, const int max_MN=0,
++                            const float descale=1.0f) {
+     CUTE_STATIC_ASSERT_V(rank(S) == Int<3>{});
+     CUTE_STATIC_ASSERT_V(rank(D) == Int<3>{});
+     CUTE_STATIC_ASSERT_V(size<0>(S) == size<0>(D));                     // MMA
+@@ -377,7 +378,33 @@
+             #pragma unroll
+             for (int k = 0; k < size<2>(S); ++k) {
+                 if (Is_even_K || predicate_K(k)) {
+-                    cute::copy(tiled_copy, S(_, m, k), D(_, m, k));
++                    if constexpr (std::is_same_v<typename Engine0::value_type, cutlass::float_e4m3_t>
++                                  && std::is_same_v<typename Engine1::value_type, cutlass::float_e4m3_t>) {
++                        cute::copy(Copy_Atom<SM80_CP_ASYNC_CACHEALWAYS<uint64_t>, cutlass::float_e4m3_t>{},
++                                   S(_, m, k), D(_, m, k));
++                    } else if constexpr (std::is_same_v<typename Engine0::value_type, cutlass::float_e4m3_t>) {
++                        // Ampere computes BF16 MMA while the persistent cache stays FP8.
++                        auto source = S(_, m, k);
++                        auto packed = make_fragment_like(source);
++                        cute::copy(AutoVectorizingCopyWithAssumedAlignment<64>{}, source, packed);
++                        auto converted = make_fragment_like<typename Engine1::value_type>(source);
++                        // Reuse the pinned FlashInfer SIMD converter inside the FA2 kernel.
++                        flashinfer::vec_cast<nv_bfloat16, __nv_fp8_e4m3>::cast<decltype(size<0>(S))::value>(
++                            reinterpret_cast<nv_bfloat16*>(converted.data()),
++                            reinterpret_cast<const __nv_fp8_e4m3*>(packed.data()));
++                        #pragma unroll
++                        for (int i = 0; i < size<0>(S); ++i) {
++                            if (descale != 1.0f) {
++                                converted(i) = typename Engine1::value_type(float(converted(i)) * descale);
++                            }
++                            if ((packed(i).raw() & 0x7f) == 127) {
++                                converted(i) = typename Engine1::value_type(__uint_as_float(0x7fffffffu));
++                            }
++                        }
++                        cute::copy(AutoVectorizingCopyWithAssumedAlignment<128>{}, converted, D(_, m, k));
++                    } else {
++                        cute::copy(tiled_copy, S(_, m, k), D(_, m, k));
++                    }
+                 } else if (Clear_OOB_K) {
+                     cute::clear(D(_, m, k));
+                 }
+diff --git a/csrc/flash_attn/src/fp8_attn.cu b/csrc/flash_attn/src/fp8_attn.cu
+new file mode 100644
+--- /dev/null
++++ b/csrc/flash_attn/src/fp8_attn.cu
+@@ -0,0 +1,189 @@
++// SPDX-License-Identifier: Apache-2.0
++// FP8-cache adapter for the pinned FlashAttention 2 split-KV kernels.
++#include <ATen/ATen.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <c10/cuda/CUDAStream.h>
++#include <c10/cuda/CUDAException.h>
++#include <torch/library.h>
++#include <algorithm>
++#include <cmath>
++#include <limits>
++#include <tuple>
++#include <flashinfer/vec_dtypes.cuh>
++
++#define FLASH_NAMESPACE fa2_fp8kv_kernel
++namespace fa2_fp8kv_kernel {}
++namespace flash = fa2_fp8kv_kernel;
++#include "flash_fwd_launch_template.h"
++
++namespace fa2_fp8kv {
++
++template<int HeadDim>
++struct Fp8Traits : Flash_fwd_kernel_traits<HeadDim, 64, (HeadDim == 256 ? 32 : 64), 4, false, false, cutlass::bfloat16_t> {
++    using Base = Flash_fwd_kernel_traits<HeadDim, 64, (HeadDim == 256 ? 32 : 64), 4, false, false, cutlass::bfloat16_t>;
++    using ElementKV = cutlass::float_e4m3_t;
++    static constexpr int kBaseSmemSize = Base::kSmemSize;
++    static constexpr int kSmemSize = kBaseSmemSize + (FA2_FP8KV_PIPELINE
++        ? 2 * cute::size(typename Base::SmemLayoutKV{}) * sizeof(ElementKV) : 0);
++};
++
++template<int HeadDim, bool Causal, bool Local, bool Split>
++void launch(fa2_fp8kv_kernel::Flash_fwd_params& params, cudaStream_t stream) {
++    using Traits = Fp8Traits<HeadDim>;
++    const dim3 grid((params.seqlen_q + 63) / 64,
++                   Split ? params.num_splits : params.b,
++                   Split ? params.b * params.h : params.h);
++    auto kernel = fa2_fp8kv_kernel::flash_fwd_splitkv_kernel<
++        Traits, Causal, Local, false, false, true, false, Split, false>;
++    C10_CUDA_CHECK(cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, Traits::kSmemSize));
++    kernel<<<grid, Traits::kNThreads, Traits::kSmemSize, stream>>>(params);
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++    if constexpr (Split) {
++        const dim3 combine((int64_t(params.b) * params.h * params.seqlen_q + 3) / 4);
++        fa2_fp8kv_kernel::flash_fwd_splitkv_combine_kernel<Traits, 4, 7, true>
++            <<<combine, Traits::kNThreads, 0, stream>>>(params);
++        C10_CUDA_KERNEL_LAUNCH_CHECK();
++    }
++}
++
++template<int HeadDim, bool Split>
++void dispatch(fa2_fp8kv_kernel::Flash_fwd_params& params, cudaStream_t stream) {
++    if (params.is_causal) {
++        launch<HeadDim, true, false, Split>(params, stream);
++    } else if (params.window_size_left >= 0 || params.window_size_right >= 0) {
++        launch<HeadDim, false, true, Split>(params, stream);
++    } else {
++        launch<HeadDim, false, false, Split>(params, stream);
++    }
++}
++
++std::tuple<at::Tensor, at::Tensor> forward(
++    const at::Tensor& q, const at::Tensor& k, const at::Tensor& v,
++    at::Tensor out, const at::Tensor& cu_q, const at::Tensor& seq_k,
++    const at::Tensor& table, const at::Tensor& k_scale, const at::Tensor& v_scale,
++    int64_t max_q, int64_t max_k, bool causal, int64_t window_left,
++    int64_t window_right, double softmax_scale, int64_t splits, bool pack_gqa) {
++    TORCH_CHECK(q.is_cuda() && q.dim() == 3 && q.scalar_type() == at::kBFloat16,
++                "FP8 FA2 requires CUDA BF16 Q [tokens, heads, dim]");
++    TORCH_CHECK(k.dim() == 4 && v.sizes() == k.sizes(), "K/V must have matching paged shapes");
++    TORCH_CHECK((k.scalar_type() == at::kByte || k.scalar_type() == at::kFloat8_e4m3fn)
++                && v.scalar_type() == k.scalar_type(), "K/V must contain FP8 E4M3FN bytes");
++    for (const auto& tensor : {k, v, out, cu_q, seq_k, table, k_scale, v_scale}) {
++        TORCH_CHECK(tensor.device() == q.device(), "All tensors must be on Q's device");
++    }
++    TORCH_CHECK(out.sizes() == q.sizes() && out.scalar_type() == q.scalar_type(), "Invalid output tensor");
++    const int head_dim = q.size(2);
++    const int heads = q.size(1);
++    const int kv_heads = k.size(2);
++    TORCH_CHECK((head_dim == 128 || head_dim == 256) && k.size(3) == head_dim,
++                "This port supports head dimensions 128 and 256");
++    TORCH_CHECK(kv_heads > 0 && heads % kv_heads == 0, "Invalid GQA head counts");
++    TORCH_CHECK(k.size(1) >= 16 && k.size(1) % 16 == 0, "Cache block size must be a multiple of 16");
++    TORCH_CHECK(q.stride(2) == 1 && out.stride(2) == 1 && k.stride(3) == 1 && v.stride(3) == 1,
++                "Head dimensions must be contiguous");
++    TORCH_CHECK(q.stride(0) % 8 == 0 && q.stride(1) % 8 == 0
++                && out.stride(0) % 8 == 0 && out.stride(1) % 8 == 0, "Q/output strides must be 16-byte aligned");
++    TORCH_CHECK(cu_q.scalar_type() == at::kInt && seq_k.scalar_type() == at::kInt
++                && table.scalar_type() == at::kInt, "Sequence metadata must be int32");
++    TORCH_CHECK(cu_q.dim() == 1 && seq_k.dim() == 1 && table.dim() == 2
++                && cu_q.is_contiguous() && seq_k.is_contiguous() && table.stride(1) == 1,
++                "Invalid sequence metadata layout");
++    const int batch = seq_k.numel();
++    TORCH_CHECK(batch > 0 && cu_q.numel() == batch + 1 && table.size(0) == batch, "Invalid batch metadata");
++    TORCH_CHECK(max_q > 0 && max_q <= 2048 && max_k > 0 && max_k <= 262144
++                && q.size(0) <= batch * max_q, "Sequence bounds exceed this port's supported envelope");
++    TORCH_CHECK(table.size(1) >= (max_k + k.size(1) - 1) / k.size(1), "Block table is too short");
++    TORCH_CHECK(k_scale.scalar_type() == at::kFloat && v_scale.scalar_type() == at::kFloat
++                && k_scale.numel() == 1 && v_scale.numel() == 1, "Only per-tensor float32 KV scales are supported");
++    TORCH_CHECK(window_left >= -1 && window_right >= -1, "Invalid attention window");
++    TORCH_CHECK(splits >= 0 && splits <= 128, "Split count must be between 0 and 128");
++
++    const c10::cuda::CUDAGuard guard(q.device());
++    const auto stream = c10::cuda::getCurrentCUDAStream(q.get_device());
++    cudaDeviceProp properties;
++    C10_CUDA_CHECK(cudaGetDeviceProperties(&properties, q.get_device()));
++    const int sm = properties.major * 10 + properties.minor;
++    TORCH_CHECK(sm == 86 || sm == 89 || sm == 120,
++                "This kernel build targets SM86, SM89 and SM120");
++    if (splits == 0) {
++        // Keep prefill scratch bounded; short speculative queries benefit from split-KV.
++        const int64_t active_k = window_left >= 0 ? std::min(max_k, window_left + max_q) : max_k;
++        splits = max_q <= 64
++            ? std::min<int64_t>(128, std::max<int64_t>(1, (active_k + 127) / 128)) : 1;
++    }
++    if (causal) window_right = 0;
++    const bool ordinary_causal = window_left < 0 && window_right == 0;
++    if (window_left < 0 && window_right >= 0) window_left = max_k;
++    if (window_right < 0 && window_left >= 0) window_right = max_k;
++
++    const int groups = pack_gqa ? heads / kv_heads : 1;
++    TORCH_CHECK(groups == 1 || (max_q * groups <= 64 && ordinary_causal),
++                "GQA packing currently supports one causal query tile");
++    const int kernel_heads = heads / groups;
++    const int kernel_max_q = max_q * groups;
++    // Both reshapes are zero-copy when there is one KV head per rank.
++    const auto kernel_q = groups == 1 ? q : q.reshape({q.size(0), kv_heads, groups, head_dim})
++        .permute({0, 2, 1, 3}).contiguous().reshape({q.size(0) * groups, kv_heads, head_dim});
++    const bool packed_output_view = kv_heads == 1 && out.is_contiguous();
++    auto kernel_out = groups == 1 ? out : (packed_output_view
++        ? out.reshape({q.size(0) * groups, kv_heads, head_dim}) : at::empty_like(kernel_q));
++    const auto kernel_cu_q = groups == 1 ? cu_q : cu_q * groups;
++    auto lse = at::empty({kernel_heads, kernel_q.size(0)}, q.options().dtype(at::kFloat));
++    fa2_fp8kv_kernel::Flash_fwd_params params{};
++    params.q_ptr = kernel_q.data_ptr(); params.k_ptr = k.data_ptr(); params.v_ptr = v.data_ptr();
++    params.o_ptr = kernel_out.data_ptr(); params.softmax_lse_ptr = lse.data_ptr();
++    params.q_row_stride = kernel_q.stride(0); params.q_head_stride = kernel_q.stride(1);
++    params.o_row_stride = kernel_out.stride(0); params.o_head_stride = kernel_out.stride(1);
++    params.k_batch_stride = k.stride(0); params.k_row_stride = k.stride(1); params.k_head_stride = k.stride(2);
++    params.v_batch_stride = v.stride(0); params.v_row_stride = v.stride(1); params.v_head_stride = v.stride(2);
++    params.b = batch; params.h = kernel_heads; params.h_k = kv_heads; params.h_h_k_ratio = kernel_heads / kv_heads;
++    params.query_group_size = groups;
++    params.d = head_dim; params.d_rounded = head_dim; params.total_q = kernel_q.size(0);
++    params.seqlen_q = kernel_max_q; params.seqlen_k = max_k;
++    params.seqlen_q_rounded = (kernel_max_q + 127) / 128 * 128;
++    params.seqlen_k_rounded = (max_k + 127) / 128 * 128;
++    params.cu_seqlens_q = kernel_cu_q.data_ptr<int>(); params.seqused_k = seq_k.data_ptr<int>();
++    params.block_table = table.data_ptr<int>(); params.block_table_batch_stride = table.stride(0);
++    params.page_block_size = k.size(1);
++    params.k_descale_ptr = k_scale.data_ptr<float>(); params.v_descale_ptr = v_scale.data_ptr<float>();
++    params.scale_softmax = softmax_scale; params.scale_softmax_log2 = softmax_scale * M_LOG2E;
++    params.p_dropout = 1.0f; params.rp_dropout = 1.0f;
++    params.scale_softmax_rp_dropout = softmax_scale;
++    params.window_size_left = window_left; params.window_size_right = window_right;
++    params.is_bf16 = true; params.is_causal = ordinary_causal; params.unpadded_lse = true;
++    params.num_splits = splits;
++
++    // PR #190's initialization is required for empty splits in ragged causal batches.
++    auto lse_accum = at::full({splits > 1 ? splits : 0, batch, kernel_heads, kernel_max_q},
++                             -std::numeric_limits<float>::infinity(), q.options().dtype(at::kFloat));
++    auto out_accum = at::zeros({splits > 1 ? splits : 0, batch, kernel_heads, kernel_max_q, head_dim},
++                              q.options().dtype(at::kFloat));
++    if (splits > 1) {
++        params.softmax_lseaccum_ptr = lse_accum.data_ptr();
++        params.oaccum_ptr = out_accum.data_ptr();
++    }
++    if (head_dim == 128) {
++        if (splits > 1) dispatch<128, true>(params, stream);
++        else dispatch<128, false>(params, stream);
++    } else {
++        if (splits > 1) dispatch<256, true>(params, stream);
++        else dispatch<256, false>(params, stream);
++    }
++    if (groups > 1) {
++        if (!packed_output_view) {
++            out.copy_(kernel_out.reshape({q.size(0), groups, kv_heads, head_dim})
++                .permute({0, 2, 1, 3}).reshape_as(out));
++        }
++        lse = lse.reshape({kv_heads, q.size(0), groups}).permute({0, 2, 1})
++            .contiguous().reshape({heads, q.size(0)});
++    }
++    return {out, lse};
++}
++}  // namespace fa2_fp8kv
++
++TORCH_LIBRARY(fa2_fp8kv, m) {
++    m.def("forward(Tensor q, Tensor k, Tensor v, Tensor(a!) out, Tensor cu_q, Tensor seq_k, Tensor table, Tensor k_scale, Tensor v_scale, int max_q, int max_k, bool causal, int window_left, int window_right, float softmax_scale, int splits=0, bool pack_gqa=False) -> (Tensor(a!), Tensor)");
++}
++TORCH_LIBRARY_IMPL(fa2_fp8kv, CUDA, m) {
++    m.impl("forward", &fa2_fp8kv::forward);
++}
+diff --git a/csrc/flash_attn/src/prefill.cu b/csrc/flash_attn/src/prefill.cu
+new file mode 100644
+--- /dev/null
++++ b/csrc/flash_attn/src/prefill.cu
+@@ -0,0 +1,80 @@
++// SPDX-License-Identifier: Apache-2.0
++#include <ATen/ATen.h>
++#include <c10/cuda/CUDAGuard.h>
++#include <c10/cuda/CUDAStream.h>
++#include <c10/cuda/CUDAException.h>
++#include <torch/library.h>
++#include <cuda_bf16.h>
++#include <cuda_fp8.h>
++#include <type_traits>
++
++namespace fa2_prefill {
++template<int Dim>
++__global__ void gather_pages(
++    const unsigned char* keys, const unsigned char* values,
++    const int* table, const float* key_scale, const float* value_scale,
++    __nv_bfloat16* out, int start, int length, int head, int page_size,
++    int64_t kb, int64_t kr, int64_t kh, int64_t vb, int64_t vr, int64_t vh) {
++    const int flat = (blockIdx.x * blockDim.x + threadIdx.x) * 4;
++    const int row = flat / Dim;
++    const int col = flat % Dim;
++    if (row >= length) return;
++    const int logical = start + row;
++    const int page = table[logical / page_size];
++    const int offset = logical % page_size;
++    const int64_t ki = int64_t(page) * kb + offset * kr + head * kh + col;
++    const int64_t vi = int64_t(page) * vb + offset * vr + head * vh + col;
++    #pragma unroll
++    for (int lane = 0; lane < 4; ++lane) {
++        __nv_fp8_e4m3 key;
++        __nv_fp8_e4m3 value;
++        key.__x = keys[ki + lane];
++        value.__x = values[vi + lane];
++        out[flat + lane] = __float2bfloat16_rn(static_cast<float>(key) * key_scale[0]);
++        out[int64_t(length) * Dim + flat + lane] = __float2bfloat16_rn(static_cast<float>(value) * value_scale[0]);
++    }
++}
++
++at::Tensor gather(const at::Tensor& keys, const at::Tensor& values,
++                  const at::Tensor& table, const at::Tensor& key_scale,
++                  const at::Tensor& value_scale, int64_t start,
++                  int64_t length, int64_t head) {
++    TORCH_CHECK(keys.is_cuda() && keys.dim() == 4 && values.sizes() == keys.sizes(), "Expected paged CUDA K/V");
++    TORCH_CHECK((keys.scalar_type() == at::kByte || keys.scalar_type() == at::kFloat8_e4m3fn)
++                && values.scalar_type() == keys.scalar_type(), "Expected E4M3 KV bytes");
++    for (const auto& tensor : {values, table, key_scale, value_scale}) {
++        TORCH_CHECK(tensor.device() == keys.device(), "Tensor devices must match");
++    }
++    TORCH_CHECK(table.dim() == 2 && table.size(0) == 1 && table.stride(1) == 1
++                && table.scalar_type() == at::kInt, "Expected one int32 page-table row");
++    TORCH_CHECK(keys.stride(3) == 1 && values.stride(3) == 1, "Head dimension must be contiguous");
++    TORCH_CHECK((keys.size(3) == 128 || keys.size(3) == 256) && head >= 0 && head < keys.size(2), "Unsupported head geometry");
++    TORCH_CHECK(start >= 0 && length > 0 && start + length <= table.size(1) * keys.size(1), "Invalid KV range");
++    TORCH_CHECK(key_scale.scalar_type() == at::kFloat && value_scale.scalar_type() == at::kFloat
++                && key_scale.numel() == 1 && value_scale.numel() == 1, "Expected per-tensor float32 scales");
++    const c10::cuda::CUDAGuard guard(keys.device());
++    auto out = at::empty({2, length, 1, keys.size(3)}, keys.options().dtype(at::kBFloat16));
++    const int blocks = (length * keys.size(3) + 1023) / 1024;
++    const auto stream = c10::cuda::getCurrentCUDAStream(keys.get_device());
++    auto launch = [&](auto dim) {
++        gather_pages<decltype(dim)::value><<<blocks, 256, 0, stream>>>(
++            static_cast<const unsigned char*>(keys.data_ptr()),
++            static_cast<const unsigned char*>(values.data_ptr()), table.data_ptr<int>(),
++            key_scale.data_ptr<float>(), value_scale.data_ptr<float>(),
++            reinterpret_cast<__nv_bfloat16*>(out.data_ptr()), start, length, head,
++            keys.size(1), keys.stride(0), keys.stride(1), keys.stride(2),
++            values.stride(0), values.stride(1), values.stride(2));
++    };
++    if (keys.size(3) == 256) launch(std::integral_constant<int, 256>{});
++    else launch(std::integral_constant<int, 128>{});
++    C10_CUDA_KERNEL_LAUNCH_CHECK();
++    return out;
++}
++}
++
++TORCH_LIBRARY(fa2_fp8kv_prefill, m) {
++    m.def("gather(Tensor keys, Tensor values, Tensor table, Tensor key_scale, Tensor value_scale, int start, int length, int head) -> Tensor");
++}
++TORCH_LIBRARY_IMPL(fa2_fp8kv_prefill, CUDA, m) {
++    m.impl("gather", &fa2_prefill::gather);
++}

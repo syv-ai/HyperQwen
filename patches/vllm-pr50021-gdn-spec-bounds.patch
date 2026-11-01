@@ -1,32 +1,43 @@
-vLLM PR #50021 (open at the time of writing): bound accepted-token state
-lookups in the Gated DeltaNet / Mamba speculative-decode kernels.
+bounds checks in GDN/KDA spec-decode state lookups
 
-The fused_recurrent / fused_sigmoid_gating / causal_conv1d / selective-scan
-kernels index the recurrent-state slot with (num_accepted_tokens - 1) without
-checking it against the row width; stale or oversized counts produce wild GPU
-addresses. Vendored here (kernel hunks only; the mamba_utils.py prefix-caching
-hunks of the PR do not apply to 0.27.1 and are not needed with prefix caching
-off) because we hit illegal-memory-access crashes with several concurrent MTP
-requests. Note: it does NOT fix the k=4 crash described in single-user/README.md.
+The causal_conv1d bound follows #50021 as of its head ace8eb7d6. num_accepted_tokens is the previous step's count, so
+it is bounded by the spec-decode state row (the launch's max_query_len, which the Qwen GDN layer passes as the number
+of draft tokens plus one), not by this request's query length. The earlier snapshot compared it with the query length:
+a step that verified fewer tokens than the previous step accepted, which happens when a tool-call grammar trims the
+drafts and async scheduling is off, got a zeroed conv output on every GDN layer for that step (#320).
 
-Apply from the installed vllm package directory:
-  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/vllm-pr50021-gdn-spec-bounds.patch
+Kind: backport
+What: bounds checks in GDN/KDA spec-decode state lookups
+Upstream: vllm #50021 (open)
+Cut-against: 0.32.0
+Retires-when: the pin that carries #50021
 
-Source: https://github.com/vllm-project/vllm/pull/50021 (Apache-2.0).
+--- exported from 3e9e807bf (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/mamba/ops/causal_conv1d.py b/model_executor/layers/mamba/ops/causal_conv1d.py
-index 8335c849666d..e7387484cca6 100644
+index e8254e4f3..3d828f26f 100644
 --- a/model_executor/layers/mamba/ops/causal_conv1d.py
 +++ b/model_executor/layers/mamba/ops/causal_conv1d.py
-@@ -871,9 +871,21 @@ def _causal_conv1d_update_kernel(
+@@ -838,6 +838,7 @@
+                 tl.extra.cuda.gdc_launch_dependents()
+             return
+ 
++    max_seqlen = seqlen  # launch-wide max_query_len: the spec-decode state row width
+     if IS_VARLEN:
+         query_start_index = tl.load(query_start_loc_ptr + idx_seq).to(tl.int64)
+         query_end_index = tl.load(query_start_loc_ptr + (idx_seq + 1)).to(tl.int64)
+@@ -871,9 +872,24 @@
          # - accept 1 tokens: [history2, ..., historyM, draft1]
          # - accept 2 tokens: [history3, ..., historyM, draft1, draft2]
          # - and so on.
 -        conv_state_token_offset = (
 -            tl.load(num_accepted_tokens_ptr + idx_seq).to(tl.int64) - 1
 -        )
++        # num_accepted comes from the previous step, which may have verified more
++        # tokens than this one (dynamic K, trimmed drafts): bound it by the state
++        # row (max_seqlen), not by this request's query length.
 +        num_accepted = tl.load(num_accepted_tokens_ptr + idx_seq).to(tl.int64)
-+        if (num_accepted < 1) | (num_accepted > seqlen):
++        if (num_accepted < 1) | (num_accepted > max_seqlen):
 +            zero = tl.zeros((BLOCK_N,), dtype=tl.float32)
 +            for idx_token in tl.range(seqlen):
 +                o_ptrs = (
@@ -44,10 +55,10 @@ index 8335c849666d..e7387484cca6 100644
          conv_state_token_offset = 0
  
 diff --git a/model_executor/layers/mamba/ops/mamba_ssm.py b/model_executor/layers/mamba/ops/mamba_ssm.py
-index af45467886ea..73c892d67b5d 100644
+index 0f2041d22..969558d12 100644
 --- a/model_executor/layers/mamba/ops/mamba_ssm.py
 +++ b/model_executor/layers/mamba/ops/mamba_ssm.py
-@@ -333,7 +333,15 @@ def _selective_scan_update_kernel(
+@@ -332,7 +332,15 @@
      if HAS_STATE_BATCH_INDICES:
          if IS_SPEC_DECODING:
              num_accepted = tl.load(num_accepted_tokens_ptr + pid_b).to(tl.int64)
@@ -63,7 +74,7 @@ index af45467886ea..73c892d67b5d 100644
          else:
              init_token_idx = 0
  
-@@ -347,9 +355,17 @@ def _selective_scan_update_kernel(
+@@ -346,9 +354,17 @@
                  dst_state_batch_idx * stride_state_batch + pid_h * stride_state_head
              )
  
@@ -85,10 +96,10 @@ index af45467886ea..73c892d67b5d 100644
          state_ptr += state_batch_idx * stride_state_batch + pid_h * stride_state_head
      else:
 diff --git a/third_party/flash_linear_attention/ops/fused_recurrent.py b/third_party/flash_linear_attention/ops/fused_recurrent.py
-index c8004cb57173..02907c44588e 100644
+index eb08b938c..8a0b60628 100644
 --- a/third_party/flash_linear_attention/ops/fused_recurrent.py
 +++ b/third_party/flash_linear_attention/ops/fused_recurrent.py
-@@ -107,11 +107,29 @@ def fused_recurrent_gated_delta_rule_fwd_kernel(
+@@ -107,11 +107,29 @@
              else:
                  i_t = 0
              # Load state index and check for invalid entries
@@ -123,10 +134,10 @@ index c8004cb57173..02907c44588e 100644
              p_h0 = h0 + state_idx * stride_init_state_token
          else:
 diff --git a/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py b/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
-index 7e0c7e05cab1..261befff8f9a 100644
+index 7e0c7e05c..261befff8 100644
 --- a/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
 +++ b/third_party/flash_linear_attention/ops/fused_sigmoid_gating.py
-@@ -106,12 +106,29 @@ def fused_sigmoid_gating_delta_rule_update_kernel(
+@@ -106,12 +106,29 @@
                  i_t = tl.load(num_accepted_tokens + i_n).to(tl.int64) - 1
              else:
                  i_t = 0

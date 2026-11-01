@@ -23,7 +23,11 @@ dev = "cuda"
 
 idx = json.load(open(S + "model.safetensors.index.json")); wm = idx["weight_map"]
 shard = wm["lm_head.weight_packed"]
-with safe_open(S + shard + ".bak", "pt") as f:
+# the bf16 lm_head lives in the pre-quant backup: .bak from quant_lm_head.py, .bak-orig
+# from quant_heads_stream.py (single-shard / asymmetric third-party exports)
+bak = next((S + shard + x for x in (".bak", ".bak-orig") if os.path.exists(S + shard + x)), None)
+assert bak, f"no pre-quant backup of {shard} next to it (.bak or .bak-orig)"
+with safe_open(bak, "pt") as f:
     W = f.get_tensor("lm_head.weight").to(dev)      # bf16 [V,K]
 V, K = W.shape
 
@@ -68,14 +72,25 @@ print(f"GPTQ round-trip rel error {rel:.4f}")
 
 # ---- write variant dir
 os.makedirs(D, exist_ok=True)
+# every other weight shard is hardlinked (7 model-0000x shards for the base model, one
+# model.safetensors + model-mtp.safetensors for a third-party export); backups stay behind
 for f in os.listdir(S):
-    if f.startswith("model-0000") and f.endswith(".safetensors") and f != shard and not os.path.exists(D + f):
+    if f.endswith(".safetensors") and ".bak" not in f and f != shard \
+            and f != "model_extra_tensors.safetensors" and not os.path.exists(D + f):
         os.link(S + f, D + f)
-for f in ["tokenizer.json", "model_extra_tensors.safetensors", "mtp_draft_vocab_ids.pt"]:
-    if not os.path.exists(D + f):
-        os.link(S + f, D + f)
-for f in ["chat_template.jinja", "generation_config.json", "processor_config.json", "quantization_config.json", "tokenizer_config.json"]:
-    shutil.copy(S + f, D + f)
+if os.path.exists(S + "tokenizer.json") and not os.path.exists(D + "tokenizer.json"):
+    os.link(S + "tokenizer.json", D + "tokenizer.json")
+# copied, not linked: prepare/build_draft_vocab.py rewrites both in the variant -- the extras
+# with save_file (in place on safetensors <= 0.7) and the ids with torch.save (in place on
+# every torch: it truncates the open inode) -- so through a hardlink each rewrote the source's
+# copy too, and the source's draft head and its id list stopped matching
+for f in ["model_extra_tensors.safetensors", "mtp_draft_vocab_ids.pt"]:
+    if os.path.exists(S + f) and not os.path.exists(D + f):
+        shutil.copy(S + f, D + f)
+for f in ["chat_template.jinja", "generation_config.json", "processor_config.json", "quantization_config.json",
+          "tokenizer_config.json", "preprocessor_config.json", "video_preprocessor_config.json", "recipe.yaml"]:
+    if os.path.exists(S + f):
+        shutil.copy(S + f, D + f)
 tensors = {}
 with safe_open(S + shard, "pt") as f:
     meta = f.metadata()

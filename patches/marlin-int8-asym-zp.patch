@@ -1,0 +1,64 @@
+Let the Marlin int8-activation path (VLLM_MARLIN_INPUT_DTYPE=int8, the launchers'
+INT8_ACT=int8) accept zero-point int4 weights.
+
+compressed-tensors W4A16_ASYM exports (llm-compressor AWQ with symmetric=false) carry a
+weight_zero_point per group and load as scalar_types.uint4. The Marlin kernel set already
+instantiates that pairing with int8 activations (csrc/.../marlin/generate_kernels.py,
+"AWQ-INT4 with INT8 activation", kS8 x kU4, covered by
+tests/kernels/quantization/test_marlin_gemm.py), and the wrapper already permutes the zero
+points with is_a_8bit -- but two asserts written to refuse W8A8 only admit uint4b8, so such
+a checkpoint dies at process_weights_after_loading the moment INT8_ACT is set:
+
+  AssertionError: W8A8 is not supported by marlin kernel.
+
+The asserts now admit uint4 next to uint4b8; 8-bit weights stay refused. Measured on a
+random asymmetric int4 g128 weight at this model's shapes (bench/test_marlin_int8_asym.py,
+RTX 3090): W4A8-int8 relative error 0.9-1.05% against the float reference, the W4A16 path
+0.26% -- the int8 activation noise alone, the same as on a symmetric body.
+
+Apply from the installed vllm package directory:
+  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/marlin-int8-asym-zp.patch
+
+Validated against vLLM 0.28.0; the same two hunks apply to 0.29.0 at an offset.
+
+Kind: fix
+What: the Marlin int8-activation path (`INT8_ACT=int8`) accepts zero-point `uint4` weights, so
+  asymmetric AWQ exports (compressed-tensors `symmetric: false`) run W4A8 like the symmetric ones;
+  the `kS8 x kU4` kernel is already compiled, only two asserts refused it
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from ccbc755aa (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
+index a3200a3d4..6b3f6e6ad 100644
+--- a/model_executor/kernels/linear/mixed_precision/marlin.py
++++ b/model_executor/kernels/linear/mixed_precision/marlin.py
+@@ -123,7 +123,10 @@
+         is_a_8bit = c.act_type is not None and c.act_type.itemsize == 1
+ 
+         if is_a_8bit:
+-            assert c.weight_type == scalar_types.uint4b8, (
++            # syv patch (marlin-int8-asym-zp): the kernel set instantiates
++            # kS8 x kU4 (AWQ zero-point weights, int8 activations) next to
++            # kS8 x kU4B8; only 8-bit weights have no int8-activation kernel.
++            assert c.weight_type in (scalar_types.uint4b8, scalar_types.uint4), (
+                 "W8A8 is not supported by marlin kernel."
+             )
+ 
+diff --git a/model_executor/layers/quantization/utils/marlin_utils.py b/model_executor/layers/quantization/utils/marlin_utils.py
+index d28d8b8e1..1fb7e4ef7 100644
+--- a/model_executor/layers/quantization/utils/marlin_utils.py
++++ b/model_executor/layers/quantization/utils/marlin_utils.py
+@@ -789,7 +789,9 @@
+ 
+     a_scales = None
+     if input_dtype == torch.int8:
+-        assert wtype == scalar_types.uint4b8, (
++        # syv patch (marlin-int8-asym-zp): uint4 (zero-point) weights have an
++        # int8-activation kernel too; only 8-bit weights do not.
++        assert wtype in (scalar_types.uint4b8, scalar_types.uint4), (
+             "W8A8-INT8 is not supported by marlin kernel."
+         )
+         reshaped_x, a_scales = marlin_quant_input(reshaped_x, input_dtype)

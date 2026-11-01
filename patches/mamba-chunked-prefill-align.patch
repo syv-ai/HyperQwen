@@ -1,0 +1,50 @@
+Fix state loss and NaN generation during chunked prefill in Mamba/GDN models:
+
+1. v1/worker/mamba_utils.py: In `preprocess_mamba_align_fused_kernel`, `src_col` was
+   always stored as the previous state column. During fresh prefill and when the
+   state column is unchanged, that asks the pre-copy kernel to copy an invalid or
+   already-current state; during chunked prefill continuation, crossing a Mamba
+   block boundary must instead copy the state from `state_idx` to `new_state_idx`.
+   Fixed to: `src_col = tl.where((num_computed == 0) | (state_idx < 0) | (state_idx == new_state_idx), -1, state_idx)`
+
+2. third_party/flash_linear_attention/ops/chunk_o.py: Compute `m_t` before the `USE_G` path
+   and mask `b_g` with it before evaluating `tl.exp(b_g)` and
+   `tl.exp(b_g[:, None] - b_g[None, :])`, preventing uninitialized memory in partial boundary
+   chunks from evaluating to NaNs in Triton.
+
+Apply from the installed vllm package directory:
+  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/mamba-chunked-prefill-align.patch
+
+Kind: fix
+What: state loss and NaN during chunked prefill on Mamba/GDN
+Upstream: none yet
+Cut-against: 0.32.0: the chunk_o.py half is retired (#60502 loads g masked with other=0.0, the lanes it
+  zeroed); the mamba_utils.py half stays
+Retires-when: upstream PR
+
+--- exported from 394e85e33 (mamba-chunked-prefill-align); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/mamba_utils.py b/v1/worker/mamba_utils.py
+index a3b4eab34..be33ee8cd 100644
+--- a/v1/worker/mamba_utils.py
++++ b/v1/worker/mamba_utils.py
+@@ -531,15 +531,15 @@
+     state_idx = tl.load(state_idx_ptr + req_indices, mask=mask, other=-1)
+     num_accepted = tl.load(num_accepted_tokens_ptr + req_indices, mask=mask, other=1)
+ 
+-    src_off = tl.maximum(num_accepted - 1, 0)
+-    tl.store(src_col_ptr + req_indices, state_idx, mask=mask)
+-    tl.store(src_off_ptr + req_indices, src_off, mask=mask)
+-
+     num_computed = tl.load(num_computed_tokens_ptr + req_indices, mask=mask, other=0)
+     query_start = tl.load(query_start_loc_ptr + offsets, mask=mask, other=0)
+     query_end = tl.load(query_start_loc_ptr + offsets + 1, mask=mask, other=0)
+     computed_after = num_computed + query_end - query_start
+     new_state_idx = (computed_after + MAMBA_BLOCK_SIZE - 1) // MAMBA_BLOCK_SIZE - 1
++    src_off = tl.maximum(num_accepted - 1, 0)
++    src_col = tl.where((num_computed == 0) | (state_idx < 0) | (state_idx == new_state_idx), -1, state_idx)
++    tl.store(src_col_ptr + req_indices, src_col, mask=mask)
++    tl.store(src_off_ptr + req_indices, src_off, mask=mask)
+     tl.store(state_idx_ptr + req_indices, new_state_idx, mask=mask)
+     should_reset = (state_idx >= 0) & (state_idx != new_state_idx)
+     tl.store(num_accepted_tokens_ptr + req_indices, 1, mask=mask & should_reset)

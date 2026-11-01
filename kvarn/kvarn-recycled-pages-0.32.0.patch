@@ -1,0 +1,74 @@
+KVarN: never flush into a page another KV-cache group has taken (#208, the "!!!!" output).
+
+KVarN flushes a finished request's last full block to int4 in the first metadata build after the
+request leaves the batch, and evicts retired sinks to int4 whenever its pool runs dry. On this
+model every KV-cache group shares one tensor per layer position, so by then the page may belong
+to another group. Both runners write mamba state before they build attention metadata
+(preprocess_state on V2, preprocess_mamba on V1), so when the page has become a request's mamba
+state page, the late tile write lands on state that is already there. The state reads back as
+NaN and the request prints token 0, "!", from then on. The trigger reported in #208 is two
+requests prefilling in the same steps while one of them finishes, which is why holding the second
+request until the first has emitted a token, PREFIX_CACHE=0, or CTX=long each make it go away.
+
+The runner now hands KVarN the step's scheduled block ids (note_scheduled_blocks, called after
+the block tables are updated and before the forward). Each KVarN builder collects the pages that
+appear in any group other than its own, and its next flushing build releases whatever its pool
+still holds for them without writing the tile: the finished request's pending block, or a retired
+sink. Nothing is lost. Allocating a page evicts its prefix-cache hash, so no request can read that
+tile again. The builder's own group is left out, because its tables carry prefix-cache hits on
+its own blocks, and a hit on a finished request's last block needs that block's flush.
+
+The first drop logs "KVarN: dropped the pending tiles of N block(s) on pages another KV-cache
+group now holds (#208)" at INFO; the rest log at DEBUG.
+
+This takes the mechanism from #208's kvarn-recycled-block-guard.patch (masterjuggler), keyed on
+the scheduler's allocations instead of a per-step window over each request's mamba columns: the
+window also covered the column before the running one, which align mode frees, so a legitimate
+flush into that page after it was reused as an attention block would have been dropped.
+
+Kind: own
+What: both runners hand KVarN each step's block ids, so it drops (never flushes) what it still holds
+  for a page another KV-cache group has taken: a late flush of a finished request's last block, or
+  of an evicted retired sink, into another request's mamba state was the "!!!!" output (#208); the
+  KVarN half is in `kvarn/files`
+Upstream: none
+Cut-against: 0.32.0
+Retires-when: rides with KVarN
+
+--- exported from c3096e6e5 (kvarn-recycled-pages-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
+index 9e3906692..2128b119d 100644
+--- a/v1/worker/gpu/model_runner.py
++++ b/v1/worker/gpu/model_runner.py
+@@ -1757,6 +1757,13 @@
+             self.free_states(scheduler_output)
+             self.add_requests(scheduler_output)
+             self.update_requests(scheduler_output)
++            if self.cache_config.cache_dtype.startswith("kvarn"):
++                # port(kvarn-v2): tell KVarN which pages this step moved to another
++                # KV-cache group, before preprocess_state writes mamba state into
++                # them (#208).
++                from vllm.v1.attention.backends.kvarn_attn import note_scheduled_blocks
++
++                note_scheduled_blocks(scheduler_output, self.kv_cache_config)
+             self.block_tables.apply_staged_writes()
+             if self.aux_output_connector is not None:
+                 # Register this step before the GPU forward.
+diff --git a/v1/worker/gpu_model_runner.py b/v1/worker/gpu_model_runner.py
+index e19c1b84f..fc8ac3eee 100644
+--- a/v1/worker/gpu_model_runner.py
++++ b/v1/worker/gpu_model_runner.py
+@@ -1200,6 +1200,12 @@
+         # stale NaN/data from corrupting attention or SSM computation.
+         if scheduler_output.new_block_ids_to_zero:
+             self._zero_block_ids(scheduler_output.new_block_ids_to_zero)
++        if self.cache_config.cache_dtype.startswith("kvarn"):
++            # port(kvarn-v2): tell KVarN which pages this step moved to another
++            # KV-cache group, before preprocess_mamba writes state into them (#208).
++            from vllm.v1.attention.backends.kvarn_attn import note_scheduled_blocks
++
++            note_scheduled_blocks(scheduler_output, self.kv_cache_config)
+         if scheduler_output.kv_cache_block_copies:
+             copy_kv_cache_blocks_inplace(
+                 self.kv_caches,

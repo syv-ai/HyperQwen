@@ -1,0 +1,183 @@
+Warn when the engine core stops completing steps while requests are live.
+
+The failure class in syv-ai/qwen38-27b-rtx3090#107 -- requests held, engine
+alive, stepping stopped -- emits nothing: no stats line, no completion line,
+no abort, no error. It is only visible today by scraping the log for a gap
+between stats lines, which is what a reporter's external catcher does, and
+what gave it 80+ false positives on long prefills.
+
+A daemon thread in EngineCoreProc times the gap since the last COMPLETED step
+and warns once per episode when that gap crosses VLLM_ENGINE_STALL_SENTINEL_S
+(0, off, by default) while the scheduler still holds requests. Keying on
+completed steps rather than on stats-line silence is what removes the
+false-positive class: a chunked prefill completes a step per chunk, so it
+never trips the clock, however long the prefill runs in total.
+
+Three deviations from the draft in the reporter's gist, all deliberate:
+
+  - the knob is registered in vllm/envs.py rather than read with os.getenv,
+    per review on #107 (it also enrols the knob in the compile-cache key);
+  - the sentinel thread calls get_request_counts() itself on each tick
+    instead of reading a snapshot the main loop refreshes. A core that stops
+    stepping with a stale non-zero snapshot -- e.g. a request parked
+    WAITING_FOR_REMOTE_KVS while the loop falls through to the input queue --
+    would otherwise fire against counts nobody refreshed. This also deletes
+    the step_started hook entirely, so the patch touches one call site;
+  - the sentinel is constructed AFTER super().__init__() rather than beside
+    the `identity = ...` assignment. self.scheduler does not exist yet at
+    that point in EngineCoreProc.__init__; the draft's placement aborts every
+    boot with AttributeError: 'EngineCoreProc' object has no attribute
+    'scheduler'. (Observed, not reasoned: 2026-09-15 08:32:21 on the
+    reference 3090.)
+
+The draft's `+import threading` is also dropped: 0.28.0's core.py already
+imports threading at line 7, and the draft adds a second one in the
+`from multiprocessing.queues import Queue` block, which fails ruff/isort.
+
+Measured on the reference 3090 (0.28.0, CTX=fast, SPEC=dflash2, threshold 30 s,
+one boot): zero stall lines across 20 sequential decodes, one client-SIGKILLed
+stream and one 44,820-token / 28.5 s chunked prefill -- i.e. no false positive
+on the arm that fires the log-scraper. No wedge was induced, so the patch's
+true-positive path is unexercised here; it is the same clock the draft used.
+
+Kind: feature
+What: daemon thread warns once per episode when no step completes for `VLLM_ENGINE_STALL_SENTINEL_S`
+  while requests are live
+Upstream: upstream PR (syv-ai #94/#110)
+Cut-against: 0.32.0: beside #50300's VLLM_CHAT_TEMPLATE_RENDER_TIMEOUT; #59781 removed
+  VLLM_ENGINE_ITERATION_TIMEOUT_S, the old anchor
+Retires-when: upstreamed
+
+--- exported from 6668f5786 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 83b35f4f2..cf8260b54 100755
+--- a/envs.py
++++ b/envs.py
+@@ -25,6 +25,7 @@
+     CUDA_VISIBLE_DEVICES: str | None = None
+     VLLM_ENGINE_READY_TIMEOUT_S: int = 600
+     VLLM_CHAT_TEMPLATE_RENDER_TIMEOUT: float = 30.0
++    VLLM_ENGINE_STALL_SENTINEL_S: float = 0.0
+     VLLM_API_KEY: str | None = None
+     VLLM_DEBUG_LOG_API_SERVER_RESPONSE: bool = False
+     S3_ACCESS_KEY_ID: str | None = None
+@@ -862,6 +863,11 @@
+     "LOCAL_RANK": lambda: int(os.environ.get("LOCAL_RANK", "0")),
+     # used to control the visible devices in the distributed setting
+     "CUDA_VISIBLE_DEVICES": lambda: os.environ.get("CUDA_VISIBLE_DEVICES", None),
++    # Warn when the engine core stops completing steps while requests are
++    # still alive, after this many seconds. 0 (default) disables the check.
++    "VLLM_ENGINE_STALL_SENTINEL_S": lambda: float(
++        os.environ.get("VLLM_ENGINE_STALL_SENTINEL_S", "0")
++    ),
+     # Timeout in seconds for waiting for engine cores to become ready
+     # during startup. Default is 600 seconds (10 minutes).
+     "VLLM_ENGINE_READY_TIMEOUT_S": lambda: int(
+diff --git a/v1/engine/core.py b/v1/engine/core.py
+index 35cc8cc18..ec0930b9f 100644
+--- a/v1/engine/core.py
++++ b/v1/engine/core.py
+@@ -112,6 +112,68 @@
+ _R = TypeVar("_R")  # Return type for collective_rpc
+ 
+ 
++class _StallSentinel:
++    """Detects the "engine core stopped stepping while requests are live"
++    failure class, and logs one warning line per stall episode.
++
++    The sentinel reads the scheduler's request counts itself on every tick
++    rather than from a snapshot the main loop refreshes, so a core that stops
++    stepping with a stale snapshot (e.g. a request parked
++    WAITING_FOR_REMOTE_KVS while the loop falls through to the input queue)
++    is still reported against its current state. `_last_done` is a plain
++    float written only by the main loop; a lock here could participate in
++    exactly the cross-thread stall this class exists to report. The thread is
++    a daemon; it dies with the EngineCore process.
++    """
++
++    def __init__(
++        self,
++        get_counts,
++        threshold_s: float,
++        check_interval_s: float = 5.0,
++    ):
++        self._get_counts = get_counts
++        self._threshold_s = threshold_s
++        self._check_interval_s = check_interval_s
++        self._last_done = time.monotonic()
++        self._stall_logged = False
++        self._stop = threading.Event()
++        self._thread = threading.Thread(
++            target=self._run, name="EngineCoreStallSentinel", daemon=True
++        )
++        self._thread.start()
++
++    def step_done(self) -> None:
++        # A step completed: refresh the clock.
++        self._last_done = time.monotonic()
++        self._stall_logged = False
++
++    def stop(self) -> None:
++        self._stop.set()
++
++    def _run(self) -> None:
++        while not self._stop.wait(self._check_interval_s):
++            gap = time.monotonic() - self._last_done
++            if gap < self._threshold_s or self._stall_logged:
++                continue
++            try:
++                running, waiting = self._get_counts()
++            except Exception:  # noqa: BLE001 - never kill the sentinel
++                continue
++            if (running + waiting) > 0:
++                self._stall_logged = True
++                logger.warning(
++                    "EngineCore stall: no completed step for %.0f s "
++                    "(threshold %.0f s) while %d running / %d waiting "
++                    "request(s) are live; the engine may have "
++                    "stopped stepping (client streams will hold).",
++                    gap,
++                    self._threshold_s,
++                    running,
++                    waiting,
++                )
++
++
+ class EngineCore:
+     """Inner loop of vLLM's Engine."""
+ 
+@@ -1199,6 +1261,24 @@
+                 internal_dp_balancing,
+             )
+ 
++            # Optional stall sentinel (off by default):
++            #   VLLM_ENGINE_STALL_SENTINEL_S=<seconds>
++            # Warns once per episode when the core stops completing steps
++            # while requests are still alive -- the failure class that logs
++            # nothing else in V1 (no stats line, no completion line, no
++            # error). Constructed here, after super().__init__(), because
++            # that is what creates self.scheduler.
++            self._stall_sentinel: _StallSentinel | None = None
++            _stall_thresh = envs.VLLM_ENGINE_STALL_SENTINEL_S
++            if _stall_thresh > 0:
++                self._stall_sentinel = _StallSentinel(
++                    self.scheduler.get_request_counts, _stall_thresh
++                )
++                logger.info(
++                    "EngineCore stall sentinel enabled (threshold %.0f s)",
++                    _stall_thresh,
++                )
++
+             # Initialize fault tolerance settings.
+             self.enable_fault_tolerance = (
+                 vllm_config.parallel_config.enable_fault_tolerance
+@@ -1609,6 +1689,8 @@
+             self.output_queue.put_nowait(output)
+         # Post-step hook.
+         self.post_step(model_executed)
++        if self._stall_sentinel is not None:
++            self._stall_sentinel.step_done()
+ 
+         # If no model execution happened but there is still scheduler work
+         # (e.g. WAITING_FOR_REMOTE_KVS or delayed KV connector frees), yield

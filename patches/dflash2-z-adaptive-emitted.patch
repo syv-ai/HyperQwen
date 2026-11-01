@@ -1,0 +1,45 @@
+Kind: fix
+What: adaptive z counts emitted tokens, not sampling slots
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from 000f55a68 (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
+index d95dcc16e..bea571469 100644
+--- a/v1/worker/gpu/spec_decode/dflash/speculator.py
++++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
+@@ -398,11 +398,12 @@
+         num_speculative_tokens: int | None = None,
+     ) -> torch.Tensor:
+         num_reqs = input_batch.num_reqs
+-        # What the step that just ran actually produced per request: num_sampled counts the
+-        # sampling slots it was given (bonus + drafts), num_rejected how many of those were
+-        # thrown away, so the difference is the tokens it emitted. dflash2/lookup.py decides
+-        # the next block length from it.
+-        self.last_num_emitted = (num_sampled - num_rejected) if num_sampled is not None else None
++        # What the step that just ran actually produced per request. num_sampled is the
++        # count the sampler EMITTED (bonus + accepted drafts): input_batch.py defines
++        # num_rejected = num_logits - num_sampled, so subtracting num_rejected here would
++        # double-count the rejections. dflash2/lookup.py decides the next block length
++        # from this number.
++        self.last_num_emitted = num_sampled if num_sampled is not None else None
+         num_target_tokens = input_batch.num_tokens
+         num_query_tokens = num_reqs * self.num_query_per_req
+         max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
+diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+index e1649d677..e914af8d5 100644
+--- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
++++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
+@@ -603,9 +603,7 @@
+         self.draft_max_seq_len = min(
+             max_seq_len + self.num_query_per_req, self.max_model_len
+         )
+-        self.last_num_emitted = (
+-            (num_sampled - num_rejected) if num_sampled is not None else None
+-        )
++        self.last_num_emitted = num_sampled if num_sampled is not None else None
+ 
+         if aux_hidden_states:
+             hidden_states = self.model.combine_hidden_states(

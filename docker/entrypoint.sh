@@ -15,8 +15,18 @@ cd /app
 cmd=${1:-single}; shift || true
 case "$cmd" in
   single|batch)
+    echo "entrypoint: first-boot stages: [1/3] docker/prepare.sh [2/3] verify.sh --no-server [3/3] start_qwen.sh ($cmd)"
+    echo "entrypoint: stage 1 is minutes on first boot (download + requantize), seconds once prepared"
+    echo "entrypoint: use log timestamps as the elapsed timer; total first boot can exceed 30 min"
     if [ "${PREPARE:-1}" != "0" ]; then
       bash docker/prepare.sh
+    fi
+    # Preparation may create the fast variant. Resolve it now, once, so the
+    # verifier and launcher use the same model; batch retains its base default.
+    if [ "$cmd" = single ]; then
+      REPO=/app
+      source "$REPO/single-user/select_model.sh"
+      export MODEL
     fi
     if [ "${VERIFY:-1}" != "0" ]; then
       bash verify.sh --no-server || { echo "entrypoint: verify.sh FAILED — fix the above or set VERIFY=0"; exit 1; }

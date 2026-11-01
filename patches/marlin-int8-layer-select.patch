@@ -12,11 +12,21 @@ KeyError: 'input_global_scale').
 Apply from the installed vllm package directory:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/marlin-int8-layer-select.patch
 
-Written against vLLM 0.27.1.
+Validated against vLLM 0.28.0.
 
+Kind: local
+What: env vars to pick which layers run W4A8 with the Marlin kernel
+Upstream: none
+Cut-against: 0.32.0
+Retires-when: stays
+
+--- exported from abd78fb97 (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index a2b460307..cbc6f8382 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -177,6 +177,8 @@
+@@ -191,6 +191,8 @@
      VLLM_RAY_EXTRA_ENV_VARS_TO_COPY: str = ""
      VLLM_MARLIN_USE_ATOMIC_ADD: bool = False
      VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
@@ -25,7 +35,7 @@ Written against vLLM 0.27.1.
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
-@@ -1455,6 +1457,14 @@
+@@ -1579,6 +1581,14 @@
      "VLLM_MARLIN_INPUT_DTYPE": env_with_choices(
          "VLLM_MARLIN_INPUT_DTYPE", None, ["int8", "fp8"]
      ),
@@ -40,18 +50,20 @@ Written against vLLM 0.27.1.
      # The online quantization dtype for humming kernel
      "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
          os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
+diff --git a/model_executor/layers/quantization/utils/marlin_utils.py b/model_executor/layers/quantization/utils/marlin_utils.py
+index 1ee52a178..d28d8b8e1 100644
 --- a/model_executor/layers/quantization/utils/marlin_utils.py
 +++ b/model_executor/layers/quantization/utils/marlin_utils.py
-@@ -666,7 +666,17 @@
+@@ -720,7 +720,17 @@
  def get_marlin_input_dtype(prefix: str | None = None):
      if envs.VLLM_MARLIN_INPUT_DTYPE is None:
          return
 -    elif envs.VLLM_MARLIN_INPUT_DTYPE.lower() == "int8":
 +    # syv patch: per-layer include/exclude regexes for the int8/fp8 activation
 +    # path (lm_head is int8-weight -> W8A8 unsupported by marlin; mtp stays 16-bit)
-+    import os as _os, re as _re
-+    _exc = _os.environ.get("VLLM_MARLIN_INT8_EXCLUDE_RE", "lm_head|mtp")
-+    _inc = _os.environ.get("VLLM_MARLIN_INT8_INCLUDE_RE", "")
++    import re as _re
++    _exc = envs.VLLM_MARLIN_INT8_EXCLUDE_RE
++    _inc = envs.VLLM_MARLIN_INT8_INCLUDE_RE
 +    if prefix is not None:
 +        if _exc and _re.search(_exc, prefix):
 +            return

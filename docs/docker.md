@@ -1,31 +1,50 @@
 # Docker, and WSL2
 
+> **WSL2 + RTX 3090 checklist** — full path: [quickstart.md](quickstart.md).
+> 1. `cp .env.example .env` and `make keygen` (never commit `.env`).
+> 2. Keep `VLLM_WSL2_ENABLE_PIN_MEMORY=1` or the V2 runner aborts on UVA.
+> 3. First boot takes 2–15 min; follow it with `make logs`.
+> 4. Boot OOM? Fall back to `GPU_UTIL=0.93` in `.env`.
+> 5. Exit 137 in prepare? Raise WSL memory (`memory=20GB`, `swap=8GB`), then `wsl --shutdown`.
+> 6. Verify with `make doctor`. Stuck? See [gotchas.md](gotchas.md).
+
+
 The container image (same stack, frozen) and an independent WSL2 reproduction with its memory caveats.
 
 [← back to the main README](../README.md)
 
-The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.27.1 pinned
-(torch 2.13 / cu130 / Triton 3.7.1), every patch in `patches/` applied and
-`verify.sh --install` run at build time, KVarN preinstalled. Host prerequisites:
+The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.32.0 pinned
+(torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in `patches/` applied
+(`dflash2-backport.patch` is retired because DFlash2 is native since v0.28.0), and
+`verify.sh --install` run at build time, KVarN preinstalled (its 0.31 port is
+described in [vllm-0.31.md](vllm-0.31.md)), and the pth-flash-attn op library built
+for sm80/86/89 (`pthfa/`, selected by `PTH_FA=1`, which is the default on `SPEC=mtp CTX=long` and `SPEC=dflash2 CTX=long` on a compute capability 8.6 GPU). Host prerequisites:
 an NVIDIA driver that speaks CUDA 13 (≥ 580), Docker with the
 [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 configured as a runtime. The 250 W power limit is a host setting
 (`sudo nvidia-smi -pl 250`), the container cannot set it.
 
 ```bash
-git clone https://github.com/syv-ai/qwen38-27b-rtx3090 && cd qwen38-27b-rtx3090
-echo "VLLM_API_KEY=$(openssl rand -hex 24)" > .env   # all knobs live in .env (gitignored)
+git clone https://github.com/syv-ai/HyperQwen && cd HyperQwen
+cp .env.example .env                              # all knobs live in .env (gitignored)
+# PowerShell: Copy-Item .env.example .env
+echo "VLLM_API_KEY=$(openssl rand -hex 24)" >> .env   # skip only if the port stays on this machine (compose publishes on 127.0.0.1; add BIND=0.0.0.0 to serve other machines)
 docker compose --profile single up -d               # or --profile batch
 docker compose logs -f single
 ```
 
+The example enables the repo's recommended single-user DFlash2 profile. On
+Docker Desktop with WSL2, leave `VLLM_WSL2_ENABLE_PIN_MEMORY=1` enabled; it is
+required by the V2 runner before model loading begins. The detailed failure
+signature and other WSL2 workarounds are below.
+
 **The image is prebuilt**: every push to `main` builds and pushes
-`ghcr.io/syv-ai/qwen38-27b-rtx3090:latest` (plus an immutable `sha-<7>` tag
+`ghcr.io/syv-ai/hyperqwen:latest` (plus an immutable `sha-<7>` tag
 per commit) from CI, with the Dockerfile's own patch application and
 `verify.sh --install` as the gate — a patch that stops applying fails the
 build and nothing is pushed. The first `up` pulls it (~9.5 GB,
 `pull_policy: missing`); to pin a known
-build, set `image: ghcr.io/syv-ai/qwen38-27b-rtx3090:sha-<7>` in a compose
+build, set `image: ghcr.io/syv-ai/hyperqwen:sha-<7>` in a compose
 override. Building locally instead still works — `docker compose build` (or
 `up --build`) produces the identical image (~20 minutes) — and the `prepare` service downloads
 the model into `./models` and runs the same requantization scripts as above
@@ -45,19 +64,51 @@ difference is gotcha 16 below.
 - Every start-script knob works from `.env`, which is passed straight into the
   container: `CTX=long`, `KV=kvarn`, `SPEC=dflash2`, `PREFIX_CACHE=1`, `MAX_LEN=`,
   `MAX_SEQS=`, `SPEC_ATTN=0`, `EXTRA_ARGS=...` (`prepare` also fetches the DFlash2 drafter;
-  `DFLASH2=0` skips it). `PORT` (default 18020) and `MODELS_DIR` (default `./models`,
-  so a venv install and the container can share one download) are read by
-  compose itself.
+  `DFLASH2=0` skips it). The two chat-template steps have knobs of their own:
+  `HARDEN_TEMPLATES=0` skips the array-argument hardening, `TRANSLATE_EFFORT=0`
+  the effort-vocabulary translation (gotcha 58). `PORT` (default 18020) and
+  `MODELS_DIR` (default `./models`, so a venv install and the container can
+  share one download) are read by compose itself.
 - `docker compose run --rm single verify` runs `verify.sh` inside the container
   (GPU, patches, model). The entrypoint runs the idempotent `prepare` and then
   `verify.sh --no-server` before every start — so a missing or half-prepared
   model heals itself, and a real FAIL refuses to serve (`PREPARE=0` / `VERIFY=0`
   skip the two steps).
+  Single-mode startup verifies the same model it will serve: an explicit
+  `MODEL` wins, otherwise the fast variant is selected when present. Batch
+  keeps its base-model default. Verification accepts the base model's packed
+  8-bit head and the fast variant's packed 4-bit head. The standalone `verify`
+  command still defaults to the base model; set `MODEL` explicitly to check
+  another directory.
+- **Concurrent prepares are serialised.** Because the entrypoint calls `prepare`
+  before every start, a booting container can race a `docker compose run --rm
+  prepare`, or two containers can start together; `docker/prepare.sh` takes an
+  exclusive `flock` on `<models dir>/.prepare.lock` and waits up to
+  `PREPARE_LOCK_WAIT` seconds (default 600) for a holder before refusing. The
+  lock sits beside the model dir rather than inside it, so `BASE_MODEL_DIR`
+  cannot move it, and it is advisory — a leftover `.prepare.lock` file is inert
+  and is not a marker.
+- **More than one GPU:** `GPU_COUNT` in `.env` sets how many cards the
+  container gets (default 1, which is whichever card the runtime enumerates
+  first — GPU 0), and `EXTRA_ARGS="--tensor-parallel-size 2"` sets how many the
+  engine uses. To pick *specific* cards on a mixed box, use `GPU_COUNT=all`
+  plus `CUDA_VISIBLE_DEVICES=1,2`: the compose device reservation decides what
+  is visible, so `NVIDIA_VISIBLE_DEVICES` in `.env` alone was not enough (#68),
+  while `CUDA_VISIBLE_DEVICES` is read inside the container (gotcha 53
+  recommends it for the same reason). Pin `KV_MEM` before
+  benchmarking or trimming `MAX_LEN` on a TP box — the launcher skips the
+  single-card pin under TP>1, and an unpinned pool moves with compile-cache
+  state (README, "More than one GPU"; issues
+  [#68](https://github.com/syv-ai/HyperQwen/issues/68),
+  [#104](https://github.com/syv-ai/HyperQwen/issues/104)).
 - Files that `prepare` writes to `./models` are root-owned: the container runs
   as root, like vLLM's own image.
 - The image carries an nvcc (CUDA "base" + `cuda-nvcc`, not the 8 GB "devel"
   image) because FlashInfer JIT-compiles its fp8-KV attention kernel on first
-  use (batch mode, `CTX=long`) and Triton needs a C compiler for its launchers.
+  use (batch mode, `CTX=long` without `PTH_FA`) and Triton needs a C compiler for its launchers.
+- The image also compiles `fa2/` (`fa2/install.sh`, optional, used by `FA2_FP8KV=1`) against its own torch
+  with that nvcc: two libraries of a few MB each, built before `COPY . .` so an edit elsewhere does not
+  recompile them. Unset `FA2_FP8KV`, the plugin it installs registers nothing.
 - On WSL2 the batch default may fail vLLM's free-memory gate; put
   `GPU_UTIL=0.93` in `.env` (see the WSL2 notes below, an independent
   containerized reproduction that predates this compose file).
@@ -69,9 +120,9 @@ separate `prepare` service, nothing the image needs. The same server, one
 command, no checkout:
 
 ```bash
-docker run -d --name qwen --gpus all --ipc=host -p 18020:18020 \
+docker run -d --name qwen --gpus all --ipc=host -p 127.0.0.1:18020:18020 \
   -v qwen-models:/app/models -v qwen-cache:/cache \
-  --restart unless-stopped ghcr.io/syv-ai/qwen38-27b-rtx3090:latest
+  --restart unless-stopped ghcr.io/syv-ai/hyperqwen:latest
 ```
 
 - The entrypoint runs the same idempotent `prepare` before serving, so the
@@ -95,7 +146,7 @@ An independent WSL2 reproduction at `e81fa39` used kernel
 Docker Engine 29.2.0 / Compose 5.0.2, and one RTX 3090 exposed to the
 container. All six launch configurations passed authenticated API/chat and
 GPU-isolation checks with zero failed benchmark requests. The full failure
-signatures and earlier five-profile matrix are in [issue #1](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/1).
+signatures and earlier five-profile matrix are in [issue #1](https://github.com/syv-ai/HyperQwen/issues/1).
 
 | profile | measured cache | representative output throughput |
 |---|---:|---:|
@@ -117,13 +168,14 @@ hard abort rather than a tuning question:
    fine on the paravirt driver. Check the spelling — `VLLM_WSL_PIN_MEMORY` is not
    a vLLM variable and reads as a silent no-op; a venv that survived an upgrade on
    hand-applied patches can hide this until it is rebuilt from a stock wheel
-   ([#25](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/25)).
+   ([#25](https://github.com/syv-ai/HyperQwen/issues/25)).
 2. **The ordinary batch default may fail vLLM's startup free-memory gate.**
    On an otherwise clean card, WSL reported 22.75/24.0 GiB free, less than
-   the 23.33 GiB requested by `GPU_UTIL=0.972`. Launching with
+   the 23.33 GiB requested by `GPU_UTIL=0.972` (the 0.28 default; 0.29 ships
+   0.95, which asks for 22.80). Launching with
    `GPU_UTIL=0.93 bash batch/start_qwen.sh` retained a 201,832-token FP8
    pool, preserving the 150k context contract and expected C64 throughput.
-   Keep 0.972 as the tuned native-Linux default; 0.93 is a WSL fallback.
+   Keep the shipped default on native Linux; 0.93 is a WSL fallback.
 3. **Cold and cached starts can profile different activation peaks.** A warm
    start may turn the difference into extra KV pages and leave less transient
    headroom than the cold start. For a deterministic service, compile once
@@ -142,8 +194,8 @@ hard abort rather than a tuning question:
    in `.env` (Docker) or the environment (venv) to override either way.
 
    This is the most reported failure on Windows
-   ([#2](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/2),
-   [#26](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/26)), and it is worth
+   ([#2](https://github.com/syv-ai/HyperQwen/issues/2),
+   [#26](https://github.com/syv-ai/HyperQwen/issues/26)), and it is worth
    knowing all of its faces, because none of them says "allocator". Same CUDA VMM
    rejection inside `process_weights_after_loading` / `gptq_marlin_repack`, four
    different messages:
@@ -161,7 +213,7 @@ hard abort rather than a tuning question:
 
 5. **Two more things the venv path needs on WSL2 that the container does not.**
    Both from @willy92wins in
-   [#2](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/2):
+   [#2](https://github.com/syv-ai/HyperQwen/issues/2):
 
    - **`nvcc` is not on `PATH`, and the error blames permissions.** Inductor
      shells out to a bare `nvcc` and dies with
@@ -176,3 +228,34 @@ hard abort rather than a tuning question:
      kernel**, and that ninja build can fail here. `EXTRA_ARGS="--kv-cache-dtype
      auto"` sidesteps it — `EXTRA_ARGS` is last on the command line, so it wins
      over `KV_ARGS`.
+
+6. **Windows host memory can kill the CPU-only prepare step.** An exit 137 while
+   `prepare/quant_lm_head.py` is running, with little VRAM in use, is WSL/Docker
+   host-memory pressure rather than a GPU OOM. Give WSL enough memory and swap in
+   `%USERPROFILE%\\.wslconfig`, for example:
+
+   ```ini
+   [wsl2]
+   memory=20GB
+   swap=8GB
+   processors=8
+   ```
+
+   Run `wsl --shutdown` after changing the file, then restart Docker Desktop.
+   If the first preparation still exceeds the available host memory, set
+   `FAST_VARIANT=0` in `.env` to skip the optional ~1 GB fast-variant download;
+   this reduces the first-boot footprint but does not change the base model.
+
+   Keep Linux venv files on WSL's native filesystem when the checkout is under
+   `/mnt/c`. Some Ubuntu/DrvFs combinations fail during `python3 -m venv venv`
+   with an `ensurepip` or `Operation not permitted` error. Create the venv under
+   `$HOME` and link it into the checkout instead:
+
+   ```bash
+   python3 -m venv "$HOME/qwen38-venv"
+   ln -s "$HOME/qwen38-venv" venv
+   ```
+
+   The model directory may remain on the Windows-mounted checkout; only the
+   Linux venv needs native WSL storage. This workaround is for the manual WSL
+   venv path. The prebuilt Docker image already contains its own venv.

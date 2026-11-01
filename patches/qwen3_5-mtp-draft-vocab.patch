@@ -10,11 +10,22 @@ MTP_DRAFT_VOCAB=0 to fall back to the shared full lm_head.
 Apply from the installed vllm package directory:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/qwen3_5-mtp-draft-vocab.patch
 
-Written against vLLM 0.27.1.
+Validated against vLLM 0.28.0.
 
+Kind: feature
+What: vocab-truncated draft head for MTP
+Upstream: none
+Cut-against: 0.32.0: the draft_lm_head skip follows #60152's is_unused_checkpoint_weight check in
+  remap_weight_names
+Retires-when: upstreamed
+
+--- exported from 34c6b593b (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+index 4d19e5447..24eeedc7c 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
-@@ -86,6 +86,26 @@
+@@ -88,6 +88,26 @@
              prefix=maybe_prefix(prefix, "embed_tokens"),
          )
  
@@ -41,7 +52,7 @@ Written against vLLM 0.27.1.
          # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
          # missing from hf_quant_config.json exclude_modules. Force unquantized.
          # Ref: https://github.com/vllm-project/vllm/pull/38650
-@@ -253,6 +273,12 @@
+@@ -249,6 +269,12 @@
              self.lm_head = PPMissingLayer()
  
          self.logits_processor = LogitsProcessor(config.vocab_size)
@@ -52,9 +63,9 @@ Written against vLLM 0.27.1.
 +            else None
 +        )
  
-     def embed_input_ids(
-         self,
-@@ -299,11 +325,26 @@
+         self.make_empty_intermediate_tensors = (
+             self.model.make_empty_intermediate_tensors
+@@ -299,6 +325,18 @@
          hidden_states: torch.Tensor,
          spec_step_idx: int = 0,
      ) -> torch.Tensor | None:
@@ -72,12 +83,14 @@ Written against vLLM 0.27.1.
 +            return full
          return self.logits_processor(self.lm_head, hidden_states)
  
-     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
-         def remap_weight_names(weights):
+     def is_unused_checkpoint_weight(self, name: str) -> bool:
+@@ -311,6 +349,9 @@
              for name, weight in weights:
+                 if self.is_unused_checkpoint_weight(name):
+                     continue
 +                # syv patch: skip the truncated draft head when it is disabled
 +                if "draft_lm_head" in name and self.model.draft_lm_head is None:
 +                    continue
                  if name.startswith("mtp."):
                      name = name.replace("mtp.", "model.")
-                 elif any(key in name for key in ["embed_tokens", "lm_head"]):
+                 elif "embed_tokens" in name:

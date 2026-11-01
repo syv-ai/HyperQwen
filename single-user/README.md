@@ -1,3 +1,7 @@
+> **New here?** Start at [docs/quickstart.md](../docs/quickstart.md) for the
+> canonical Docker path, then come back. Setup steps live in [## Setup](#setup) below.
+
+
 # Single-user mode
 
 For one person (or a handful) chatting with the model: coding assistant,
@@ -14,6 +18,13 @@ it, only the speed changes.
 Realistic chat prompts (8 mixed English/Danish/code tasks in
 [bench/prompts_real.jsonl](../bench/prompts_real.jsonl), 1,024-token answers),
 `vllm bench serve --dataset-name custom`, RTX 3090 at 250 W:
+
+> These are vLLM 0.27.1 baseline measurements, now four pins old. Re-benchmark on a
+> GPU after the v0.31.0 upgrade before using the figures for capacity planning.
+
+Quote these against that harness. A client with a different output length is not
+measuring the same thing, and mixing the two is how
+[#3](https://github.com/syv-ai/HyperQwen/issues/3) got confusing.
 
 **`CTX=fast` + fast variant (the default; 64k context)**, as reproduced by
 `bash bench/run_benchmarks.sh single`:
@@ -77,7 +88,8 @@ per step, which is the stable signal.
 is a 5-layer block drafter that predicts 7 tokens in one non-autoregressive
 pass from the target's layer 5/19/33/47/61 hidden states, plus a path selector
 over 16 candidates per slot. It runs on vLLM's V2 model runner through
-`patches/dflash2-backport.patch` (vLLM PR #52816 backported to 0.27.1) with the
+vLLM 0.28.0's native DFlash2 support plus
+`patches/dflash2-lookup-drafting.patch` and `patches/dflash2-ngram-chains.patch` with the
 drafter requantized to W4A16 by this repo (1.19 GB instead of 3.85 GB —
 `drafter/README.md`): per step it reads ~1 GB of drafter plus an 8-token verify,
 26.5 ms vs MTP's 24.8, and accepts 3.2-3.4 tokens per step at default sampling
@@ -120,13 +132,17 @@ happens when the streams are big. Where it is *not* the better choice:
   5 sliding-window layers from padding the target's attention/GDN layers (105 →
   78 KB of pool per token; without it this mode caps out at ~40k), and the V2
   runner's profiled activation peak swings ~1 GiB between starts, which makes a
-  utilization-based setting non-deterministic. `CTX=huge` stays MTP (the script falls back
-  with a message). `CTX=long` doubles the context — 138,696 tokens at `DFLASH_TOKENS=7`,
-  114,224 at 15 — by moving to an `int8_per_token_head` cache on the Triton backend; it is
+  utilization-based setting non-deterministic. `CTX=huge` combines with this drafter —
+  268k tokens of pool at 245760 max-model-len over the KVarN cache
+  ([docs/long-context.md](../docs/long-context.md#dflash2-at-240k-ctxhuge-kvarn-also-combines-with-specdflash2));
+  any other `CTX` falls back to MTP with a message. `CTX=long` doubles the context — 138,696 tokens at `DFLASH_TOKENS=7`,
+  114,224 at 15 — by moving to an `int8_per_token_head` cache on the Triton backend
+  (`FA2_FP8KV=0`; on a compute capability 8.6 GPU the default is now the same cache read by the pth-flash-attn kernel (`PTH_FA`), or else fp8 KV on the `fa2/` FlashAttention-2 plugin, see the knob table); it is
   worth it only for context reproduction, and `SPEC=mtp CTX=long` beats it about 2:1 on
   everything else. See [docs/long-context.md](../docs/long-context.md#dflash2-past-64k-specdflash2-ctxlong).
-- The V2 runner rejects the `thinking_token_budget` request parameter (HTTP
-  400); everything else we use (logprobs, prompt_logprobs, n, stop, seeds,
+- The V2 runner rejected the `thinking_token_budget` request parameter (HTTP
+  400) when this was written. On vLLM 0.30 it enforces it instead (2026-10-09, 3090:
+  15 reasoning tokens with a budget of 16, 62 without); everything else we use (logprobs, prompt_logprobs, n, stop, seeds,
   structured outputs, penalties, streaming, thinking) was checked
   (`bench/api_smoke.py`-style run, 12/12). Quality unchanged by construction
   (speculation is exact): perplexity 8.094, GSM8K 96.0% on the fast variant.
@@ -135,22 +151,24 @@ happens when the streams are big. Where it is *not* the better choice:
 
 Two things matter once the prompt is long and the same document comes back every turn.
 
-**`PREFIX_CACHE=1`** turns on vLLM's hybrid prefix caching (`--enable-prefix-caching
---mamba-cache-mode align`), which upstream keeps opt-in for hybrid models. The attention
-KV of the shared prefix is reused *and* the recurrent (GDN) state resumes from the last
-cached block boundary, so a follow-up turn does not re-run the document:
+**`PREFIX_CACHE=1`**, the default, passes vLLM's hybrid prefix caching flags
+(`--enable-prefix-caching --mamba-cache-mode align`). `PREFIX_CACHE=0` passes
+`--no-enable-prefix-caching` and turns it off. The attention KV of the shared prefix is
+reused *and* the recurrent (GDN) state resumes from the last cached block boundary, so a
+follow-up turn does not re-run the document:
 
 | 4-turn chat, 24k-token document, greedy | turn 1 | turn 2 | turn 3 | turn 4 |
 |---|---|---|---|---|
-| default | 22.9 s | 23.1 s | 22.8 s | 22.9 s |
+| default on vLLM 0.27.1 (caching off) | 22.9 s | 23.1 s | 22.8 s | 22.9 s |
 | `PREFIX_CACHE=1` | 23.5 s | **1.15 s** | **0.85 s** | **0.89 s** |
 
 Same answers, token for token (the state resume is exact, not approximate); a control run
-that changes the prefix every turn pays the full 23 s again. It costs one extra recurrent
-state page per request — the KV pool goes 86,727 → 72,475 tokens (MTP) / 68,605 (DFlash2) —
-and draft acceptance is unaffected (2.23 / 2.03 / 2.28 tokens per step with the cache vs
-2.27 / 1.80 / 1.96 without). Worth it for anything conversational; leave it off if you serve
-unrelated one-shot prompts and want the pool.
+that changes the prefix every turn pays the full 23 s again. On vLLM 0.27.1 it cost one
+extra recurrent state page per request — the KV pool went 86,727 → 72,475 tokens (MTP) /
+68,605 (DFlash2) — and draft acceptance was unaffected (2.23 / 2.03 / 2.28 tokens per step
+with the cache vs 2.27 / 1.80 / 1.96 without). `PREFIX_CACHE=0` turns caching off, and vLLM
+drops those state pages: on 0.31, `SPEC=dflash2 CTX=fast` holds 69,758 tokens off against
+68,605 on.
 
 **Lookup-augmented drafting** (`LOOKUP=1`, on by default for `SPEC=dflash2`) fixes the other
 half. With prefill nearly free, long-context chat is decode-bound, and that is exactly where
@@ -233,9 +251,8 @@ step and costs 5%. And decode CUDA graphs are captured for
 the common case — fell back to piecewise and paid 8% (27.9 ms against 25.9 ms for the same
 8-token step on a 7-slot server).
 
-Reproduction mode also costs KV pool per request slot rather than per token
-(`--mamba-cache-mode align` reserves state pages per slot per speculative block), so it runs
-4 slots and 56k of context instead of 8 and 64k.
+Reproduction mode runs 4 slots and 56k of context instead of 8 and 64k
+([why](../docs/optimizations.md#drafting-from-the-context-lookup1)).
 
 Quality is unchanged: GSM8K 96.5% (200 questions, greedy) with the lookup on, the same as
 without it, and 96.0% with the hold — one question, which is what a 200-question sample
@@ -253,7 +270,7 @@ The same server measured on random tokens (256 in, 1,024 out) reads anywhere fro
 tables above use real prompts. For comparison against another engine on this card,
 [ninfer-3090](https://github.com/Don-Chad/ninfer-3090) publishes 71.00 tok/s decode
 at C1 on its own protocol (short real prompts, thinking on); the caveats are in the
-[main README](../README.md#vs-ninfer-3090).
+[main README](../docs/benchmarks.md#vs-ninfer-3090).
 
 ### How the draft got cheap
 
@@ -296,9 +313,11 @@ attempt that did not help).
 
 k=4 is the fastest but not the default: on the FlashInfer attention backend
 (the only one that supports fp8 KV on Ampere, and fp8 KV is what makes 150k
-context fit) vLLM 0.27.1 dies with an illegal memory access as soon as one
+context fit) the vLLM 0.28.0 FlashInfer path dies with an illegal memory access as soon as one
 request finishes while another is mid-generation with 4 drafts (with or
 without our patches; the vendored PR #50021 bounds fix does not cure it;
+**measured on 0.28.0 and not re-verified on 0.29.0, 0.30.0 or 0.31.0** -- the pin moved under this
+paragraph, so treat k=4 on FlashInfer as unproven either way until someone re-runs it;
 club-3090 sees the same "n=4 eventually dies, n=3 stable" on their rigs, and
 vLLM has a family of open MTP illegal-memory-access reports on Qwen3.5/3.6,
 e.g. [#40756](https://github.com/vllm-project/vllm/issues/40756),
@@ -309,7 +328,8 @@ bug is in the FlashInfer spec-decode path. Hence two configs:
 - `CTX=fast` (default): FlashAttention, bf16 KV, **~64k context**, k=4, split-KV
   verify attention → ~114 / ~124 tok/s with the fast variant
 - `CTX=long`: FlashInfer, fp8 KV, **150k context**, k=3 → 95 / 100 tok/s with
-  the fast variant (84 / 89 with the base requantization)
+  the fast variant (84 / 89 with the base requantization); these are the fp8 + FlashInfer arm's numbers. On a compute capability 8.6 GPU
+  with `pthfa/` installed the default is int8 KV on the pth-flash-attn kernel instead (`PTH_FA`; `PTH_FA=0` restores this arm).
 
 k=3 passed every concurrency soak we ran (C2/C4/C8 with staggered finishes,
 100k-token prompt, 4×6k-token generations); if you see the crash anyway,
@@ -327,7 +347,7 @@ DeltaNet layers can't verify a tree.
 
 ## Setup
 
-Do the [common setup](../README.md#setup) first (venv, model download,
+Do the [common setup](../docs/install.md) first (venv, model download,
 requantization, draft head, the fast variant via `prepare/fetch_fast_variant.py`, vLLM
 patches; `bash verify.sh --no-server` checks all of it). Then:
 
@@ -369,31 +389,78 @@ systemctl --user enable --now qwen-serving
 loginctl enable-linger $USER
 ```
 
+### Post-boot serving warmup (optional, off by default)
+
+`/health` can return 200 before the serving path has been exercised: the first
+real request still pays the first-batch transient allocation (gotcha 35) and
+may compile Triton variants the boot-time profile misses (gotcha 45's scope
+note — `_k_stats_kernel`, `_k_quant_kernel`, `_prefill_attn_kernel` still JIT
+in-request on the current production profile). `single-user/qwen-server.sh`
+wraps the launcher: it waits for `/health`, runs `bench/warmup.sh` (a small
+decode pass, then a concurrent one), and only then considers the server ready
+for traffic. It complements the kernel prewarm in #48, it does not replace it:
+
+```bash
+WARMUP=1 bash single-user/qwen-server.sh   # wait /health, warm, then serve
+bash single-user/qwen-server.sh            # default: plain boot, no warmup
+```
+
+The warmup pass costs 21-25 s on the reference 3090 (production profile, warm
+torch.compile cache; boot-to-health is 36-50 s on top of that). It is
+advisory: a health timeout or a failed warmup is logged and the wrapper serves
+anyway, so a drifted deploy tree cannot turn a healthy engine into a restart
+loop. `WARMUP_ATTEMPTS` / `WARMUP_INTERVAL` tune the health-wait window
+(120 × 5 s by default); a boot that never completes is bounded by systemd's
+`TimeoutStartSec`, not by this script.
+
+To enable it in the unit, set `ExecStart` to `qwen-server.sh` and add
+`Environment=WARMUP=1`.
+
 Point your chat client at `http://<host>:18020/v1` with the key from
 `api_key.txt`. Works with anything that speaks the OpenAI API, tool calling
 included (`tools` + `tool_choice: "auto"` come back as `tool_calls`).
 
+Run `VISION=1 bash verify.sh` to check that two different images produce the color
+orders shown in their pixels. Export `VISION=1` in the verifier's shell even if the
+server gets that setting from `.env`, Compose or systemd. Run `python bench/vision_smoke.py` separately
+against a remote server using `VLLM_API` and the usual client key. This is an image
+round-trip check, not a Vision quality benchmark.
+
 ## Knobs
+
+Launcher controls `VISION`, `VISION_OFFLOAD`, `LOOKUP`, `INT4_MQ_3D`, `TOOLS` and
+`EMBED_UVA` accept only `0` or `1` (empty uses the default); invalid values are
+refused before launching vLLM.
 
 | var | default | notes |
 |---|---|---|
 | `MODEL` | `models/Qwen3.8-27B-W4A16-AutoRound-fast` if present, else the base dir | the fast variant (`prepare/fetch_fast_variant.py`) is +15% |
-| `CTX` | `fast` | `fast`: bf16 KV / FlashAttention / 64k / 4 drafts / split-KV attention. `long`: fp8 KV / FlashInfer / 150k / 3 drafts, ~15% slower at C1, faster from C4 up. `huge`: KVarN 4/2-bit KV / 200k / 3 drafts (needs `bash kvarn/install.sh`; docs/long-context.md) — buys 1.7x the pool for **half the decode rate past ~100k** (32.0 vs 68.1 tok/s at 112k), so take it when the request would not otherwise fit, not for speed |
-| `PREFIX_CACHE` | 0 | 1 = reuse a shared prompt prefix across requests (`--enable-prefix-caching --mamba-cache-mode align`): 20x faster follow-up turns, ~16% smaller KV pool |
+| `CTX` | `fast` | `fast`: bf16 KV / FlashAttention / 64k / 4 drafts / split-KV attention. `long`: fp8 KV / FlashInfer / 150k / 3 drafts, ~15% slower at C1, faster from C4 up (on a compute capability 8.6 GPU with `pthfa/` installed, int8 KV on the pth-flash-attn kernel by default instead: `PTH_FA` below). `huge`: KVarN 4/2-bit KV / 200k / 3 drafts (needs `bash kvarn/install.sh`; docs/long-context.md) — buys 1.7x the pool for **half the decode rate past ~100k** (32.0 vs 68.1 tok/s at 112k), so take it when the request would not otherwise fit, not for speed |
+| `PREFIX_CACHE` | 1 | 1 = prefix caching on (`--enable-prefix-caching --mamba-cache-mode align`), plus the `CTX=huge` and draft tuning and safeguards (see above). 0 = `--no-enable-prefix-caching`, for raw-engine benchmarks, A/Bs that must not reuse a prefix, quality comparisons and debugging the cache path. It costs every follow-up turn a full prefill. Other values refuse to boot. The last `--enable-prefix-caching` / `--no-enable-prefix-caching` in `EXTRA_ARGS` wins |
 | `LOOKUP` | 1 (`SPEC=dflash2`) | draft from the request's own context when it repeats itself (`patches/dflash2-lookup-drafting.patch`), and fill the verify positions the drafter's block does not reach. `VLLM_DFLASH2_LOOKUP_NMIN` (6) is the shortest suffix that may match, `_NMAX` (12) the longest — the kernel prefers the longest match and breaks ties by recency, so a higher cap makes it choose an older long match over a newer short one, which is the worse predictor — `_NSTRONG` (6) the match length trusted on its own, `_AGREE` (0) how many tokens the drafter must independently agree on for a shorter match to be taken, `_NMIN_TAIL` (4) the same for positions the drafter never proposed, `_ADAPTIVE` (1 = ask the scheduler for the long block only while a copy is running, 0 = always long), `_LONGMIN` (6) the match length that counts as a fillable tail, `_STICKY` (3) steps to hold the long block after the flag drops, with one request in flight only — copies do not end when the flag says so, and re-entry costs two steps, but the counter is batch-wide and holding it across a mixed batch makes the block length depend on when the other requests arrived — `_CHEAP_CTX` (0 = off) a context length below which the long block is taken unconditionally |
+| `LOOKUP_ADAPTIVE` | automatic safety pin | `SPEC=dflash2`: `0` always uses the configured verify block, `1` enables adaptive length, overriding an inherited `VLLM_DFLASH2_LOOKUP_ADAPTIVE`. Unset or empty preserves the existing defaults, including fixed length at `CTX=huge` with prefix caching and `DFLASH_TOKENS>7`. Explicit `1` bypasses that safety pin and can corrupt a cached-prefix continuation; use it only to investigate that path. |
 | `SPEC` | `mtp` | `dflash2`: the DFlash2 block drafter (`prepare/fetch_dflash2.py`; `CTX=fast` or `CTX=long`, V2 model runner). `DRAFT` overrides the drafter dir, `DFLASH_TOKENS` (7) the *verify* block — the drafter always proposes the 7 it was trained for, and 15 here is reproduction mode (4 request slots, 56k context) — `DFLASH_MAX_LEN` (65536, or 57344 at `DFLASH_TOKENS=15`) the context, `KV_MEM` (5583457484 = 5.2 GiB) pins the KV pool — set `KV_MEM=` to size it from `GPU_UTIL` instead; `VLLM_DFLASH2_DRAFT_TOPK_TOPP=0` disables the proposal truncation, `VLLM_DFLASH2_TORCH_TOPK=1` avoids the FlashInfer top-k JIT |
 | `DRAFT_TOKENS` | 4 (3 for `CTX=long`/`huge`) | speculative depth; 5 and 6 are slower |
-| `SPEC_ATTN` | 1 (`CTX=fast` only) | split-KV Triton attention for the verify step (`patches/spec-decode-attn.patch`); 0 = FlashAttention-2 |
+| `SPEC_ATTN` | 1 (`CTX=fast` only) | split-KV Triton attention for the verify step (`patches/spec-decode-attn.patch`); 0 = FlashAttention-2. Measured neutral at the profile's 64k window on an H200 (sm90, -7% to +9% across the harness rows), but behind vLLM's stock attention at long context there: decode -36% at 100K and -68% at 600K ([#405](https://github.com/syv-ai/HyperQwen/issues/405)). If you raise `MAX_LEN` far past the 64k default on `CTX=fast`, set `SPEC_ATTN=0` |
 | `DRAFT_SAMPLE` | `probabilistic` | `greedy` drafts: same speed at T=0, ~15% slower at T>0 |
-| `MAX_SEQS` | 8 | how many requests are *admitted*, not how many the pool can hold: each resident request needs k+1 recurrent-state slots (0.88 GiB at DFlash2 k=7 — seven residents with short prompts, five at 4k, two at 16k), and the launcher prints the number at boot |
+| `DYNAMIC_K` | unset | per-batch-size draft count (vLLM's `num_speculative_tokens_per_batch_size`): inclusive `[first_batch, last_batch, k]` ranges as JSON, e.g. `[[1,3,7],[4,512,3]]`. At `DFLASH_TOKENS=7` that measured +7.7% to +9.2% decode at 4 streams in three A/Bs, single-stream unchanged. Buys step time, not seats (state pages stay sized for the configured k). Ignored with `SPEC=off`, refused with `CTX=huge` while prefix caching is on (`PREFIX_CACHE` unset or 1) |
+| `MAX_SEQS` | 8 | how many requests are *admitted*, not how many the pool can hold; the rest queue, and once the pool is full the engine preempts and recomputes. A resident request reserves 6·(2+k) recurrent-state pages before any context (vLLM 0.31.0 runs prefix caching in align mode for this model by default, so this holds with `PREFIX_CACHE` 0 or 1), plus 2 pages per attention block of context. At the shipped `CTX=fast` pin and k=7 the pool holds 6 on ~1k-token prompts and 1 at 32k and 64k. With `SPEC=dflash2`, the launcher prints the figures at boot when `MAX_SEQS` is above them |
 | `MAX_LEN` | 65536 (`fast`) / 150000 (`long`) | 150k needs `GPU_UTIL` 0.93 |
 | `GPU_UTIL` | 0.93 | soak-tested with a 100k prompt and 4×6k-token generations; batch mode's 0.972 OOMs in the MTP path (docs/gotchas.md, gotcha 4) |
-| `MTP_DRAFT_VOCAB` | 1 | set 0 to draft with the full lm_head (more acceptance, slower per draft) |
+| `MTP_DRAFT_VOCAB` | 1 | set 0 to draft with the full lm_head (more acceptance, slower per draft); set 0 for Chinese or other traffic outside the list's English/Danish/code corpus (docs/gotchas.md 61) |
 | `TOOLS` | 1 | tool/function calling (`--enable-auto-tool-choice --tool-call-parser`). `TOOL_PARSER` (`qwen3_coder`) must match the XML call format this model's chat template emits — `hermes` parses the JSON a Qwen model does *not* produce here, and fails silently. 0 = off, and `tool_choice: "auto"` then 400s |
-| `VISION` | 0 | 1 keeps the vision tower instead of `--language-model-only` (0.858 GiB of BF16 weights on this checkpoint), for a client that sends images: one image per prompt and a 2048-image-token pixel cap, both overridable from `EXTRA_ARGS` |
-| `VISION_OFFLOAD` | 1 | with `VISION=1`, keeps the tower's weights in pinned host RAM and copies each module to the GPU for its own forward (`patches/vision-tower-cpu-offload.patch`). **On 24 GB, `SPEC=dflash2` + `VISION=1` does not boot with this off** — the tower is 0.85 GiB of the ~1.1 GiB transient margin, and graph capture OOMs allocating the 960 MiB split-KV verify buffer with 787 MiB free. With it on, the same config comes up at the full 69,758-token pool and reads images. Costs 296 → 333 ms of encode per 8192-patch image, output bit-exact. 0 only on a card with headroom to spare. `VLLM_VISION_CPU_OFFLOAD_GB` (default 1) is the budget in GiB |
-| `REQ_METRICS` | 0 | 1 = `--enable-per-request-metrics --enable-force-include-usage`: per-request timing fields in every response and `usage` on every request, the fields llama-swap's dashboard reads ([#51](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/51)). `prompt_tokens_details.cached_tokens` is always on. Not compatible with `--disable-log-stats` in `EXTRA_ARGS`; vLLM's per-request spec-decode summary flag is nightly-only, not in 0.27.1 |
+| `TOOL_STRICT` | parameter | vLLM 0.31's `--tool-strict-level`. `parameter` holds every tool call to the tool's argument schema, as 0.30 did; upstream's default `auto` does so only for tools that send `strict: true`, so a forced call to a tool with no parameters invented arguments (20 of 20 seeds) where 0.30 sent `{}`. `auto` restores upstream's default |
+| `VISION` | 0 | 1 keeps the vision tower instead of `--language-model-only` (0.858 GiB of BF16 weights on this checkpoint), for a client that sends images: one image per prompt and a 2048-image-token pixel cap, both overridable from `EXTRA_ARGS`  All three launchers cap images at one per prompt with `VISION=1`, including `alternative.sh`. |
+| `VISION_OFFLOAD` | 1 | with `VISION=1`, keeps the tower's weights in pinned host RAM and copies each module to the GPU for its own forward (`patches/vision-tower-cpu-offload.patch`). **On 24 GB, `SPEC=dflash2` + `VISION=1` does not boot with this off** — the tower is 0.85 GiB of the ~1.1 GiB transient margin, and graph capture OOMs allocating the 960 MiB split-KV verify buffer with 787 MiB free. With it on, the same config comes up at the full 69,758-token pool and reads images. Costs 296 → 333 ms of encode per 8192-patch image, output bit-exact. 0 only on a card with headroom to spare. `VLLM_VISION_CPU_OFFLOAD_GB` (default 1) is the budget in GiB  `VISION_OFFLOAD=0` forces the budget to zero even if a positive `VLLM_VISION_CPU_OFFLOAD_GB` was inherited. |
+| `EMBED_UVA` | 0 | `1` keeps the quantized token embedding in pinned host RAM, read through a CUDA UVA view (`patches/qwen3_5-embed-uva.patch`). The freed VRAM goes to the KV pool: 204,336 to 236,479 tokens (+15.7%) at `SPEC=mtp CTX=long` on a 3090 at PCIe 4.0 x16, with decode (110 tok/s) and a 30k prefill unchanged, for about 2.1 GiB of host RAM and 20 s of boot. Skipped for tied embeddings. Unmeasured on a narrow slot or with TP>1 (#281). |
+| `PTH_FA` | 1 on `SPEC=dflash2 CTX=long` and `SPEC=mtp CTX=long` on a compute capability 8.6 GPU with the package installed and the measured setup, 0 elsewhere | `1` with `SPEC=mtp CTX=long` or `SPEC=dflash2 CTX=long` only: `int8_per_token_head` KV read by the pth-flash-attn kernel (`pthfa/`, built into the image; `bash pthfa/install.sh` in a venv). With mtp it serves the target and the MTP drafter instead of fp8 on FlashInfer; with dflash2 it serves the target and the DFlash2 drafter instead of `TRITON_ATTN` (the drafter's sliding-window, non-causal layers run the kernel's head-size-128 windowed path; its speculative config gets `"attention_backend":"CUSTOM"` and keeps the target's cache dtype). On dflash2 it overrides the `FA2_FP8KV` default: an unset `FA2_FP8KV` stays 0 on an 8.6 GPU too. sm80/86/89 only; refused on any other `SPEC`/`CTX`, with a KV offload tier, with `--attention-backend`/`--kv-cache-dtype`/`--speculative-config` in `EXTRA_ARGS`, with an explicit `FA2_FP8KV=1`, and on dflash2 with `DRAFT_METHOD` other than `dflash`, `DFLASH_TOKENS` other than 7, `LOOKUP=0` or `DYNAMIC_K`. The default on `SPEC=dflash2 CTX=long` on 8.6 applies only with the package installed and none of `FA2_FP8KV` (either value), a KV offload tier or connector, those `EXTRA_ARGS`, `DRAFT`, another drafting setup, `DYNAMIC_K` or `VISION=1` set; otherwise the arm's own default runs without a refusal (a missing install prints one line), and `PTH_FA=0` opts out. On `SPEC=mtp CTX=long` the default needs the package installed and none of `FA2_FP8KV` (either value), a KV offload tier or connector, those `EXTRA_ARGS`, `DYNAMIC_K` or `VISION=1` set, and `DRAFT_TOKENS` unset or 3; otherwise fp8 on FlashInfer runs as before. mtp on a native RTX 3090 (TP=1, 250 W, one boot per arm): decode at ~66k 84.5 against 77.5 tok/s on fp8 FlashInfer, GSM8K n=200 0.955 against 0.960, KV pool 198,241 against 202,040 tokens. The other rows on 2x RTX 3080 at TP=2, on vLLM 0.31.0, capped: mtp against `TRITON_ATTN` on the same int8 cache, 128k TTFT 127.8 s against 261.8 s, decode at 128k 86.2 against 44.1 tok/s; dflash2 in one sitting, decode at 128k 115.1 tok/s against 81.5 on the FA2 fp8 default and 58.6 on `TRITON_ATTN` int8 (108.4 with the target only on the kernel), cold 128k TTFT 122.1 s against 114.1 and 249.6 s, and closer to a bf16 cache than fp8 (mean logprob error 0.019-0.021 against 0.034-0.036); both models on the kernel take 2.5-3.3% less time per decode pass than the target only at one stream, no established tok/s gain (docs/long-context.md, gotcha 63) |
+| `KV_OFFLOAD_GB` | unset | N = a CPU tier of N GiB of pinned RAM behind the GPU prefix cache (`--kv-offloading-size N`, vLLM's OffloadingConnector): a prefix the GPU pool evicted comes back by a PCIe load instead of a recomputed prefill, and a preempted request resumes from it. Pinned in full at boot, in a file in `/dev/shm` that must fit there (gotcha 62). Size it in tokens, not GiB: a tier token costs ~2.3x a pool token under MTP because each block carries a recurrent-state snapshot (gotcha 38). Check it works on `/metrics`: `vllm:kv_offload_*_bytes_total` grow both ways. Measured with `PREFIX_CACHE=1` (align mode). On 0.31 size it above what it holds: a tier that fills while a request is still running loses chunks the next lookup needs (`docs/vllm-0.31.md`). An explicit flag in `EXTRA_ARGS` wins |
+| `FA2_FP8KV` | 1 on `SPEC=dflash2 CTX=long` on a compute capability 8.6 GPU unless `PTH_FA` is or defaults to 1, 0 elsewhere | `SPEC=dflash2 CTX=long` runs on fp8 KV through the `fa2/` FlashAttention-2 plugin (`--attention-backend FLASH_ATTN --kv-cache-dtype fp8`, the drafter on FLASH_ATTN too). The build is sm86 only, so on any other GPU (or when `nvidia-smi` gives no answer) an unset knob resolves to 0 with a note; `FA2_FP8KV=1` opts in on a 4090 (sm89, unmeasured). `FA2_FP8KV=0` restores the int8 + Triton arm. Native installs need `bash fa2/install.sh` once and the launcher refuses to start without it (the default arm does not fall back to int8 when the plugin is missing). With `KV_OFFLOAD_GB` or a KV connector in `EXTRA_ARGS` an unset knob resolves to 0 with a note (the plugin's backend supports only the LBNHC KV layout, which vLLM's CPU-tier connector does not accept; untested), and an explicit `FA2_FP8KV=1` refuses it. An explicit `1` is also refused on any other `SPEC`/`CTX`. `SPEC_ATTN` has no effect on the FA2 arm: the plugin brings its own split-KV verify. `MAX_LEN` and `KV_MEM` keep the arm's defaults. Evidence: the T4 battery on the native 3090 ([#153](https://github.com/syv-ai/HyperQwen/issues/153)), on 2026-10-18 (bare metal, 250 W, vLLM 0.31.0) the fp8 + FA2 arm passed every bar against the shipped int8 + Triton arm: GSM8K 0.950 vs 0.955 (n=200), perplexity +0.04%, 0 of 128 residues broken, a 20-minute soak with no restart, decode 54.0 vs 48.2 tok/s at ~66k and 48.2 vs 37.9 tok/s at ~100k (+27%), cold TTFT 75.5 vs 132.3 s and 54.7 vs 130.5 s, and a 3.3% larger pool (140,902 vs 136,429 tokens) |
+| `REQ_METRICS` | 0 | 1 = `--enable-per-request-metrics --enable-force-include-usage`: per-request timing fields in every response and `usage` on every request, the fields llama-swap's dashboard reads ([#51](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/51)). `prompt_tokens_details.cached_tokens` is always on. Not compatible with `--disable-log-stats` in `EXTRA_ARGS`. On 0.29.0 it also passes `--per-request-spec-decode-metrics summary`, so each response carries `metrics.speculative_decoding` (mean acceptance length, draft acceptance rate, the step-by-draft-length histogram; upstream reports it for single-sequence requests only, `n == 1`; the field is experimental and its shape here is as of v0.29.0). `REQ_METRICS_DETAILED=1` selects `detailed`, which adds the ordered per-step accepted/proposed arrays; upstream says collecting them is not free, so keep it off in any profile you benchmark ([#66](https://github.com/syv-ai/qwen38-27b-rtx3090/issues/66)) |
+| `WARMUP` | 0 | `qwen-server.sh` only: 1 = wait for `/health`, then run `bench/warmup.sh` (21-25 s) before serving (see "Post-boot serving warmup"). Advisory — a failed warmup logs and serves anyway. Not read by `start_qwen.sh` itself |
+| `SSE_KEEP_ALIVE` | 30 | seconds between SSE `: keep-alive` comment lines on a streaming response, so an idle stream survives a proxy read timeout during a long prefill (Bifrost's default is 120 s; a 90K cold prefill takes ~105 s and sends nothing until it finishes). `0` passes the interval vLLM reads as off; empty drops the flag entirely, which is what a vLLM tree without `patches/sse-keep-alive.patch` needs |
 | `PORT` | 18020 | |
+| `PRINT_ARGV` | 0 | 1 = print the `vllm serve` argv, one argument per line, and exit 0 instead of starting the server. Every profile check, default and warning runs first, so it is a dry run that needs no GPU |
 
 ## Switching modes
 
@@ -405,3 +472,78 @@ cp batch/qwen-serving.service ~/.config/systemd/user/   # or single-user/
 systemctl --user daemon-reload
 systemctl --user start qwen-serving
 ```
+
+## If you are the only user, do this
+
+The command above starts the conservative default — MTP speculation, 8 request
+slots, 64k context, 120 tok/s greedy at C1 — with prefix caching on
+(`PREFIX_CACHE=1` is the default). One more setting is worth more than every
+other knob in this repo put together, and a second is worth a great deal on one
+particular workload:
+
+```bash
+printf 'SPEC=dflash2\n' >> .env
+# add DFLASH_TOKENS=15 if your answers quote your prompts — see below
+docker compose --profile single up -d
+```
+
+or, in the venv install:
+
+```bash
+venv/bin/python prepare/fetch_dflash2.py   # once, 1.2 GB (Docker's prepare step does it for you)
+SPEC=dflash2 bash single-user/start_qwen.sh
+```
+
+`SPEC=dflash2` swaps Qwen's MTP head for the DFlash2 block drafter: 7 tokens
+proposed in one pass instead of 4 chained ones. `DFLASH_TOKENS=15` then lets the
+target verify 16 tokens per step — the drafter still proposes the 7 it was
+trained for, and the remaining positions are filled from the request's own
+context, which costs nothing to draft and is exactly right whenever the answer
+quotes the prompt. Prefix caching keeps the document you already sent, both
+its attention KV and its recurrent state. One request at a time, greedy, RTX
+3090 at 250 W:
+
+| decode | MTP (default) | `SPEC=dflash2` | `+ DFLASH_TOKENS=15` |
+|---|---|---|---|
+| 8 real chat prompts | 118 tok/s | 132 | **133** |
+| reproducing a 25k-token document | n/a* | 260 | **382** |
+| request slots / context | 8 / 64k | 8 / 64k | 4 / 56k |
+
+`VLLM_DFLASH2_CHAIN=1` adds drafter-free n-gram chains on top
+([#38](https://github.com/syv-ai/HyperQwen/issues/38), ported from
+@Dmtrii-tesla's fork with permission): while a request keeps reproducing its
+context, whole verify blocks come from history alone and the drafter's forward
+and graph replay are skipped until the first rejected token — +7% on the copy
+cell here (256.9 → 276 tok/s at `DFLASH_TOKENS=7`), flat on prose, greedy
+requests only by default (`patches/dflash2-ngram-chains.patch` explains why
+sampling keeps the drafter). Off by default.
+
+<sub>\* drafting from the context only exists in `SPEC=dflash2`. The two right
+columns are one server session, where run-to-run greedy divergence is ±3-5%;
+reproduce them with `venv/bin/python bench/labd_bench.py <tag> --ctx 20000`.</sub>
+
+Prefix caching (on by default) is orthogonal to the other two and worth as much
+again in a chat client: a second turn against that same 25k-token document takes
+0.56 s to first token instead of 22.4 s with caching off, with the answers
+unchanged token for token.
+
+**Read that table by column, not by its last cell.** `SPEC=dflash2` is the upgrade
+for everyone; `DFLASH_TOKENS=15` is for one workload. On chat it is worth 1%,
+because the eight positions past the drafter's own block are filled from the
+prompt and a chat answer does not quote the prompt — measured over
+`bench/prompts_real.jsonl`, positions 7-14 take **72 of 11,069 accepted tokens
+(0.65%)**, and @changtimwu measured exactly zero for them on a TP=2 box in
+[#22](https://github.com/syv-ai/HyperQwen/issues/22). What you pay for
+that 1% is half the request slots and 8k of context, because a 16-token verify
+block doubles the recurrent-state page every resident request holds (1.66 GiB
+against 0.88 by the gotcha-33 fit). So: set it if you are quoting documents or
+applying edits, where it is worth 47%, and leave it at the default 7 for a chat
+or agentic client. `DRAFT_TOKENS`/`DFLASH_TOKENS` is one variable you can flip
+per service.
+
+All of it is lossless: speculative decoding samples the same distribution as no
+speculation at all, the prefix cache resumes recurrent state rather than
+approximating it, and GSM8K reads 96.0-96.5% across the three columns.
+`SPEC=dflash2` is a one-user mode either way
+(see [concurrency](../docs/long-context.md#dflash2-at-240k-ctxhuge-kvarn-also-combines-with-specdflash2)).
+Every other knob: [single-user/](.).

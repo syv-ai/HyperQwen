@@ -20,23 +20,30 @@ compiles too. No-op without a speculator or on the v1 model runner.
 
 Apply with the patches/ set.
 
+Kind: fix
+What: compile the rejection sampler's Triton kernels at boot (fork #48)
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from c1268528b (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/warmup/kernel_warmup.py b/model_executor/warmup/kernel_warmup.py
+index b7bf50865..151b43131 100644
 --- a/model_executor/warmup/kernel_warmup.py
 +++ b/model_executor/warmup/kernel_warmup.py
-@@ -8,6 +8,7 @@
- 
+@@ -11,6 +11,7 @@
+ from pathlib import Path
  from typing import TYPE_CHECKING
  
 +import numpy as np
  import torch
  
  import vllm.envs as envs
-@@ -93,6 +94,63 @@
-     ll_bf16_gemm_kernel.warmup(
-         shapes=shapes,
-         m_values=_LL_BF16_WARMUP_M_RANGE,
-+    )
-+
-+
+@@ -140,6 +141,63 @@
+     logger.info_once("Warmed up BF16x3 router GEMM configs: %s.", configs)
+ 
+ 
 +def rejection_sampler_warmup(worker: "Worker") -> None:
 +    """Compile the rejection sampler's Triton kernels before serving.
 +
@@ -91,17 +98,20 @@ Apply with the patches/ set.
 +        "Warmed rejection-sampler kernels (k=%d, draft_logits=%s)",
 +        k,
 +        sp.draft_logits is not None,
-     )
- 
- 
-@@ -113,6 +171,10 @@
- 
-     qwen_triton_warmup(worker.model_runner, worker.vllm_config.model_config)
++    )
++
++
+ def _warmup_gemm_rs_ar() -> None:
+     # Model construction (Kimi-K3, DeepSeek-V4.1) imports this module only
+     # when GEMM-RS/AR is enabled and initializes its singleton before
+@@ -198,6 +256,10 @@
+     compilation_config = worker.vllm_config.compilation_config
+     cudagraph_capture_sizes = list(compilation_config.cudagraph_capture_sizes or [])
  
 +    # Spec-decode verify kernels: never reached by the prefill-shaped
 +    # profiling run; without this they JIT inside the first real request.
 +    rejection_sampler_warmup(worker)
 +
-     # DSv4 mHC TileLang kernels (hc_pre/hc_post/hc_head_op) run every decoder
-     # layer per token; warm them across token sizes first so the first real
-     # request doesn't pay JIT cost. No-op for non-DSv4 models (gated inside).
+     # Run next so input-prep kernels JIT against pristine runner state.
+     if enable_jit_warmup:
+         kimi_k3_triton_warmup(worker)

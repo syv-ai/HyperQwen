@@ -1,0 +1,42 @@
+Let a bf16 DSpark drafter load beside a quantized target.
+
+get_draft_quant_config asks for the draft's quantization config through the
+target's hf_overrides. SpeculativeConfig composes those overrides as a callable
+for the DFlash family, and get_quant_config refuses a callable ("hf_overrides
+must be a dict"), so a bf16 DSpark head beside the W4A16 target dies at load
+before any weight is read. The draft carries no quantization_config of its own,
+so there is nothing to look up: return None in that case.
+
+The second thing a published Qwen3 DSpark checkpoint needs is not a patch: vLLM
+0.28.0's model registry maps the architecture name "DSparkDraftModel" (which
+RadixArk/Qwen3.8-27B-DSpark declares) to the DeepSeek V4 DSpark class and
+registers the Qwen3 class as "Qwen3DSparkModel", so the drafter is built against
+the wrong model and dies on a DeepSeek-only field. A copy of the checkpoint whose
+config.json names Qwen3DSparkModel loads; see the README's DSpark paragraph.
+
+Apply from the installed vllm package directory:
+  patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/dspark-draft-quant-config.patch
+
+Validated against vLLM 0.28.0 (issue #25, item 15). Reapply after upgrades.
+
+Kind: fix
+What: bf16 DSpark drafter beside a quantized target (callable `hf_overrides`)
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from df4fb63e5 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/models/utils.py b/model_executor/models/utils.py
+index ef1aac6de..2eaa0ae0a 100644
+--- a/model_executor/models/utils.py
++++ b/model_executor/models/utils.py
+@@ -1002,7 +1002,7 @@
+ 
+     return (
+         VllmConfig.get_quantization_config(draft_model_config, draft_load_config)
+-        if draft_model_config
++        if draft_model_config and getattr(draft_model_config.hf_config, "quantization_config", None) is not None
+         else None
+     )
+ 

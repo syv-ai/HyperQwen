@@ -1,0 +1,234 @@
+Ports upstream PR vllm-project/vllm#61050 (open) to this pin.
+
+Keeps a running request's first chunks in the CPU KV tier until the request finishes. Since vllm #51787 the CPU
+offloading manager applies a request's cache recency once, in on_request_finished, ranking its chunks head to tail.
+Until then each chunk keeps the rank it got when it was stored, head oldest, so when the tier fills while a request
+is still running (one long conversation's prefill while another decodes), the evictions take chunk 0 of every
+KV-cache group from the request that has not finished, and its next turn's lookup, which starts at chunk 0, finds
+nothing.
+
+The PR gives each running request one provisional LRU rank when the manager first sees it and ranks its positioned
+keys by (request rank, -token position), so the request's tail goes before its head across store batches without
+revisiting the prefix. on_request_finished still commits the recency; ARC and other policies get a no-op hook.
+
+Measured on a native RTX 3090 with alternative.sh, an 8 GiB tier and two ~60K conversations in flight, one boot
+each: on turn 2, 0.31.0 reuses 0 and 0 tokens, this reuses 50,880 and 49,184 (85.2% and 82.1%) with 1.90 GB read
+back and no chunk 0 evicted, and 0.30.0 reuses 96.3% for both. A re-rank of the request's whole prefix after each
+store batch gave the same counts to the token.
+
+Applied unchanged: the PR cherry-picks onto 0.31.0 without conflicts, its tests included.
+
+Kind: fix
+What: the CPU KV tier keeps a running request's head chunks; an eviction before the request finishes takes its tail
+  first
+Upstream: vllm #61050 (open); the regression is from vllm #51787
+Cut-against: 0.32.0
+Retires-when: the pin that carries #61050
+
+--- exported from f31390dd9 (vllm-pr61050-lru-running-prefix); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/kv_offload/cpu/manager.py b/v1/kv_offload/cpu/manager.py
+index 2c08ac897..f7612bc92 100644
+--- a/v1/kv_offload/cpu/manager.py
++++ b/v1/kv_offload/cpu/manager.py
+@@ -162,6 +162,7 @@
+         reused_keys: Iterable[OffloadKey] = (),
+     ) -> None:
+         state = self._get_request_cache_access(req_context)
++        new_keys = []
+         for key in keys:
+             if key in state.seen_keys:
+                 continue
+@@ -171,6 +172,9 @@
+             group_idx = get_offload_group_idx(key)
+             state.key_groups.setdefault(group_idx, []).append(key)
+             state.seen_keys.add(key)
++            new_keys.append(key)
++        if new_keys:
++            self._policy.on_request_access(new_keys, req_context)
+         state.inserted_keys.update(inserted_keys)
+         # Re-reading a chunk inserted by this request is an internal transfer
+         # (for example, a tiering cascade), not a second cache access.
+@@ -349,6 +353,7 @@
+ 
+         for key, chunk in zip(keys_to_store, chunks):
+             self._policy.insert(key, chunk)
++        self._policy.on_request_access(keys_to_store, req_context, inserted=True)
+         self._num_write_pending_chunks += len(keys_to_store)
+         state.inserted_keys.update(keys_to_store)
+ 
+diff --git a/v1/kv_offload/cpu/policies/base.py b/v1/kv_offload/cpu/policies/base.py
+index d3ef8b859..76f29951b 100644
+--- a/v1/kv_offload/cpu/policies/base.py
++++ b/v1/kv_offload/cpu/policies/base.py
+@@ -88,6 +88,22 @@
+         """
+         self.touch(keys, req_context)
+ 
++    def on_request_access(
++        self,
++        keys: Iterable[OffloadKey],
++        req_context: ReqContext,
++        *,
++        inserted: bool = False,
++    ) -> None:
++        """Observe new request keys and successfully allocated store keys.
++
++        Keys first observed before allocation may not yet be resident. This
++        ``inserted`` is true only for newly allocated chunks. This hook can
++        maintain prefix order during a request without committing the
++        frequency access handled by ``on_request_finished``.
++        """
++        return
++
+     def on_request_finished(
+         self,
+         key_groups: Sequence[Sequence[OffloadKey]],
+diff --git a/v1/kv_offload/cpu/policies/lru.py b/v1/kv_offload/cpu/policies/lru.py
+index 6ca9cb32f..c2020e9e6 100644
+--- a/v1/kv_offload/cpu/policies/lru.py
++++ b/v1/kv_offload/cpu/policies/lru.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import heapq
+ from collections.abc import Iterable, Sequence
++from dataclasses import dataclass
+ 
+ from typing_extensions import override
+ 
+@@ -12,6 +13,15 @@
+     order_request_keys,
+ )
+ 
++_HeapEntry = tuple[tuple[int, int], OffloadKey]
++
++
++@dataclass(slots=True)
++class _RequestRank:
++    owner: object
++    cache_generation: int
++    rank: int
++
+ 
+ class LRUCachePolicy(CachePolicy):
+     """LRU caching policy with logical recency independent of transfer pinning.
+@@ -21,6 +31,9 @@
+     evictable, it enters the heap with the order assigned by the request
+     rather than its transfer-completion time.
+ 
++    Active requests share a provisional rank across batches, ordered by token
++    position so tails precede heads. Finalization commits the request's recency.
++
+     A use is indicated by,
+      - First time the key is added (store).
+      - A request-scoped access.
+@@ -29,16 +42,17 @@
+     def __init__(self, cache_capacity: int):
+         super().__init__(cache_capacity)
+         self.chunks: dict[OffloadKey, ChunkStatus] = {}
+-        self._ranks: dict[OffloadKey, int] = {}
++        self._ranks: dict[OffloadKey, tuple[int, int]] = {}
+         self._evictable: set[OffloadKey] = set()
+-        self._heap: list[tuple[int, OffloadKey]] = []
++        self._heap: list[_HeapEntry] = []
+         self._next_rank = 0
++        self._cache_generation = 0
+ 
+     def _assign_new_rank(self, key: OffloadKey) -> bool:
+         if key not in self.chunks:
+             return False
+         self._next_rank += 1
+-        self._ranks[key] = self._next_rank
++        self._ranks[key] = (self._next_rank, 0)
+         return key in self._evictable
+ 
+     def _push_evictable(self, key: OffloadKey) -> None:
+@@ -47,7 +61,7 @@
+             (self._ranks[key], key),
+         )
+ 
+-    def _is_current(self, entry: tuple[int, OffloadKey]) -> bool:
++    def _is_current(self, entry: _HeapEntry) -> bool:
+         rank, key = entry
+         return key in self._evictable and self._ranks.get(key) == rank
+ 
+@@ -59,6 +73,11 @@
+ 
+     def _update_recency(self, keys: Iterable[OffloadKey]) -> None:
+         updated_evictable = [key for key in keys if self._assign_new_rank(key)]
++        self._update_heap(updated_evictable)
++
++    def _update_heap(self, updated_evictable: Sequence[OffloadKey]) -> None:
++        if not updated_evictable:
++            return
+         # Rebuilding is linear and substantially cheaper than k heap pushes
+         # for a long prefix. Small updates retain the incremental path.
+         if len(updated_evictable) >= max(64, len(self._evictable) // 4):
+@@ -77,7 +96,7 @@
+     def insert(self, key: OffloadKey, chunk: ChunkStatus) -> None:
+         self.chunks[key] = chunk
+         self._next_rank += 1
+-        self._ranks[key] = self._next_rank
++        self._ranks[key] = (self._next_rank, 0)
+         if chunk.ref_cnt == 0:
+             self._evictable.add(key)
+             self._push_evictable(key)
+@@ -92,6 +111,38 @@
+     def touch(self, keys: Iterable[OffloadKey], req_context: ReqContext) -> None:
+         self._update_recency(reversed(list(keys)))
+ 
++    @override
++    def on_request_access(
++        self,
++        keys: Iterable[OffloadKey],
++        req_context: ReqContext,
++        *,
++        inserted: bool = False,
++    ) -> None:
++        state = req_context.get_state(_RequestRank)
++        if (
++            state is None
++            or state.owner is not self
++            or state.cache_generation != self._cache_generation
++        ):
++            self._next_rank += 1
++            state = _RequestRank(self, self._cache_generation, self._next_rank)
++            req_context.set_state(state)
++        updated_evictable = []
++        for key in keys:
++            position = req_context.get_offload_key_position(key)
++            if position is None or key not in self.chunks:
++                continue
++            # All batches share one request rank; later positions precede
++            # earlier ones without revisiting the already observed prefix.
++            rank = (state.rank, -position)
++            if not inserted and self._ranks[key] >= rank:
++                continue
++            self._ranks[key] = rank
++            if key in self._evictable:
++                updated_evictable.append(key)
++        self._update_heap(updated_evictable)
++
+     @override
+     def on_request_finished(
+         self,
+@@ -110,6 +161,7 @@
+         self._evictable.clear()
+         self._heap.clear()
+         self._next_rank = 0
++        self._cache_generation += 1
+ 
+     @override
+     def evict(
+@@ -118,9 +170,9 @@
+         if n == 0:
+             return []
+ 
+-        selected: list[tuple[tuple[int, OffloadKey], ChunkStatus]] = []
++        selected: list[tuple[_HeapEntry, ChunkStatus]] = []
+         selected_keys: set[OffloadKey] = set()
+-        deferred: list[tuple[int, OffloadKey]] = []
++        deferred: list[_HeapEntry] = []
+         while self._heap and len(selected) < n:
+             entry = heapq.heappop(self._heap)
+             if not self._is_current(entry):

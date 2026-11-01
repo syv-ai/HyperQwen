@@ -37,11 +37,21 @@ aligned, which 260 does satisfy) and unpacking would recover most of the 61%; no
 Apply from the repo root, after spec-decode-attn.patch:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/spec-decode-int8-kv.patch
 
-Written against vLLM 0.27.1. Reapply after upgrades.
+Validated against vLLM 0.28.0. Reapply after upgrades.
 
+Kind: feature
+What: split-KV verify attention over an int8 per-token-head cache
+Upstream: none
+Cut-against: 0.32.0
+Retires-when: rides with spec-decode-attn
+
+--- exported from c67cf5bdc (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
+index 5eba4d5b6..7b6fb0f61 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1757,7 +1757,7 @@
+@@ -1939,7 +1939,7 @@
      return _SPEC_ATTN_QMAX
  
  
@@ -50,16 +60,18 @@ Written against vLLM 0.27.1. Reapply after upgrades.
      from vllm.v1.attention.ops.spec_decode_attn import SpecDecodeAttention
  
      key = (impl.num_heads, impl.head_size, q.device)
-@@ -1776,4 +1776,5 @@
+@@ -1958,4 +1958,5 @@
          )
          _SPEC_ATTN[key] = att
      att.run(q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, impl.scale,
 -            cu_seqlens_q.shape[0] - 1, max_seqlen_q)
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q,
 +            k_scale_cache=k_scale_cache, v_scale_cache=v_scale_cache)
+diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
+index a95b0c1d0..267ee0a76 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
-@@ -41,6 +41,11 @@
+@@ -40,6 +40,11 @@
      triton_reshape_and_cache_flash_per_token_head_quant,
  )
  from vllm.v1.attention.ops.triton_unified_attention import unified_attention
@@ -71,7 +83,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
  from vllm.v1.kv_cache_interface import (
      AttentionSpec,
      KVQuantMode,
-@@ -688,6 +693,44 @@
+@@ -662,6 +667,44 @@
  
          mm_prefix_range_tensor = attn_metadata.mm_prefix_range_tensor
  
@@ -116,6 +128,8 @@ Written against vLLM 0.27.1. Reapply after upgrades.
          unified_attention(
              q=query[:num_actual_tokens],
              k=key_cache,
+diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
+index 54e6e11c9..fca60b84d 100644
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -21,6 +21,22 @@
@@ -160,7 +174,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
  ):
      pid = tl.program_id(0)
      req = pid // NTILE
-@@ -89,7 +108,17 @@
+@@ -92,7 +111,17 @@
          v_ptrs = v_ptr + blk[:, None] * stride_vb + slot[:, None] * stride_vs + kvh * stride_vh + d[None, :]
          k = tl.load(k_ptrs, mask=k_ok[:, None], other=0.0)
          v = tl.load(v_ptrs, mask=k_ok[:, None], other=0.0)
@@ -179,7 +193,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
          allowed = k_ok[None, :] & (pos[None, :] <= q_pos[:, None]) & row_ok[:, None]
          s = tl.where(allowed, s, float("-inf"))
          m_new = tl.maximum(m_i, tl.max(s, 1))
-@@ -97,7 +126,10 @@
+@@ -100,7 +129,10 @@
          p = tl.exp(s - m_safe[:, None])
          alpha = tl.exp(tl.where(m_i == float("-inf"), float("-inf"), m_i - m_safe))
          l_i = l_i * alpha + tl.sum(p, 1)
@@ -191,7 +205,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
          m_i = m_new
  
      # store partials at flat index ((req*Hq + head)*QMAX + i)*NSEG + seg
-@@ -171,10 +203,14 @@
+@@ -174,10 +206,14 @@
          qt = max(1, block_m // G)
          return block_m, qt, triton.cdiv(q_len, qt), 8 if block_m >= 128 else 4
  
@@ -207,7 +221,7 @@ Written against vLLM 0.27.1. Reapply after upgrades.
          assert max_query_len <= self.qmax, "too many query tokens per request for this kernel"
          assert num_reqs <= self.max_num_reqs
          # shared memory on sm86 is 99 KB: q tile + one K and one V tile + scores must fit
-@@ -184,13 +220,16 @@
+@@ -187,13 +223,16 @@
          _spec_attn_partial[grid](
              q, key_cache, value_cache, block_table, seqused_k, cu_seqlens_q,
              self.part_o, self.part_m, self.part_l,

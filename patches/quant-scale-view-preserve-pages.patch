@@ -1,0 +1,38 @@
+Backport the two-line runtime fix from vllm-project/vllm#64141 (5db1c89c64f0),
+by yueyinmochen, for vllm-project/vllm#63944. Creating quantized attention's
+scale aliases must not initialize the whole pool: hybrid groups can already
+own pages containing live recurrent state, and KV-sharing layers can already
+have valid scales there. PTH_FA inherits these view methods from Triton.
+
+New KV writes store their scales with their values; masked attention loads use
+their own out-of-range defaults. This patch does not initialize dummy/capture
+pages or change those kernels' validity/masking contracts.
+
+Kind: backport
+What: create per-token-head scale views without filling shared KV pages, preserving live hybrid state and existing scales
+Upstream: vllm #64141 (open), fixing #63944; runtime change credited to yueyinmochen
+Cut-against: 0.32.0
+Retires-when: the pin carries vllm #64141 or an equivalent non-destructive scale-view implementation
+
+--- exported from 3913cc2 (quant-scale-view-preserve-pages); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
+index 674c533..68dc591 100644
+--- a/v1/attention/backends/triton_attn.py
++++ b/v1/attention/backends/triton_attn.py
+@@ -609,7 +609,6 @@
+             stride=(block_f32, slot_f32, head_f32),
+             storage_offset=k_scale_off_f32,
+         )
+-        self._k_scale_cache.fill_(1.0)
+ 
+         # V scales (second content half)
+         self._v_scale_cache = torch.as_strided(
+@@ -618,7 +617,6 @@
+             stride=(block_f32, slot_f32, head_f32),
+             storage_offset=v_scale_off_f32,
+         )
+-        self._v_scale_cache.fill_(1.0)
+ 
+     def fused_output_quant_supported(self, quant_key: QuantKey):
+         return quant_key == kFp8StaticTensorSym

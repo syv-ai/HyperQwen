@@ -18,19 +18,21 @@ ROWS=${ROWS:-"1024 4096 16384 51200"}
 PORT=${PORT:-18021}          # do not fight the production port
 OUT="$HERE/results-prefill-ab/$ARM"; mkdir -p "$OUT"
 export PATH="$REPO/venv/bin:$PATH"
-export OPENAI_API_KEY=${VLLM_API_KEY:-$(cat "$REPO/api_key.txt" 2>/dev/null)}
-MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound-fast}
-B="venv/bin/vllm bench serve --host 127.0.0.1 --port $PORT --model $MODEL --served-model-name qwen3.8-27b"
+# One precedence chain for every caller (#113): an explicit OPENAI_API_KEY
+# wins, else the server key, else api_key.txt, else the EMPTY placeholder --
+# never a bare "Bearer " against a server that bound a key.
+source "$REPO/resolve_api_key.sh"
+resolve_client_key
+# The tokenizer directory, as the single-user launcher picks it. The -fast and base dirs share one tokenizer.
+source "$REPO/single-user/select_model.sh"
 
 # ---- boot -------------------------------------------------------------------
 if curl -sf -o /dev/null http://127.0.0.1:$PORT/health; then
   echo "server already on :$PORT — reusing (set FRESH=1 to refuse)"; [ "${FRESH:-0}" = 1 ] && exit 1
 else
-  # INT8_ACT/INT8_LAYERS: same translation batch/start_qwen.sh does (single-user
-  # script has no wiring yet); CHUNK rides EXTRA_ARGS — the launcher's hardcoded
+  # single-user/start_qwen.sh reads INT8_ACT/INT8_LAYERS from the environment
+  # (qwen_int8_exports). CHUNK rides EXTRA_ARGS — the launcher's hardcoded
   # --max-num-batched-tokens 2048 is overridden because EXTRA_ARGS expands last.
-  [ -n "${INT8_ACT:-}" ] && export VLLM_MARLIN_INPUT_DTYPE=$INT8_ACT
-  [ -n "${INT8_LAYERS:-}" ] && export VLLM_MARLIN_INT8_INCLUDE_RE=$INT8_LAYERS
   [ -n "${CHUNK:-}" ] && EXTRA_ARGS="${EXTRA_ARGS:-} --max-num-batched-tokens $CHUNK"
   echo "# booting arm=$ARM  envs: SPEC=${SPEC:-dflash2} CTX=${CTX:-fast} DFLASH_TOKENS=${DFLASH_TOKENS:-15} PREFIX_CACHE=${PREFIX_CACHE:-1} INT8_ACT=${INT8_ACT:-} INT8_LAYERS=${INT8_LAYERS:-} CHUNK=${CHUNK:-} EXTRA_ARGS=${EXTRA_ARGS:-}"
   SPEC=${SPEC:-dflash2} CTX=${CTX:-fast} DFLASH_TOKENS=${DFLASH_TOKENS:-15} \
@@ -46,16 +48,35 @@ fi
 nvidia-smi --query-gpu=memory.used,memory.total,power.limit --format=csv,noheader | tee "$OUT/gpu-after-boot.txt"
 
 num() { awk "/$1/ {print \$$2}" "$3"; }
-metrics() { curl -s http://127.0.0.1:$PORT/metrics -H "Authorization: Bearer $OPENAI_API_KEY"; }
-spec() { metrics | grep -E "^vllm:spec_decode_num_(drafts|accepted_tokens)_total" | awk '{print $2}' | tr "\n" " "; }
+# Drafts and accepted tokens by name, summed over engines (bench/harness.py).
+spec() { VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" spec; }
+teardown() {
+  if [ -f "$OUT/server.pid" ] && [ "${KEEP:-0}" != 1 ]; then
+    kill "$(cat $OUT/server.pid)" 2>/dev/null; sleep 1
+    pkill -f "vllm serve.*$PORT" 2>/dev/null
+    for i in $(seq 1 30); do
+      sleep 2; U=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits); [ "$U" -lt 2000 ] && break
+    done
+    echo "# torn down (gpu mem now ${U:-?} MiB)"
+  fi
+}
+
+# --model is the served name (the bench client's /tokenize alignment probe
+# posts it as the request's model; a checkpoint path 404s there); the
+# checkpoint dir rides --tokenizer, which is what actually reads it.
+# The name is the one the server lists first on /v1/models, or VLLM_MODEL
+# (bench/harness.py), so it is read once the server is up.
+NAME=$(VLLM_API="http://127.0.0.1:$PORT" python3 "$HERE/harness.py" model) || { teardown; exit 1; }
+# An array, as in warmup.sh: an unquoted string re-splits and re-globs a path with a space or glob character.
+B=(venv/bin/vllm bench serve --host 127.0.0.1 --port "$PORT" --model "$NAME" --tokenizer "$MODEL" --served-model-name "$NAME")
 
 # ---- warmup (JIT shapes: small + one large continuation) --------------------
 # Every call gets its own --seed: the bench default (0) reuses the same prompts
 # call to call, and with PREFIX_CACHE=1 that hands later calls silent
 # prefix-cache hits whose size depends on the arm's pool geometry — pass 1 of
 # spec-off measured 4.0 s for a 16k prefill that cold costs 11.2 s.
-$B --dataset-name random --seed 901 --random-input-len 256 --random-output-len 64 --num-prompts 8 --max-concurrency 4 > /dev/null 2>&1
-$B --dataset-name random --seed 902 --random-input-len 16384 --random-output-len 1 --num-prompts 2 --max-concurrency 1 > /dev/null 2>&1
+"${B[@]}" --dataset-name random --seed 901 --random-input-len 256 --random-output-len 64 --num-prompts 8 --max-concurrency 4 > /dev/null 2>&1
+"${B[@]}" --dataset-name random --seed 902 --random-input-len 16384 --random-output-len 1 --num-prompts 2 --max-concurrency 1 > /dev/null 2>&1
 
 # ---- prefill rows, two passes, keep the second ------------------------------
 # Pass 2's seeds are the same in every arm, so all arms measure identical prompts.
@@ -64,7 +85,7 @@ for PASS in 1 2; do
   for L in $ROWS; do
     IDX=$((IDX+1))
     N=4; [ "$L" -ge 16384 ] && N=3; [ "$L" -ge 40000 ] && N=2
-    $B --dataset-name random --seed $((PASS*1000+IDX)) --random-output-len 1 --random-input-len $L --num-prompts $N --max-concurrency 1 > "$OUT/pf_${L}_p$PASS.log" 2>&1
+    "${B[@]}" --dataset-name random --seed $((PASS*1000+IDX)) --random-output-len 1 --random-input-len $L --num-prompts $N --max-concurrency 1 > "$OUT/pf_${L}_p$PASS.log" 2>&1
     IN=$(num "Total input tokens" 4 "$OUT/pf_${L}_p$PASS.log"); DUR=$(num "Benchmark duration" 4 "$OUT/pf_${L}_p$PASS.log")
     TTFT=$(num "Mean TTFT" 4 "$OUT/pf_${L}_p$PASS.log")
     [ "$PASS" = 2 ] && echo "ROW $ARM prefill len=$L | $(python3 -c "print(f'{$IN/$DUR:.0f}')") tok/s | meanTTFT=$TTFT ms"
@@ -73,7 +94,7 @@ done
 
 # ---- decode guard: C1 cohort, default sampling + tok/step -------------------
 S0=$(spec)
-$B --dataset-name custom --dataset-path "$HERE/prompts_real.jsonl" --custom-output-len 1024 --num-prompts 8 --max-concurrency 1 > "$OUT/cohort_c1.log" 2>&1
+"${B[@]}" --dataset-name custom --dataset-path "$HERE/prompts_real.jsonl" --custom-output-len 1024 --num-prompts 8 --max-concurrency 1 > "$OUT/cohort_c1.log" 2>&1
 S1=$(spec)
 TS=$(python3 -c "
 a='$S0'.split(); b='$S1'.split()
@@ -83,12 +104,5 @@ except Exception: print('-')")
 echo "ROW $ARM decode C1 | decode=$(python3 -c "print(f'{1000/$(num "Mean TPOT" 4 "$OUT/cohort_c1.log"):.1f}')") tok/s | tok/step=$TS | meanTTFT=$(num "Mean TTFT" 4 "$OUT/cohort_c1.log") ms"
 
 # ---- teardown ---------------------------------------------------------------
-if [ -f "$OUT/server.pid" ] && [ "${KEEP:-0}" != 1 ]; then
-  kill "$(cat $OUT/server.pid)" 2>/dev/null; sleep 1
-  pkill -f "vllm serve.*$PORT" 2>/dev/null
-  for i in $(seq 1 30); do
-    sleep 2; U=$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits); [ "$U" -lt 2000 ] && break
-  done
-  echo "# torn down (gpu mem now ${U:-?} MiB)"
-fi
+teardown
 echo "# raw logs in $OUT"

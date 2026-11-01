@@ -8,27 +8,39 @@ single-user mode crashes on load with "no parameter named
 Apply from the installed vllm package directory:
   patch -p1 -d venv/lib/python3.12/site-packages/vllm < patches/qwen3_5-embed-quant.patch
 
-Written against vLLM 0.27.1. Reapply after upgrades.
+Validated against vLLM 0.28.0. Reapply after upgrades.
 
+Kind: fix
+What: pass `quant_config` to the token embedding (main model and MTP module)
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream PR
+
+--- exported from 6e6f21104 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
+index f105948f9..90f03ee54 100644
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -243,6 +243,8 @@
+@@ -251,6 +251,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,
 +            quant_config=self.quant_config,
 +            prefix=maybe_prefix(prefix, "embed_tokens"),
          )
-
+ 
          def get_layer(prefix: str):
+diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
+index 2acac6b5b..4d19e5447 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
-@@ -82,6 +82,8 @@
+@@ -84,6 +84,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,
 +            quant_config=vllm_config.quant_config,
 +            prefix=maybe_prefix(prefix, "embed_tokens"),
          )
-
+ 
          # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is

@@ -1,0 +1,34 @@
+fa2-fp8kv-sm86 (vendored in fa2/)
+
+This project contains a modified subset of FlashAttention-2, derived from
+vllm-project/flash-attention commit 28e862d21806bc3580207aa0ad4e2759151e9827,
+itself a fork of Dao-AILab/flash-attention.
+
+The plugin's patch is cut against that revision; fa2/PIN records the revision
+that vLLM pins and that the sources are checked against. fa2-fp8kv.patch records
+the CUDA source diff; check_upstream.py verifies that applying it reproduces all
+mapped project sources byte-for-byte. See README.md for the file mapping.
+
+FlashAttention headers retain their original copyright notices and BSD
+3-Clause license. See licenses/flash-attention-BSD-3-Clause.txt and
+licenses/flash-attention-AUTHORS.
+
+The CUDA adapter and vLLM integration are Apache-2.0 licensed.
+The adapter for vLLM 0.27.1 derives from that version's FlashInfer backend and
+retains its upstream notices. It includes earlier speculative-decoding
+integration work; the FA2 path bypasses FlashInfer attention planning.
+
+The vLLM 0.29 plugin uses the FlashAttention backend interface, metadata
+builder and KV-write operation from vLLM, licensed Apache-2.0. It registers
+through vLLM's backend plugin API and leaves the stock source files intact.
+
+Local modifications add paged FP8 E4M3 KV loading, BF16 conversion,
+split-KV decoding, GQA row packing with causal remapping, asynchronous
+FP8 staging, and CUDA Graph compatible vLLM metadata handling.
+
+CUTLASS and FlashInfer are external build dependencies with their own
+licenses. They are not relicensed by this repository.
+
+The bounded prefill unpacking approach was informed by 1Cat-vLLM's public
+long-context prefill reports, including 1CatAI/1Cat-vLLM PR #212. This
+implementation uses a local SM86 gather operation and vLLM's native FA2.

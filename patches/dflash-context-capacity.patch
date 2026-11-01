@@ -1,0 +1,60 @@
+Reject a target context exceeding DFlash's configured positional capacity,
+including the fixed bonus-plus-draft query block. Validate before GPU model
+execution rather than discovering an out-of-range RoPE index in a request.
+Keep the drafter configuration unchanged; explicit larger validated capacities
+remain usable. Other speculative methods retain their existing policy.
+
+Kind: fix
+What: reject DFlash contexts exceeding the drafter capacity and fixed lookahead
+Upstream: HyperQwen issue #405
+Cut-against: 0.32.0
+Retires-when: upstream validates DFlash positional capacity before inference
+
+--- exported from be44b37 (dflash-context-capacity); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/config/speculative.py b/config/speculative.py
+index b916d7d..b0a5cce 100644
+--- a/config/speculative.py
++++ b/config/speculative.py
+@@ -1553,6 +1553,13 @@
+                         self.draft_model_config.hf_config,
+                     )
+                 )
++                if self.method == "dflash":
++                    SpeculativeConfig._validate_dflash_context_capacity(
++                        self.target_model_config.max_model_len,
++                        self.draft_model_config.max_model_len,
++                        self.num_speculative_tokens,
++                    )
++
+                 self.draft_model_config.max_model_len = (
+                     SpeculativeConfig._maybe_override_draft_max_model_len(
+                         self.max_model_len,
+@@ -1629,6 +1636,27 @@
+                 f"{self.suffix_decoding_min_token_prob} must be in [0, 1]"
+             )
+ 
++    @staticmethod
++    def _validate_dflash_context_capacity(
++        target_max_model_len: int,
++        draft_max_model_len: int,
++        num_speculative_tokens: int,
++    ) -> None:
++        # DFlash embeds both target context positions and a fixed query block
++        # (bonus token plus drafts). Its RoPE cache must cover that whole
++        # block even when the target will discard lookahead at its limit.
++        lookahead = num_speculative_tokens + 1
++        if target_max_model_len + lookahead > draft_max_model_len:
++            raise ValueError(
++                f"DFlash target max_model_len={target_max_model_len} plus "
++                f"{lookahead} lookahead positions exceeds the drafter's "
++                f"context capacity {draft_max_model_len}. Lower "
++                f"--max-model-len to at most {draft_max_model_len - lookahead} "
++                "or select a drafter configured for the requested context. "
++                "The drafter's positional configuration is not extended "
++                "automatically."
++            )
++
+     @staticmethod
+     def _maybe_override_draft_max_model_len(
+         speculative_max_model_len: int | None,

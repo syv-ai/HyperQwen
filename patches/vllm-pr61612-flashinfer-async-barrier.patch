@@ -1,0 +1,73 @@
+Ports upstream PR vllm-project/vllm#61612 (open) to this pin.
+
+Since vllm #57214, FlashInfer's metadata builder skips its blocking seq_lens.cpu() for models without speculative
+decoding and plans from seq_lens_cpu_upper_bound instead. With PP=2 under concurrent load the server then dies with an
+illegal memory access on PP0 (#328). GPU core dumps of three such crashes (two on 0.31.0, one on 0.32.0) all name
+flashinfer::PersistentVariableLengthMergeStatesKernel on device 0.
+
+Why, as read from the code (vllm #61239 and #61612; not measured here): the skipped call was also the host
+barrier between steps. With async scheduling the CPU can then plan step N+1 while step N's plan is still being copied
+to the GPU: plan() writes every index array into one pinned host buffer per wrapper and enqueues a single
+cudaMemcpyAsync from it, so N+1's plan can overwrite those bytes before N's copy reads them, and the merge kernel reads
+indptrs that do not belong to its step.
+
+The PR keeps the shortcut only when the scheduler is synchronous.
+
+Measured on 0.32.0 with the batch launcher at #328's settings (PP=2 at 32,32, fp8 KV, 64 seqs, MAX_LEN 340000, prefix
+cache, vision with offload, int8 prefill attention, GPU_UTIL 0.94, async scheduling on) and 24 concurrent agent
+conversations whose prompts grow to ~50k tokens, some with images, on two rented machines with two RTX 3090s each:
+
+  unpatched, machine 1 (EPYC 7543, driver 595.84)           PP0's worker dies at 105.7 minutes; the core dump
+                                                             names the merge kernel above
+  shortcut disabled by hand, machine 1                      240 minutes, 3,156 requests ok, no 500s, no crash
+  this patch, machine 2 (Threadripper 3975WX, driver 595.99) 60 minutes, 707 requests ok, no 500s, no crash
+  unpatched, machine 2                                       60 minutes, 781 requests ok, no 500s, no crash
+
+So the evidence that this cut fixes 0.32.0 is machine 1's pair, with the shortcut forced off by hand rather than this
+exact code: one crash at 105.7 minutes unpatched against 240 clean minutes, one boot each. Machine 2 crashed 0.31.0
+unpatched at 8.0 and 27.4 minutes but ran 0.32.0 unpatched for an hour without a crash, so its clean hour with this
+patch shows the cut boots and serves on 0.32.0, not that it removes the crash there. The code change is the same one
+the 0.31.0 cut carries, where machine 2's runs do compare. The 400s in every run are the load's second-image
+requests, refused by the one-image limit.
+
+Applied unchanged: the PR's flashinfer.py hunks cherry-pick onto 0.32.0 without conflicts (its pre-commit workflow
+hunk is not part of this patch).
+
+Kind: fix
+What: with async scheduling on, FlashInfer's metadata builder takes the blocking seq_lens.cpu() again, the host
+  barrier between steps that vllm #57214 dropped
+Upstream: vllm #61612 (open); the regression is from vllm #57214. vllm #61622 (open, for #61621) makes the
+  blocking read wait on an event instead of holding the CUDA context lock, but leaves the shortcut as it is, so
+  without #61612 it does not fix this
+Cut-against: 0.32.0
+Retires-when: the pin that carries #61612, or another change that keeps the barrier under async scheduling
+
+--- exported from f1dfe0337 (vllm-pr61612-flashinfer-async-barrier); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
+index f6c3e262d..462a85215 100755
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -748,6 +748,7 @@
+         self.model_config = vllm_config.model_config
+         self.attention_config = vllm_config.attention_config
+         self._num_speculative_tokens = vllm_config.num_speculative_tokens
++        self._async_scheduling = vllm_config.scheduler_config.async_scheduling or False
+         self._workspace_buffer = None
+         self._prefill_wrapper: (
+             BatchPrefillWithPagedKVCacheWrapper | BatchDCPPrefillWrapper | None
+@@ -1509,9 +1510,14 @@
+         if needs_seq_lens_cpu:
+             if (
+                 self._num_speculative_tokens == 0
++                and not self._async_scheduling
+                 and common_attn_metadata.seq_lens_cpu_upper_bound is not None
+             ):
+                 # No speculative token accounting, so the upper bound is exact.
++                # This shortcut is safe only when the scheduler is synchronous:
++                # with async scheduling the CPU may plan step N+1 while step N's
++                # pinned workspace copy is still in flight, causing the GPU to
++                # read a step's plan data. See #61239.
+                 seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
+             else:
+                 with gpu_sync_allowed():

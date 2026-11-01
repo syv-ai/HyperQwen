@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Offer compute or hardware
+    url: https://github.com/syv-ai/HyperQwen/issues/new?title=compute%20offer
+    about: Credits, a box we can SSH into, or an architecture you can lend time on.
+  - name: Fund rented GPU hours
+    url: https://ko-fi.com/mhenrichsen
+    about: Goes to cards this project does not own; the runs get written up here.

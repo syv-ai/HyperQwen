@@ -1,0 +1,99 @@
+name: Field report (a run on your hardware)
+description: Numbers from a card this repo cannot test on. Partial runs welcome.
+title: "Field report: <card> — <what you ran>"
+labels: ["field-report"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The protocol is in the README under
+        [Field tests](https://github.com/syv-ai/HyperQwen#field-tests-wanted).
+        Short version: start the server, run the harness **twice**, keep the
+        second run, then check quality. Anything less than the full protocol is
+        still worth posting — fill in what you have and say what you skipped.
+  - type: input
+    id: card
+    attributes:
+      label: Card, and how many
+      description: Include the architecture if you know it (sm80/86/89/90/120).
+      placeholder: 1x RTX A4000 16 GB (sm86)
+    validations:
+      required: true
+  - type: input
+    id: power
+    attributes:
+      label: Power limit during the run
+      description: |
+        `nvidia-smi -q -d POWER | grep "Power Limit"`. This is the single most
+        common reason two runs disagree — a 3090 at 200 W measures its power cap,
+        not this stack (33% slower than at 250 W).
+      placeholder: 250 W (nvidia-smi -pl 250)
+    validations:
+      required: true
+  - type: input
+    id: stack
+    attributes:
+      label: Driver, CUDA, OS, and container or venv
+      placeholder: 580.65, CUDA 13.0, Ubuntu 24.04 bare metal / Docker / WSL2
+    validations:
+      required: true
+  - type: input
+    id: rev
+    attributes:
+      label: Commit you ran
+      description: "`git rev-parse --short HEAD`, or the image tag."
+      placeholder: 9b47388
+    validations:
+      required: true
+  - type: dropdown
+    id: setup
+    attributes:
+      label: Which setup
+      description: The letters from the README decision tree.
+      options:
+        - A — batch
+        - B — single, default (SPEC=dflash2 PREFIX_CACHE=1)
+        - C — reproduction (DFLASH_TOKENS=15)
+        - D — long context (SPEC=mtp CTX=long)
+        - E — huge context (CTX=huge)
+        - something else (describe below)
+    validations:
+      required: true
+  - type: textarea
+    id: rows
+    attributes:
+      label: Harness output — the second run
+      description: |
+        The `ROW` lines from `bash bench/run_benchmarks.sh <mode>`. The first run
+        after a start includes JIT warmup and reads 30-50% low, so post the
+        second. If you measured with your own client instead, say so here and
+        give the prompt shape, output length and how you define tok/s — it will
+        be listed as an independent report rather than a table row.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: quality
+    attributes:
+      label: Quality check
+      description: |
+        With the server running, use
+        `docker compose exec single venv/bin/python bench/quality_battery.py mycard --gsm-only`
+        (about 5 minutes). For a venv install use
+        `venv/bin/python bench/quality_battery.py mycard --gsm-only`.
+        Replace `mycard` with any label for this run, such as `rtx3090-250w`;
+        it names the result file, not a model. Use your Compose service name
+        if it is not `single`. Download the GSM8K data first using the
+        [README commands](https://github.com/syv-ai/HyperQwen#field-tests-wanted).
+        A fast server that emits garbage is worth nothing, and a quantization
+        or kernel bug on new hardware shows up here first. Every shipped config
+        reads 95.0-96.5% on this harness.
+      render: text
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything that did not work
+      description: |
+        Build failures, wrong-looking output, things the docs got wrong on your
+        platform. This is often the more useful half of the report — several
+        entries in docs/gotchas.md started as one line in an issue like this.

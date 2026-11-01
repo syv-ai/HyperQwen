@@ -1,45 +1,30 @@
 """API feature smoke test against the running server: the request-level features a different
 model runner could break (logprobs, n, stop, seeds, structured outputs, penalties, streaming,
-thinking, prompt_logprobs, a 20k-token prompt). Prints PASS/FAIL per feature.
+thinking, prompt_logprobs, a 20k-token prompt). Prints PASS/FAIL per feature, and exits 1
+unless all of them pass. It exits 2 when no request reaches a server.
 
-  venv/bin/python bench/api_smoke.py          # key from api_key.txt or VLLM_API_KEY, PORT=18020
+  venv/bin/python bench/api_smoke.py          # server and key from bench/harness.py (PORT=18020 by default)
 """
-import json, os, sys, time, urllib.request
+import json, sys, time, urllib.request
 
-HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
-def _key(path):  # a key is optional; keyless servers ignore the header
-    try:
-        return open(path).read().strip()
-    except OSError:
-        return ""
-KEY = os.environ.get("VLLM_API_KEY") or _key(os.path.join(REPO, "api_key.txt"))
-PORT = os.environ.get("PORT", "18020")
-URL = f"http://127.0.0.1:{PORT}/v1/chat/completions"
-URLC = f"http://127.0.0.1:{PORT}/v1/completions"
-
-
-def post(url, payload, stream=False):
-    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-                                 headers={"Content-Type": "application/json", "Authorization": "Bearer " + KEY})
-    r = urllib.request.urlopen(req, timeout=600)
-    if stream:
-        return r.read().decode()
-    return json.loads(r.read())
+import harness
 
 
 def chat(msg, **kw):
-    p = {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": msg}], "max_tokens": 64,
+    p = {"messages": [{"role": "user", "content": msg}], "max_tokens": 64,
          "chat_template_kwargs": {"enable_thinking": False}}
     p.update(kw)
-    return post(URL, p)
+    return harness.post("/v1/chat/completions", p, timeout=600)
 
 
-results = []
+results, unreached = [], []
 def check(name, fn):
     try:
         ok, info = fn()
     except Exception as e:  # noqa
         ok, info = False, f"{type(e).__name__}: {str(e)[:200]}"
+        if type(e) is urllib.error.URLError:  # its subclass HTTPError means a server answered
+            unreached.append(name)
     results.append((name, ok, info)); print(("PASS " if ok else "FAIL ") + name + " — " + str(info)[:200], flush=True)
 
 
@@ -72,35 +57,44 @@ def t_min_tokens_penalty():
     r = chat("Sig hej.", temperature=0.7, min_tokens=30, presence_penalty=1.2, frequency_penalty=0.3, max_tokens=48)
     return r["usage"]["completion_tokens"] >= 30, r["usage"]
 def t_stream():
-    body = post(URL, {"model": "qwen3.8-27b", "messages": [{"role": "user", "content": "Skriv to sætninger om vejret."}],
-                      "max_tokens": 48, "stream": True, "chat_template_kwargs": {"enable_thinking": False}}, stream=True)
-    chunks = [l for l in body.splitlines() if l.startswith("data: ") and "[DONE]" not in l]
-    return len(chunks) > 5, f"{len(chunks)} chunks"
+    n = sum(1 for _ in harness.stream("/v1/chat/completions", {"messages": [{"role": "user", "content": "Skriv to sætninger om vejret."}],
+                                         "max_tokens": 48, "stream": True, "chat_template_kwargs": {"enable_thinking": False}}, timeout=600))
+    return n > 5, f"{n} chunks"
 def t_thinking():
     r = chat("Hvad er 17*23? Svar kort.", temperature=0.6, max_tokens=512, chat_template_kwargs={"enable_thinking": True})
     m = r["choices"][0]["message"]
     return ("391" in (m.get("content") or "")) and bool(m.get("reasoning_content") or m.get("reasoning")), (m.get("content") or "")[:60]
 def t_completions_echo_logprobs():
-    r = post(URLC, {"model": "qwen3.8-27b", "prompt": "København er hovedstaden i", "max_tokens": 4, "temperature": 0,
-                    "echo": True, "logprobs": 1})
+    r = harness.post("/v1/completions", {"prompt": "København er hovedstaden i", "max_tokens": 4,
+                                         "temperature": 0, "echo": True, "logprobs": 1}, timeout=600)
     lp = r["choices"][0]["logprobs"]
     return len(lp["tokens"]) > 4 and lp["token_logprobs"][0] is None, lp["tokens"][:6]
 def t_long_ctx_greedy():
     doc = ("Danmark er et land i Nordeuropa. " * 40 + "\n") * 60   # ~20k tokens
-    t0 = time.time()
+    t0 = time.perf_counter()
     r = chat(doc + "\nHvor mange gange står ordet Nordeuropa i teksten ovenfor, cirka? Svar kort.", temperature=0, max_tokens=32)
-    return r["usage"]["prompt_tokens"] > 12000, f"prompt={r['usage']['prompt_tokens']} tok, {time.time()-t0:.1f}s, {r['choices'][0]['message']['content'][:50]!r}"
-def t_thinking_budget_rejected():
-    try:
-        chat("Hej", max_tokens=8, thinking_token_budget=10)  # V2 runner: expected 400
-        return False, "accepted (unexpected)"
-    except urllib.error.HTTPError as e:
-        return e.code == 400, f"HTTP {e.code} (expected 400 on the V2 runner)"
+    return r["usage"]["prompt_tokens"] > 12000, f"prompt={r['usage']['prompt_tokens']} tok, {time.perf_counter()-t0:.1f}s, {r['choices'][0]['message']['content'][:50]!r}"
+def t_thinking_budget():
+    # vLLM 0.30's model runner enforces thinking_token_budget (v1/worker/gpu/sample/thinking_budget.py),
+    # so the old expectation of a 400 is gone. A control without the budget shows the cap binds.
+    def reasoning(**kw):
+        r = chat("Hvad er 17*23? Svar kort.", temperature=0, max_tokens=512,
+                 chat_template_kwargs={"enable_thinking": True}, **kw)
+        details = r["usage"].get("completion_tokens_details") or {}
+        return details.get("reasoning_tokens"), (r["choices"][0]["message"].get("content") or "").strip()
+    free, _ = reasoning()
+    capped, answer = reasoning(thinking_token_budget=16)
+    ok = free is not None and capped is not None and capped <= 16 < free and bool(answer)
+    return ok, f"reasoning {free} tokens unbudgeted, {capped} with budget 16, answer {answer[:20]!r}"
 
 for name, fn in [("greedy determinism", t_greedy_det), ("seeded sampling determinism", t_seed), ("logprobs/top_logprobs", t_logprobs),
                  ("n=2", t_n2), ("stop strings", t_stop), ("json_schema structured output", t_json_schema),
                  ("min_tokens + penalties", t_min_tokens_penalty), ("streaming", t_stream), ("thinking mode", t_thinking),
                  ("completions echo+logprobs (prompt_logprobs)", t_completions_echo_logprobs), ("20k-token prompt", t_long_ctx_greedy),
-                 ("thinking_token_budget -> 400", t_thinking_budget_rejected)]:
+                 ("thinking_token_budget enforced", t_thinking_budget)]:
     check(name, fn)
 print("SUMMARY", sum(1 for _, ok, _ in results if ok), "/", len(results), "passed")
+if len(unreached) == len(results):
+    print(f"INVALID: no server answered at {harness.base_url()}, so there is no verdict.")
+    sys.exit(2)
+sys.exit(0 if all(ok for _, ok, _ in results) else 1)
