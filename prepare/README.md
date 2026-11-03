@@ -60,6 +60,20 @@ capped at `--script-budget` rows (default 16,384, +41.9 MB of head on this check
 file it writes. Measurements and the reasoning behind the cap: gotcha 61, and the
 syv-ai/HyperQwen#196 thread.
 
+`--stats` alone reports the tokenizer's script composition; selection columns are `-`
+until `--ids` supplies a list. With `--ids` and `--corpus`, it also counts the corpus
+and reports that list's held-out token coverage (every tenth text in each file),
+including the covered/total token counts. No held-out tokens means `n/a`, not 0%.
+For example:
+
+```bash
+$V prepare/build_draft_vocab.py $M --ids prepare/draft_vocab_ids.json --stats --corpus ru.jsonl
+```
+
+Statistics leave the model unchanged. With `--add-scripts`, the held-out statistic
+describes the base list; the subsequent script table describes the variant written
+to `--out`. An ordinary `--ids` head build still ignores `--corpus`.
+
 ## A different checkpoint
 
 `quant_heads_stream.py` does the work of `quant_lm_head.py` + `quant_embed.py` +

@@ -146,21 +146,27 @@ def report(whole, kindset, nrows, ids, nfrag, row_bytes=None):
     print(f"\nvocab rows {nrows}  whole-UTF-8 {sum(whole)} ({100*sum(whole)/nrows:.1f}%)  fragments {nfrag}")
     if ids is not None:
         print(f"id list: {len(ids)} ids\n")
-        print("%-11s %8s %10s %12s %11s %10s" % ("script", "vocab", "whole", "in list", "% of script", "% of list"))
-        print("-" * 66)
-        rows = []
-        for name in SCRIPTS:
-            tot = sum(1 for i in range(nrows) if name in kindset[i])
-            w = sum(1 for i in range(nrows) if name in kindset[i] and whole[i])
-            ins = sum(1 for i in ids if i < nrows and name in kindset[i])
-            rows.append((name, tot, w, ins))
+    print("%-11s %8s %10s %12s %11s %10s" % ("script", "vocab", "whole", "in list", "% of script", "% of list"))
+    print("-" * 66)
+
+    def row(name, tot, w, ins):
+        if ids is None:
+            print("%-11s %8d %10d %12s %11s %10s" % (name, tot, w, "-", "-", "-"))
+        else:
             print("%-11s %8d %10d %12d %10.1f%% %9.1f%%" % (
                 name, tot, w, ins, 100 * ins / max(1, tot), 100 * ins / max(1, len(ids))))
-        for gname, members in GROUPS.items():
-            grp = [r for r in rows if r[0] in members]
-            t, w, i = (sum(x[j] for x in grp) for j in (1, 2, 3))
-            print("%-11s %8d %10d %12d %10.1f%% %9.1f%%" % (
-                gname.upper() + " total", t, w, i, 100 * i / max(1, t), 100 * i / max(1, len(ids))))
+
+    rows = []
+    for name in SCRIPTS:
+        tot = sum(1 for i in range(nrows) if name in kindset[i])
+        w = sum(1 for i in range(nrows) if name in kindset[i] and whole[i])
+        ins = sum(1 for i in ids if i < nrows and name in kindset[i]) if ids is not None else 0
+        rows.append((name, tot, w, ins))
+        row(name, tot, w, ins)
+    for gname, members in GROUPS.items():
+        grp = [r for r in rows if r[0] in members]
+        t, w, i = (sum(x[j] for x in grp) for j in (1, 2, 3))
+        row(gname.upper() + " total", t, w, i)
     if row_bytes:
         print(f"\nhead row {row_bytes} B  ->  +16,384 rows = +{16384*row_bytes/1e6:.1f} MB VRAM")
 
@@ -209,9 +215,9 @@ base_ids = None
 if ids_file:
     base_ids = sorted(set(json.load(open(ids_file))))
     print(f"using {len(base_ids)} ids from {ids_file}")
-    # A variant union needs the corpus to rank the added rows by, so the base
-    # list no longer cancels it; a plain --ids run still ignores the corpus.
-    if not add_scripts:
+    # Statistics need the corpus to measure held-out coverage, and a variant
+    # union needs it to rank added rows. A plain --ids build still ignores it.
+    if not (add_scripts or stats):
         corpus = []
 ids = base_ids
 for i, path in enumerate(corpus):
@@ -232,6 +238,14 @@ if stats:
     except Exception:
         pass
     report(whole, kindset, len(kindset), ids, nfrag, row_bytes)
+    if ids is not None and corpus:
+        selected = set(ids)
+        nheld = sum(held.values())
+        if nheld:
+            covered = sum(c for t, c in held.items() if t in selected)
+            print(f"held-out token coverage {100 * covered / nheld:.2f}% ({covered}/{nheld} tokens)")
+        else:
+            print("held-out token coverage n/a (no held-out tokens)")
     if not add_scripts:
         sys.exit(0)
 
