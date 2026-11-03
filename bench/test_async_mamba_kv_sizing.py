@@ -134,6 +134,7 @@ def replay():
     m.req_to_blocks = defaultdict(list)
     m._allocated_block_reqs = set()
     m._checkpoints = {}
+    m._periodic_checkpoints = {}
     m._partial_hit_reqs = {}
     m.last_state_block_idx = {}
     m._num_retired_blocks = {}
