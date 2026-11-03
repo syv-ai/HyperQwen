@@ -174,6 +174,7 @@ PREFILL_ATTN=${PREFILL_ATTN-}
 [ -n "$PREFILL_ATTN" ] && export VLLM_PREFILL_ATTN=$PREFILL_ATTN
 # 0.93 here, NOT batch mode's 0.972: the DeltaNet workspace in the MTP decode
 # path allocates beyond the startup memory profile (docs/gotchas.md, gotcha 4).
+USER_GPU_UTIL=${GPU_UTIL:-}
 GPU_UTIL=${GPU_UTIL:-0.93}
 API_SERVERS=${API_SERVERS:-1}
 # CTX=fast (default): bf16 KV via FlashAttention, ~64k context, 4 drafts (~+7%).
@@ -359,6 +360,37 @@ if [ "$PTH_FA" = 1 ]; then
     && echo "[start_qwen] PTH_FA=1: FA2_FP8KV=0, PTH_FA=1 overrides the 8.6 default (fp8 KV on the FA2 plugin)" >&2
 elif [ "$PTH_FA" != 0 ]; then
   echo "PTH_FA=$PTH_FA: set it to 0 or 1" >&2
+  exit 1
+fi
+# LSA=1 (SPEC=mtp CTX=long only; resolve_config.sh refuses anything else and sets PTH_FA=0): D-LSA flat
+# (Latent Sparse Attention, arXiv 2610.42147) on the 16 full-attention layers, through the lsa/ plugin.
+# The KV cache is the PTH_FA arm's int8_per_token_head, on the CUSTOM backend, which the plugin serves as
+# vLLM's Triton backend plus the LSA read: past 4,612 tokens of context a query reads its 4 sinks, its
+# 512-key window and the 4,096 keys of the top-1,024 Ward buckets its distilled index query scores best,
+# instead of every key. The MTP drafter's layer is not in the map and keeps the dense read. The index
+# (128 B a token a layer plus the buckets) is allocated beside the KV pool, ~7% of it, so the default
+# GPU_UTIL drops by 0.02 to leave room. On the 3090: -13% cold TTFT at 137k, decode even with dense,
+# +19% TTFT at 31k (lsa/README.md has the table and the limits).
+LSA=${LSA:-0}
+if [ "$LSA" = 1 ]; then
+  case " ${EXTRA_ARGS:-} " in
+    *" --attention-backend"*|*" --kv-cache-dtype"*|*" --speculative-config"*)
+      echo "LSA=1 sets --attention-backend, --kv-cache-dtype and the speculative config itself;" >&2
+      echo "  EXTRA_ARGS carries one of them and would override it. Remove it from EXTRA_ARGS." >&2
+      exit 1 ;;
+  esac
+  "$REPO/venv/bin/python" -c 'import hyperqwen_lsa.settings' >/dev/null 2>&1 \
+    || { echo "LSA=1 needs the lsa/ plugin in the venv: bash lsa/install.sh" >&2; exit 1; }
+  . "$REPO/lsa/PIN"
+  export LSA_MAP=${LSA_MAP:-$REPO/models/lsa/$LSA_MAP_NAME}
+  [ -f "$LSA_MAP" ] || { echo "LSA=1 needs the distilled map $LSA_MAP: bash lsa/install.sh --map-only" >&2; exit 1; }
+  export LSA=1
+  ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head"
+  PTH_SPEC_BACKEND=',"attention_backend":"CUSTOM"'
+  [ -n "$USER_GPU_UTIL" ] || GPU_UTIL=$(awk -v u="$GPU_UTIL" 'BEGIN { printf "%.2f", u - 0.02 }')
+  echo "[start_qwen] LSA=1: D-LSA flat on the full-attention layers (lsa/), int8_per_token_head KV on CUSTOM, map $LSA_MAP, GPU_UTIL=$GPU_UTIL" >&2
+elif [ "$LSA" != 0 ]; then
+  echo "LSA=$LSA: set it to 0 or 1" >&2
   exit 1
 fi
 if [ "$SPEC" = "dflash2" ]; then

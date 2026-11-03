@@ -120,6 +120,10 @@ if [ "${TRANSLATE_EFFORT:-1}" != "0" ]; then
   fi
   python prepare/translate_chat_template.py "${DIRS[@]}"
 fi
+# LSA=1 reads the D-LSA map (6 MB, checked against lsa/PIN) from the models volume.
+if [ "${LSA:-0}" = 1 ]; then
+  MODELS=$MODELS_ROOT bash lsa/install.sh --map-only
+fi
 LEFT=$(state | sed 's/\bdflash2\b//')
 [ -z "${LEFT// /}" ] || { echo "prepare: steps still missing after run: $LEFT"; exit 1; }
 echo "prepare: model ready at $BASE$([ "${FAST_VARIANT:-1}" != 0 ] && echo " (+ $BASE-fast)")"

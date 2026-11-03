@@ -42,6 +42,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /
 COPY xgrammar/ xgrammar/
 RUN bash xgrammar/install.sh
 
+# The LSA plugin (lsa/, optional: LSA=1, SPEC=mtp CTX=long): Python and Triton, nothing compiles. The
+# distilled map it reads goes in the models volume, fetched by docker/prepare.sh when LSA=1.
+COPY lsa/ lsa/
+RUN PY=venv/bin/python bash lsa/install.sh --no-map
+
 COPY . .
 # patches/apply.sh reads the apply order from patches/series and applies it with --fuzz 0:
 # a few patches carry hunk context that an earlier patch adds, so the glob order of
@@ -63,7 +68,8 @@ RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_async_mamba_kv_sizing.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_continuous_stream_usage.py; \
-    venv/bin/python bench/test_gdn_ba_lora.py
+    venv/bin/python bench/test_gdn_ba_lora.py; \
+    CUDA_VISIBLE_DEVICES= venv/bin/python lsa/tests/gate_test.py
 
 # HOME is a volume: torch.compile cache (~/.cache/vllm), Triton (~/.triton),
 # FlashInfer JIT (~/.cache/flashinfer), HF hub cache.
