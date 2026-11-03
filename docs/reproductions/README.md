@@ -99,6 +99,7 @@ will not have in production.
 | RTX 4500 Ada 24 GB (sm89) | 210 W | 77.0 tok/s | setup B (`SPEC=dflash2 PREFIX_CACHE=1`), greedy (71.0 at the default temperature), `tok/step` 3.29 / 3.06, main at ce9615c, Docker on Ubuntu 24.04, driver 615.71. C8 428.3 greedy. A 210 W workstation board, so this is a power-capped number (see the note above) | [#393](https://github.com/syv-ai/HyperQwen/issues/393) |
 | RTX 5090 32 GB (sm120) | 600 W (the default and maximum) | **260.4 tok/s** | setup B (`SPEC=dflash2 PREFIX_CACHE=1`, `CTX=fast`), greedy (237.0 at the default temperature), `tok/step` 3.32 / 3.07, vLLM 0.31.0 image at ce9615c, Docker on CachyOS, driver 615.78. 68,605-token bf16 pool. C8 1,117 greedy / 991 default, mean TTFT about 1.06 s at C8. 64/64 requests completed. The setup A follow-up is in the same thread | [#403](https://github.com/syv-ai/HyperQwen/issues/403) |
 | H200 141 GB SXM (sm90) | 700 W (the default, no cap) | **263.2 tok/s** | setup B, greedy (258.4 at the default temperature), `tok/step` 3.19 / 3.24, GSM8K 0.955 over 200 (the 3090 reference's number), main at ce9615c, driver 580.105 / CUDA 13.0, Ubuntu 22.04 native venv. About 2x the 3090 at the default power. C8 1,307 greedy. Long context on this card is a separate finding: with `VLLM_SPEC_DECODE_ATTN=1` decode fell 36% at 100K and 68% at 600K against stock attention (vLLM 0.32 with the series ported), neutral below that; see [#405](https://github.com/syv-ai/HyperQwen/issues/405) | [#406](https://github.com/syv-ai/HyperQwen/issues/406) |
+| RTX 3090, setup B on vLLM 0.32, with and without gpu-unlock | 250 W (300 and 350 W ladders in the notes) | 136.2 tok/s locked, 138.3 unlocked | `SPEC=dflash2 PREFIX_CACHE=1`, greedy (129.4 / 124.7 at the default temperature), `tok/step` 3.36 in both arms, GSM8K 0.965 locked / 0.970 unlocked over 200, main at f382342, driver 615.71 / CUDA 13.1, Ubuntu 26.04, Docker. One box, one commit, one variable. Unlocked over locked, greedy, at 250 W: C1 +1.5%, C2 +4.5%, C4 +16.3%, C8 +21.1% (387.8 to 469.8), and C8 mean TTFT 2.4 s to 1.8 s. At 300 W: +1.3 / -0.7 / +28.5 / +20.3%. At 350 W: +1.2 / +8.0 / +27.4 / +35.4%. Locked C1 goes from 136.2 at 250 W to 145.3 at 350 W, the burst effect in the power note above. The shape #402 found: nothing at C1, the gain at concurrency. gpu-unlock is a third-party out-of-tree driver module and this repo neither ships nor tests it | [#428](https://github.com/syv-ai/HyperQwen/issues/428) (locked), [#427](https://github.com/syv-ai/HyperQwen/issues/427) (unlocked) |
 
 Batch profile (setup A), `bench/run_benchmarks.sh batch`, 64 concurrent on
 128 in / 512 out, aggregate decode:
@@ -291,6 +292,33 @@ other only loosely, and not rows for either table above:
   raising WSL2 `processors` from 16 to 24 in `.wslconfig` improved prefill on
   this card in the reporter's earlier comparisons
   ([#401](https://github.com/syv-ai/HyperQwen/issues/401)).
+- **RTX 3090, Windows 11 / WSL2 + Docker Desktop, `SPEC=mtp CTX=long MAX_LEN=180222`
+  at 350 W (main at f382342, vLLM 0.32)**: a long-context fidelity battery at
+  temperature 0 with thinking off. A needle at ~90% depth came back verbatim at
+  33k, 56k, 84k, 112k, 123k, 171k and 178k prompt tokens; 178k is 98.8% of the
+  window. A prompt one token over the window (180,223) gets an HTTP 400 that
+  names the limit, not a silent truncation. 20 values planted at 5-95% depth of
+  a 117,694-token document came back 20/20 exact. A 16,384-token generated table
+  (`ROW n = (n×7) mod 1000`) had 0 errors in 1,457 complete lines, at 167.9
+  tok/s. Cold prefill ran at 1,089 tok/s at 33k, 838 at 112k and ~707 at
+  171-178k (251.9 s to first token at 178k). The 474 tok/s at 123k and ~234 on
+  the multi-fact document are single runs, which the reporter reads as outliers
+  under sustained draw at the power cap (~345 W at 69 °C). MTP accepted 0.83 of
+  its drafted tokens over the window
+  ([#429](https://github.com/syv-ai/HyperQwen/issues/429)).
+- **RTX 3090, gpu-unlock on the MTP arm (`SPEC=mtp`, k=3, thinking off)**: decode
+  one request at a time went from 111.1 to 113.4 tok/s (+2.1%, `tok/step` 3.01 in
+  both arms). Chunked-prefill TTFT went from 0.87 to 0.65 s at ~1k, 3.53 to
+  2.80 s at ~4k and 12.78 to 10.13 s at ~16k, 20-25% less time to first token.
+  This is not the harness, so it is not a table row. It agrees with #402 and
+  #427/#428 on decode, and adds that prefill is where a single stream sees the
+  module. That is what the module does: it lifts GeForce's half-rate cap on
+  FP16/BF16 tensor math with FP32 accumulation, so compute-bound work (prefill,
+  and decode at C4-C8) gains, while batch-1 decode is bandwidth-bound and does
+  not. It is a Linux host kernel module that loads at boot, before the NVIDIA
+  driver. The stack needs no change to benefit from it and a container image
+  cannot install it, so this repo neither ships nor tests it
+  ([#430](https://github.com/syv-ai/HyperQwen/issues/430)).
 - **Dual-GPU reports**: the controlled 1-vs-2×3090 A/B in
   [#40](https://github.com/syv-ai/HyperQwen/issues/40) (+16–35%,
   161.6 C1 greedy at 275 W, PCIe x8 without NVLink; independently reproduced
