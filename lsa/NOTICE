@@ -1,0 +1,12 @@
+hyperqwen_lsa - D-LSA (flat) for vLLM, part of HyperQwen (Apache-2.0).
+
+The design, its defaults and the algorithms in python/hyperqwen_lsa/core.py (Ward clustering of pools,
+bucket centroids and members, the flat read: score, pick top-p, expand to top-k beside the sinks and
+the window) are ported from Latent Sparse Attention:
+
+  Kubicek et al., "Latent Sparse Attention: Towards Subquadratic Ultra-Long Context Attention",
+  arXiv:2610.42147, 2026.
+  https://github.com/Prefrontal-AI/latent-sparse-attention (Apache-2.0), at the commit in PIN.
+
+The distilled map read at run time (models/lsa/, fetched by install.sh) is an asset of that
+repository's release d-lsa-weights-v1 and is not redistributed here.

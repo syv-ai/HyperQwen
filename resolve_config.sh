@@ -77,6 +77,20 @@ resolve_effective_config() {
     else case " ${EXTRA_ARGS:-} " in
       *"--kv-offloading-size"*|*"--kv-transfer-config"*) _fa2_tier="a KV connector in EXTRA_ARGS (--kv-offloading-size/--kv-transfer-config)" ;;
     esac; fi
+    # LSA=1 (D-LSA flat, lsa/) runs only on SPEC=mtp CTX=long, on the arm's int8_per_token_head cache, as
+    # the CUSTOM backend -- the slot pthfa/ also takes -- so it settles PTH_FA (0, and an explicit 1 is
+    # refused) and FA2_FP8KV (unused on mtp, an explicit 1 is refused) before their defaults below.
+    case "${LSA:-}" in ""|0|1) ;; *) _refuse "LSA=$LSA: set it to 0 or 1" ;; esac
+    if [ "${LSA:-0}" = 1 ]; then
+      [ "$spec" = mtp ] && [ "$ctx" = long ] \
+        || _refuse "LSA=1 runs only on SPEC=mtp CTX=long (got SPEC=$spec CTX=$ctx)"
+      [ "${PTH_FA:-0}" != 1 ] \
+        || _refuse "LSA=1 and PTH_FA=1 both take the CUSTOM attention backend; unset PTH_FA (LSA=1 sets it to 0)"
+      [ "${FA2_FP8KV:-0}" != 1 ] || _refuse "LSA=1 with FA2_FP8KV=1: FA2_FP8KV is a SPEC=dflash2 setting"
+      [ -z "$_fa2_tier" ] || _refuse "LSA=1 with $_fa2_tier is untested; refusing"
+      export PTH_FA=0
+      PTH_FA_SRC="0: LSA=1 takes the CUSTOM backend"
+    fi
     # The GPU's compute capability, asked at most once: the PTH_FA and FA2_FP8KV defaults below both
     # depend on it. nvidia-smi ignores CUDA_VISIBLE_DEVICES and orders GPUs differently from CUDA, so
     # with no selection every GPU it lists must agree.
@@ -160,6 +174,8 @@ resolve_effective_config() {
     [ -z "${SPEC:-}" ] || _warn "SPEC=$SPEC is set but batch mode ignores it (SPEC is a single-user control)"
     [ -z "${PTH_FA:-}" ] || [ "$PTH_FA" = 0 ] \
       || _warn "PTH_FA=$PTH_FA is set but batch mode ignores it (PTH_FA is a single-user control, CTX=long with SPEC=mtp or dflash2)"
+    [ -z "${LSA:-}" ] || [ "$LSA" = 0 ] \
+      || _warn "LSA=$LSA is set but batch mode ignores it (LSA is a single-user control, SPEC=mtp CTX=long)"
   fi
 
   # 2. EXTRA_ARGS shadow warnings. The launchers expand EXTRA_ARGS after their
@@ -196,6 +212,9 @@ resolve_effective_config() {
         dflash2/long) _pth_on=": target and DFlash2 drafter" ;;
       esac
       echo "[effective-config] PTH_FA=1 (${PTH_FA_SRC:-explicit}; int8_per_token_head KV on the CUSTOM backend, pthfa/$_pth_on)"
+    fi
+    if [ "$mode" = "single" ] && [ "${LSA:-0}" = 1 ]; then
+      echo "[effective-config] LSA=1 (D-LSA flat on the full-attention layers; int8_per_token_head KV on the CUSTOM backend, lsa/)"
     fi
     echo "[effective-config] MODEL=$_model PORT=$_port"
     echo "[effective-config] MAX_LEN=${MAX_LEN:-<profile default>} MAX_SEQS=${MAX_SEQS:-<profile default>}"

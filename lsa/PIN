@@ -1,0 +1,7 @@
+# Upstream of the port (core.py, kernels.py hold its flat design to lsa.core.reference / lsa.core.ward)
+LSA_REPO=https://github.com/Prefrontal-AI/latent-sparse-attention
+LSA_COMMIT=906be195c1052aaa74f95852ad1917ce1926ba64
+# The distilled map Qwen3.8-27B's D-LSA (Flat) is served with in the paper (configs/evaluation/*/qwen38_27b/_base.yaml)
+LSA_MAP_RELEASE=d-lsa-weights-v1
+LSA_MAP_NAME=qwen38_27b__long-16k-1M-heavy-key-and-query-d2048.pt
+LSA_MAP_SHA256=24cee934f969756db228a8df7f2bc7613979b63ac3b1d5ac3d9aa42e4339bb9b
