@@ -1491,7 +1491,10 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     tensor. The Cyrillic variant
     recovers the full head's Russian figure for +47.6 MB of int4 head. So for
     Russian output, `MTP_DRAFT_VOCAB=0` is the simplest fix and the variant list the
-    smaller one. How much it matters depends on the mix: in the reporter's agent
+    smaller one. A ready-made variant is in-tree: `prepare/draft_vocab_ids_cyrillic.json`
+    (build the head with `--ids prepare/draft_vocab_ids_cyrillic.json`; the sliced int4 head
+    is also published at https://huggingface.co/sanasol2008/qwen3.8-27b-draft-vocab-cyrillic).
+    How much it matters depends on the mix: in the reporter's agent
     traffic reasoning (64% of output) and tool calls (26%) are almost all English and
     only the final answer (10%, one third Cyrillic) is Russian, so the variant is
     worth about +80% on the part a person reads and a few percent overall. The
