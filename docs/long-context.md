@@ -856,3 +856,13 @@ Measured on an RTX 4090 (24 GB) with `bench/quality_battery.py int4kv --gsm-only
 the other configurations read (95.0-96.5%, docs/quality.md). Tool calling
 round-trips correctly and the lookup lane works; the rest of this configuration
 is still experimental.
+
+
+### Sparse CPU offload with a sliding-window drafter
+
+For a hybrid Mamba target with an Eagle-family drafter, the reusable recurrent
+state can precede the prompt's final hash boundary. Sparse CPU retention must
+also keep the drafter's sliding-window history at that earlier boundary.
+`offload-mamba-swa-replay-boundaries.patch` retains that history as well as the
+existing prompt/shared-prefix tails. Without it, a stored prefix can miss the
+joint lookup despite fitting in the CPU tier (#405). Dense retention is unchanged.
