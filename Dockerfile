@@ -59,6 +59,9 @@ RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm
     bash patches/apply.sh "$SP"; \
     bash kvarn/install.sh; \
     bash verify.sh --install; \
+    venv/bin/python bench/test_gdn_checkpoint_safety.py; \
+    venv/bin/python bench/test_gdn_multi_checkpoint.py; \
+    venv/bin/python bench/test_gdn_checkpoint_export.py; \
     venv/bin/python bench/test_offload_mamba_swa_boundaries.py; \
     venv/bin/python bench/test_dflash_context_capacity.py; \
     venv/bin/python bench/mq3d_scratch_pool_test.py; \
