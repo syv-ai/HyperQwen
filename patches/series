@@ -70,3 +70,4 @@ dflash-context-capacity.patch
 async-mamba-kv-sizing.patch
 continuous-stream-usage.patch
 offload-mamba-swa-replay-boundaries.patch
+vllm-pr64137-logits-stats-no-specialize.patch

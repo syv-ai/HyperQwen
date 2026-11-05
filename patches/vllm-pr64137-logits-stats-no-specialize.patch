@@ -1,0 +1,46 @@
+Ports upstream PR vllm-project/vllm#64137 (merged 2026-10-29, after the 0.33.0 branch) to this pin.
+
+On 0.33.0, vllm #61451 changed the bonus-logit check in _compute_local_logits_stats_kernel and
+_compute_local_residual_mass_kernel to take num_logits, which changes with the batch, where 0.32.0 passed the
+constant num_speculative_steps. Both are plain @triton.jit kernels, so Triton specializes the integer and compiles
+a new variant when the batch's logit count changes class. The rejection-sampler warm-up compiles one request's
+shape, therefore the first concurrent requests compiled the kernel again inside serving: on an RTX 3090 with the
+single-user launcher's defaults and a cold cache, the port logged _compute_local_logits_stats_kernel as a JIT
+compilation during inference about 7 s into its first 64-way burst, and 0.32.0 did not.
+
+The PR marks num_logits do_not_specialize on both kernels, so one compiled kernel serves every batch.
+
+Applied unchanged: the PR's single hunk set cherry-picks onto 0.33.0 without conflicts.
+
+Kind: fix
+What: the rejection sampler's logits-stats and residual-mass kernels no longer recompile per batch size
+  (num_logits not specialized)
+Upstream: vllm #64137 (merged); the regression is from vllm #61451
+Cut-against: 0.33.0
+Retires-when: the pin that carries #64137
+
+--- exported from d40a644f54 (vllm-pr64137-logits-stats-no-specialize); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu/spec_decode/rejection_sampler_utils.py b/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+index e81d463b51..a54369c65d 100644
+--- a/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
++++ b/v1/worker/gpu/spec_decode/rejection_sampler_utils.py
+@@ -205,7 +205,8 @@
+     return next_local_pos == 0
+ 
+ 
+-@triton.jit
++# num_logits only bounds the bonus-logit lookahead; one kernel serves every value.
++@triton.jit(do_not_specialize=["num_logits"])
+ def _compute_local_logits_stats_kernel(
+     # [num_logits, num_blocks]
+     target_local_argmax_ptr,
+@@ -399,7 +400,7 @@
+         tl.store(cumulative_log_p_ptr + logit_idx, log_p)
+ 
+ 
+-@triton.jit
++@triton.jit(do_not_specialize=["num_logits"])
+ def _compute_local_residual_mass_kernel(
+     # [num_logits, num_blocks]
+     local_residual_mass_ptr,
