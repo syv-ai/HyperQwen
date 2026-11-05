@@ -16,7 +16,18 @@ from types import SimpleNamespace
 from vllm.entrypoints.openai.chat_completion.protocol import ChatCompletionRequest
 from vllm.entrypoints.openai.chat_completion.serving import OpenAIServingChat
 from vllm.outputs import CompletionOutput, RequestOutput
-from vllm.parser.qwen3 import Qwen3Parser
+from vllm.parser.parser_manager import ParserManager
+
+# The class the server composes from the launchers' flags (--reasoning-parser qwen3 --enable-auto-tool-choice
+# --tool-call-parser qwen3_coder --tool-strict-level parameter). On 0.33 a bare Qwen3Parser carries no tool parser,
+# so keeps_tool_calls() is False for it and the stream drops tool calls.
+PARSER_CLS = ParserManager.get_parser(
+    tool_parser_name="qwen3_coder",
+    reasoning_parser_name="qwen3",
+    enable_auto_tools=True,
+    tool_strict_level="parameter",
+    model_name="offline",
+)
 
 
 class CharacterTokenizer:
@@ -73,7 +84,7 @@ async def serve(continuous=True, include_usage=True, include_reasoning=True):
             "continuous_usage_stats": continuous,
         },
     )
-    parser = Qwen3Parser(CharacterTokenizer(), request.tools)
+    parser = PARSER_CLS(CharacterTokenizer(), request.tools)
 
     async def outputs():
         for index, character in enumerate(pieces):
@@ -99,7 +110,7 @@ async def serve(continuous=True, include_usage=True, include_reasoning=True):
         raise AssertionError(str(error)) from error
 
     server = SimpleNamespace(
-        parser_cls=Qwen3Parser,
+        parser_cls=PARSER_CLS,
         _make_parser=lambda *args: parser,
         get_chat_request_role=lambda req: "assistant",
         enable_force_include_usage=False,
