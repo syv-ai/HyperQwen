@@ -15,8 +15,8 @@ manual venv path is for hacking on the stack, or running it bare-metal.
 > with a full RTX 3090 reproduction of the benchmark tables in
 > [docs/reproductions/native-3090.md](reproductions/native-3090.md).
 
-Volta (V100, sm70) and older cards cannot run this stack at all: the CUDA 13.0 build of torch 2.13
-that vLLM 0.31 pins carries kernels for sm_75 and newer only (`torch.cuda.get_arch_list()`), CUDA 13
+Volta (V100, sm70) and older cards cannot run this stack at all: the CUDA 13.0 build of torch 2.14
+that vLLM 0.33 pins carries kernels for sm_75 and newer only (`torch.cuda.get_arch_list()`), CUDA 13
 dropped Volta, and vLLM's Marlin W4A16 kernel needs compute capability 7.5 or newer
 ([#349](https://github.com/syv-ai/HyperQwen/issues/349)). Turing (sm75) is untested.
 
@@ -41,7 +41,7 @@ venv/bin/pip install vllm==0.33.0 huggingface_hub hf_transfer ninja \
 # bench/prefill_ab.sh's decode guard dies with "Please install vllm[bench] for
 # bench support" after the prefill rows have already run.
 # flashinfer-python is NOT listed above on purpose: the vllm wheel pins it exactly
-# (Requires-Dist: flashinfer-python==0.7.0.post1 on 0.32.0 and 0.31.0, ==0.6.18.post1 on
+# (Requires-Dist: flashinfer-python==0.7.2.post1 on 0.33.0, ==0.7.0.post1 on 0.32.0 and 0.31.0, ==0.6.18.post1 on
 # 0.30.0, ==0.6.18 on 0.29.0), so
 # naming it here can only fight that pin. Do not downgrade it to fix a cubin version
 # mismatch: that drags torch back and breaks vLLM's C extension.
