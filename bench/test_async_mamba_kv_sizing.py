@@ -108,6 +108,7 @@ def admit(budget, cfg=None):
 class Pool:
     num_gpu_blocks = 223
     hash_block_size = 832
+    num_hash_lookahead_tokens = 0  # BlockPool's default on 0.33
 
     def __init__(self):
         self.used = 0
@@ -286,10 +287,10 @@ class SizingTests(unittest.TestCase):
         # rounding, override handling, and config construction run installed code.
         with patch.object(planning, "get_kv_cache_groups", return_value=gs):
             with self.assertRaises(ValueError):
-                planning.get_kv_cache_configs(cfg, [specs], [OLD_BUDGET])
+                planning.get_kv_cache_configs(cfg, [specs], [OLD_BUDGET], gs)
             cfg.cache_config.num_gpu_blocks_override = 218
             with self.assertRaises(ValueError):
-                planning.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET])
+                planning.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET], gs)
 
     def test_engine_startup_builds_the_223_block_pool(self):
         cfg, gs = config(), groups()
@@ -299,7 +300,7 @@ class SizingTests(unittest.TestCase):
             for name, spec in g.kv_cache_spec.kv_cache_specs.items()
         }
         with patch.object(planning, "get_kv_cache_groups", return_value=gs):
-            (built,) = planning.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET])
+            (built,) = planning.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET], gs)
         self.assertEqual(built.num_blocks, 223)
         self.assertTrue(all(t.size == 223 * BLOCK for t in built.kv_cache_tensors))
         self.assertEqual(utils.get_kv_cache_capacity(cfg, built)[0], 166846)

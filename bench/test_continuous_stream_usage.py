@@ -7,6 +7,7 @@ no model, server or GPU is needed.
 """
 
 import asyncio
+import functools
 import json
 import re
 import unittest
@@ -109,6 +110,10 @@ async def serve(continuous=True, include_usage=True, include_reasoning=True):
         system_fingerprint=None,
         _raise_if_error=lambda *args: None,
         create_streaming_error_response=unexpected,
+    )
+    # 0.33 split the generator: the public one serializes what ..._raw yields.
+    server.chat_completion_stream_generator_raw = functools.partial(
+        OpenAIServingChat.chat_completion_stream_generator_raw, server
     )
     events = []
     async for frame in OpenAIServingChat.chat_completion_stream_generator(

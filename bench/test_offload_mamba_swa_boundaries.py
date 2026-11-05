@@ -41,7 +41,7 @@ class ReplayBoundaryTests(unittest.TestCase):
                                             sliding_window_size_in_chunks=get_sliding_window_size_in_chunks(value, block))
                                          for i, value in enumerate(specs))),
                   tokens_per_block=(block,) * len(groups), tokens_per_hash=block,
-                  blocks_per_chunk=1, offload_prompt_only=True,
+                  blocks_per_chunk=1, offload_prompt_only=True, extra_config={},
                   kv_events_config=OffloadingKVEventsConfig(enable_kv_cache_events=False, self_describing_kv_events=False),
                   get_manager=lambda: manager)
         config = NS(speculative_config=NS(use_eagle_block_drop=lambda: eagle),
