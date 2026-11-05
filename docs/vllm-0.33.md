@@ -87,13 +87,21 @@ RTX 3090, the two images alternating in one session, one boot per cell unless st
   beyond the gap between the 0.32 arm's own boots, except DFlash2 k7, which is higher on 0.33.0 by about that gap,
   the direction #61161 would move it. Greedy speculation is not bit-exact across boots on either image (the 0.32
   arm's two boots match on 4 of 5 greedy texts), so greedy is compared against each image's own spread: inside it on
-  4 of 5 profiles. DFlash2 k15 reads 0.64% lower on 0.33.0 on two boots per image; more boots are running. The copy
+  4 of 5 profiles. DFlash2 k15 read 0.64% lower on two boots per image, and at four boots per image the greedy
+  means are 0.11% apart with overlapping ranges, so greedy is inside the spread on all five. At k15 the seeded
+  reading is 1.2% lower on 0.33.0, inside the boot-to-boot range, but with all four 0.33.0 boots below all four 0.32.0
+  boots, so it is probably a real k15 shift. Its cause is unmeasured, and at k7 the sign is the other way. The
+  unseeded reading (-5.4%) is not evidence of a rate change: with no seed, three of its five prompts replay the same
+  sampled text on every boot of an image, so it compares two fixed sampling paths per prompt. The copy
   probe reads 7.701 at k7 and 14.472 at k15 on both, and every boot uses its shipped draft count.
 - **Knobs:** the 25 the launchers export reach the engine on both images, and the invalid values refused on 0.32.0
   are refused on 0.33.0.
 - **First-request JIT:** 0 compiles during inference on both images with one request at a time. Under concurrent
-  traffic 0.33.0 compiled one more kernel than 0.32.0, which `vllm-pr64137-logits-stats-no-specialize` fixes; the
-  rerun under concurrent traffic is pending.
+  traffic (8 streams, 3 requests each, two waves, cold) 0.33.0 compiled one more kernel than 0.32.0,
+  `_compute_local_logits_stats_kernel`, with a 0.5 s stall mid-stream. `vllm-pr64137-logits-stats-no-specialize` fixes
+  it: on that load the patched image compiles only what 0.32.0 also compiles (`_gather_draft_sampled_kernel` on the
+  default profile, `_attn_packed` on `alternative.sh`'s first request), and an image without the patch, booted in
+  the same run, compiled it again.
 - **Prefix-cache correctness** (`bench/residue_sweep.py`, `SPEC=dflash2 CTX=huge PREFIX_CACHE=1`): 0 broken of 128 on
   both images, 0 broken cold, every answer one hash (the same as 0.31 and 0.32). The KV dtype reads KVarN, and the `CTX=huge`
   pool is 262,633 tokens on both.
@@ -103,9 +111,10 @@ RTX 3090, the two images alternating in one session, one boot per cell unless st
   59,616 of 59,885 tokens on 0.33.0, where 0.32.0 reused none. In the single-user pool (85,992 tokens) that hit lets
   the scheduler start the second conversation's turn beside the first, which then preempts, so total time is
   unchanged (258.1 s against 257.5 s) and turn 2's wait moves from the first token to a stall mid-stream. So
-  `usage.cached_tokens` overstates the saving when the pool cannot hold both. Read from the code, not yet measured:
-  #61589's lookahead block hashes stop the trailing block being dropped for MTP; a boot with
-  `disable_lookahead_block_hashes` is running to confirm it.
+  `usage.cached_tokens` overstates the saving when the pool cannot hold both. The cause is #61589's lookahead block
+  hashes, which stop the trailing block being dropped for MTP: with `"disable_lookahead_block_hashes": true` in
+  `--speculative-config` the same boot reuses nothing, runs one request at a time and decodes turn 2 at normal
+  speed, as 0.32.0 does.
 - **Vision:** turning vision on costs no KV on either image, both read the printed word, an image is the same number
   of tokens on both, and the ninth image is refused with the same error.
 - **LSA** (`LSA=1 SPEC=mtp CTX=long`, `lsa/tests/ruler_mk.py` at 50000 and 100000): boots on both, 8/8 and 6/6 on
