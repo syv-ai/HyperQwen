@@ -110,6 +110,11 @@ async def serve(continuous=True, include_usage=True, include_reasoning=True):
         system_fingerprint=None,
         _raise_if_error=lambda *args: None,
         create_streaming_error_response=unexpected,
+        # read by 0.33's chat_completion_stream_generator_raw
+        enable_auto_tools=True,
+        create_error_response=unexpected,
+        request_logger=None,
+        enable_log_deltas=False,
     )
     # 0.33 split the generator: the public one serializes what ..._raw yields.
     server.chat_completion_stream_generator_raw = functools.partial(
