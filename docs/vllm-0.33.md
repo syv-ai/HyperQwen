@@ -173,8 +173,9 @@ and is not affected. The doc pins no transformers, so the native install got 5.2
 
 ## What is still unproven
 
-- The 4090 ran the 0.33 image from before the two fixes. The fixed image has not been built; the fixes were checked
-  by mounting the two files over that image on the 3090.
+- The 4090 ran the 0.33 image from before the two fixes. The image with them was built and checked on the 3090
+  only (its vLLM tree equal to the fork branch, `return_progress` and `VLLM_DFLASH2_CHAIN=1` as with the mounted
+  files).
 - Two boots per image for tokens per step on the 3090 and one on the 4090, so gaps under the boot-to-boot spread are
   not claims.
 - Batch margins are nvidia-smi peaks sampled at 50 ms, so upper bounds.
