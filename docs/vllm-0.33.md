@@ -159,7 +159,9 @@ before the two fixes above, which were then checked on the 3090 (the last item).
   images. The fixes are in the series above. On the 3090, the 0.33 image with the two fixed files mounted over it
   serves both: chains 5 of 5 requests with 22 engaged chain steps, where the unfixed image fails all 5, and a
   29,845-token prompt streams 17 progress chunks where the unfixed image sends one error chunk. 0.32.0 sends 16 on
-  that prompt, because 0.33.0 ends prefill at a block boundary and runs the last 37 tokens as their own step.
+  that prompt, because 0.33.0 ends prefill at a block boundary and runs the last 37 tokens as their own step. That
+  step comes from #61589's lookahead block hashes: with `"disable_lookahead_block_hashes": true` the same overlay
+  sends 16 and prefills the tail in one step, as 0.32.0 does.
 
 ## Native install
 
@@ -173,7 +175,6 @@ and is not affected. The doc pins no transformers, so the native install got 5.2
 
 - The 4090 ran the 0.33 image from before the two fixes. The fixed image has not been built; the fixes were checked
   by mounting the two files over that image on the 3090.
-- Why 0.33.0 runs a separate prefill step for the tail past the last block boundary is not read.
 - Two boots per image for tokens per step on the 3090 and one on the 4090, so gaps under the boot-to-boot spread are
   not claims.
 - Batch margins are nvidia-smi peaks sampled at 50 ms, so upper bounds.
