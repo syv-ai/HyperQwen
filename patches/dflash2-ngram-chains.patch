@@ -5,14 +5,14 @@ num_tokens_across_dp from the base.
 Kind: feature
 What: quantized candidate chains for the drafter; `propose` override
 Upstream: none
-Cut-against: 0.32.0: propose() takes dp_sync_state (#60754 renamed dp_sync) and forwards
-  num_speculative_tokens, which the 0.32 runner passes by keyword on every step
+Cut-against: 0.33.0: #61161 (per-step draws) changed the shared sampler's seed, which chains reaches through seeds;
+  prepare_context_anchor now takes (num_reqs, query_start_loc, num_rejected)
 Retires-when: upstreamed
 
---- exported from 290f372aa (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3f78d8bf85 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 2121031ed..e1649d677 100644
+index 0bc1042ec5..0579efc65f 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -27,7 +27,7 @@ index 2121031ed..e1649d677 100644
 @@ -12,7 +12,10 @@
  from vllm.logger import init_logger
  from vllm.triton_utils import tl, triton
- from vllm.v1.worker.gpu.sample.gumbel import gumbel_noised_argmax
+ from vllm.v1.worker.gpu.sample.gumbel import gumbel_noised_argmax, spec_step_seed
 -from vllm.v1.worker.gpu.spec_decode.dflash.speculator import DFlashSpeculator
 +from vllm.v1.worker.gpu.spec_decode.dflash.speculator import (
 +    DFlashSpeculator,
@@ -259,7 +259,7 @@ index 2121031ed..e1649d677 100644
 +        else:
 +            hidden_states = last_hidden_states
 +        self.hidden_states[:num_target_tokens].copy_(hidden_states[:num_target_tokens])
-+        self.prepare_context_anchor(input_batch, num_rejected)
++        self.prepare_context_anchor(num_reqs, input_batch.query_start_loc, num_rejected)
 +
 +        # Same input preparation as the base path: the verify side needs slot
 +        # mappings / context positions, and suffix_lookup needs

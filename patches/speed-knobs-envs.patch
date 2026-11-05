@@ -12,16 +12,16 @@ this a cached graph from a run without the flag fails with
 Kind: local
 What: register this repo's env knobs in `envs.py`
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: stays while the knobs exist
 
---- exported from 4122702d1 (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 1b2ebf0762 (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index a70a53923..30148da33 100755
+index 961359ac33..74279b97a0 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -200,6 +200,36 @@
+@@ -198,6 +198,36 @@
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
@@ -58,7 +58,7 @@ index a70a53923..30148da33 100755
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
-@@ -1600,6 +1630,44 @@
+@@ -1581,6 +1611,44 @@
      "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
          os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
      ),

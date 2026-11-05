@@ -3,13 +3,13 @@ multi-query 3D int4 verify path
 Kind: feature
 What: multi-query 3D int4 verify path
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: rides with int4-kv-per-token-head
 
---- exported from b530351ec (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from aba2f5a782 (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
-index 68ef5348a..a9231396b 100644
+index 68ef5348a4..a9231396be 100644
 --- a/v1/attention/ops/int4_per_token_head.py
 +++ b/v1/attention/ops/int4_per_token_head.py
 @@ -12,6 +12,7 @@
@@ -64,12 +64,12 @@ index 68ef5348a..a9231396b 100644
      # 3D never reads ``output_ptr`` and 2D never reads the segm tensors,
      # but Triton needs a non-null pointer everywhere; reuse ``out`` as
 diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
-index 0835c0a75..27dfbc556 100644
+index 93c6bba4be..c8b6d680c8 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -728,6 +728,27 @@
-     # sequence len for this particular sequence
-     seq_len = tl.load(seq_lens_ptr + seq_idx)
+@@ -736,6 +736,27 @@
+     if seq_len <= 0:
+         return
  
 +    # syv-fork (fermion, 2026-08-27): zero-length (padded) rows. The producer
 +    # early-returns without writing any segment for seq_len == 0, and

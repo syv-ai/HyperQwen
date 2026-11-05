@@ -5,28 +5,40 @@ from displayed concurrency, matching engine admission and auto-fit.
 Kind: fix
 What: account for async Mamba states and usable grouped KV capacity
 Upstream: none yet
-Cut-against: 0.32.0
+Cut-against: 0.33.0: #61183 moved check_enough_kv_cache_memory to kv_cache_planning.py and its group helpers now take
+  a KVCacheConfigBuilder first; the null-block hunk stays in kv_cache_utils
 Retires-when: upstream accounts for async states and usable grouped capacity
 
---- exported from 2ca8e2d (async-mamba-kv-sizing); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from bbed35fcad (async-mamba-kv-sizing); regenerate with scripts/export-patch.sh, do not edit ---
 
-diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index c1d9f0d..eb34455 100644
---- a/v1/core/kv_cache_utils.py
-+++ b/v1/core/kv_cache_utils.py
-@@ -1131,9 +1131,9 @@
+diff --git a/v1/core/kv_cache_planning.py b/v1/core/kv_cache_planning.py
+index 00a07ee0ad..8a6c5236e7 100644
+--- a/v1/core/kv_cache_planning.py
++++ b/v1/core/kv_cache_planning.py
+@@ -176,11 +176,16 @@
+             if groups
+             else available_memory
          )
++        from vllm.v1.core.kv_cache_config_builder import get_kv_cache_config_builder
++
++        builder = get_kv_cache_config_builder(vllm_config)
          _check_enough_kv_cache_memory(
              check_memory,
 -            lambda: max_memory_usage_bytes(vllm_config, kv_cache_spec.values()),
-+            lambda: _max_memory_usage_bytes_from_groups(vllm_config, groups),
++            lambda: _max_memory_usage_bytes_from_groups(builder, vllm_config, groups),
              vllm_config.model_config.max_model_len,
 -            lambda am: estimate_max_model_len(vllm_config, kv_cache_spec, am),
-+            lambda am: _estimate_max_model_len_from_groups(vllm_config, groups, am),
++            lambda am: _estimate_max_model_len_from_groups(
++                builder, vllm_config, groups, am
++            ),
          )
  
  
-@@ -1218,7 +1218,10 @@
+diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
+index a0e583761c..b622b829ed 100644
+--- a/v1/core/kv_cache_utils.py
++++ b/v1/core/kv_cache_utils.py
+@@ -1084,7 +1084,10 @@
              host_blocks_per_request += required
          else:
              num_blocks_per_request += required
@@ -39,10 +51,10 @@ index c1d9f0d..eb34455 100644
          assert kv_cache_config.hisparse_host_num_blocks is not None
          limits.append(
 diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
-index 8f968ee..20e8f81 100644
+index ebeaa76e82..c17d26a60f 100644
 --- a/v1/kv_cache_interface.py
 +++ b/v1/kv_cache_interface.py
-@@ -1085,8 +1085,15 @@
+@@ -1144,8 +1144,15 @@
  
      def max_memory_usage_bytes(self, vllm_config: VllmConfig) -> int:
          if vllm_config.cache_config.mamba_cache_mode == "align":
@@ -59,7 +71,7 @@ index 8f968ee..20e8f81 100644
              )
          else:
              return self.page_size_bytes * (1 + self.num_speculative_blocks)
-@@ -1096,8 +1103,8 @@
+@@ -1155,8 +1162,8 @@
          # no CP scaling applies.
          if vllm_config.cache_config.mamba_cache_mode == "align":
              # Block table rows are position-indexed over the full sequence

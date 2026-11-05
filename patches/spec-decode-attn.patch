@@ -32,17 +32,16 @@ Apply from the repo root:
 Kind: feature
 What: split-KV verify attention on FLASH_ATTN with query-row tiling
 Upstream: none
-Cut-against: 0.32.0: the split-KV branch re-indented after #61126 removed cascade attention; its helpers
-  follow the kernel singleton
+Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from 544c92fa9 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from eaf6786bc9 (spec-decode-attn); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index cbc6f8382..a70a53923 100755
+index b829da43a9..961359ac33 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -184,6 +184,10 @@
+@@ -182,6 +182,10 @@
      VLLM_USE_BREAKABLE_CUDAGRAPH: bool = False
      VLLM_DP_MASTER_IP: str = ""
      VLLM_DP_MASTER_PORT: int = 0
@@ -53,7 +52,7 @@ index cbc6f8382..a70a53923 100755
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
      VLLM_RAY_DP_PACK_STRATEGY: Literal["strict", "fill", "span"] = "strict"
      VLLM_RAY_DP_PLACEMENT_NODE_IPS: str = ""
-@@ -1526,6 +1530,9 @@
+@@ -1507,6 +1511,9 @@
      "VLLM_DP_MASTER_IP": lambda: os.getenv("VLLM_DP_MASTER_IP", "127.0.0.1"),
      # Port of the master node in the data parallel setting
      "VLLM_DP_MASTER_PORT": lambda: int(os.getenv("VLLM_DP_MASTER_PORT", "0")),
@@ -64,10 +63,10 @@ index cbc6f8382..a70a53923 100755
      "VLLM_RANDOMIZE_DP_DUMMY_INPUTS": lambda: (
          os.environ.get("VLLM_RANDOMIZE_DP_DUMMY_INPUTS", "0") == "1"
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 6e906bc52..5eba4d5b6 100755
+index c33def11a8..ca124ccb3d 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1396,6 +1396,37 @@
+@@ -1401,6 +1401,37 @@
                  block_table = block_table[:, :num_pages]
                  num_splits = 1
  
@@ -105,7 +104,7 @@ index 6e906bc52..5eba4d5b6 100755
              _FA4_DENSE_ATTENTION_KERNEL(
                  q=query[:num_actual_tokens],
                  k=key_cache,
-@@ -1872,3 +1903,59 @@
+@@ -1877,3 +1908,59 @@
  
  
  _FA4_DENSE_ATTENTION_KERNEL = FA4DenseAttentionKernel()
@@ -167,7 +166,7 @@ index 6e906bc52..5eba4d5b6 100755
 +            cu_seqlens_q.shape[0] - 1, max_seqlen_q)
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
 new file mode 100644
-index 000000000..54e6e11c9
+index 0000000000..54e6e11c96
 --- /dev/null
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -0,0 +1,204 @@

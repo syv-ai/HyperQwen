@@ -5,13 +5,13 @@ VLLM_VISION_CPU_OFFLOAD_GB is a dedicated tower-only budget. It uses UVAOffloade
 Kind: local
 What: Qwen3 vision tower bulk weights in host RAM
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from a5bc45ede (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e14da23cc8 (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_vl.py b/model_executor/models/qwen3_vl.py
-index 527e2b0f3..9d35ecaf5 100644
+index 527e2b0f3e..9d35ecaf50 100644
 --- a/model_executor/models/qwen3_vl.py
 +++ b/model_executor/models/qwen3_vl.py
 @@ -48,6 +48,7 @@

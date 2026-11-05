@@ -7,17 +7,17 @@ remain usable. Other speculative methods retain their existing policy.
 Kind: fix
 What: reject DFlash contexts exceeding the drafter capacity and fixed lookahead
 Upstream: HyperQwen issue #405
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream validates DFlash positional capacity before inference
 
---- exported from be44b37 (dflash-context-capacity); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 22e0ab03ea (dflash-context-capacity); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/speculative.py b/config/speculative.py
-index b916d7d..b0a5cce 100644
+index 5c76282ff9..ecbaaac9b7 100644
 --- a/config/speculative.py
 +++ b/config/speculative.py
-@@ -1553,6 +1553,13 @@
-                         self.draft_model_config.hf_config,
+@@ -1683,6 +1683,13 @@
+                         self.draft_tensor_parallel_size,
                      )
                  )
 +                if self.method == "dflash":
@@ -30,7 +30,7 @@ index b916d7d..b0a5cce 100644
                  self.draft_model_config.max_model_len = (
                      SpeculativeConfig._maybe_override_draft_max_model_len(
                          self.max_model_len,
-@@ -1629,6 +1636,27 @@
+@@ -1759,6 +1766,27 @@
                  f"{self.suffix_decoding_min_token_prob} must be in [0, 1]"
              )
  

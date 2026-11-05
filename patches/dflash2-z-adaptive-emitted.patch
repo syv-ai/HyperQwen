@@ -1,19 +1,19 @@
 Kind: fix
 What: adaptive z counts emitted tokens, not sampling slots
 Upstream: none yet
-Cut-against: 0.32.0
+Cut-against: 0.33.0: beside #58984's dummy-run clamp; num_rejected's definition unchanged
 Retires-when: upstream PR
 
---- exported from 000f55a68 (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 70afdff413 (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
-index d95dcc16e..bea571469 100644
+index 41f0b21cfa..9ca54925fa 100644
 --- a/v1/worker/gpu/spec_decode/dflash/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
-@@ -398,11 +398,12 @@
-         num_speculative_tokens: int | None = None,
-     ) -> torch.Tensor:
+@@ -492,11 +492,12 @@
          num_reqs = input_batch.num_reqs
+         if dummy_run and dp_sync_state is not None:
+             num_reqs = min(num_reqs, dp_sync_state.num_reqs)
 -        # What the step that just ran actually produced per request: num_sampled counts the
 -        # sampling slots it was given (bonus + drafts), num_rejected how many of those were
 -        # thrown away, so the difference is the tokens it emitted. dflash2/lookup.py decides
@@ -29,7 +29,7 @@ index d95dcc16e..bea571469 100644
          num_query_tokens = num_reqs * self.num_query_per_req
          max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index e1649d677..e914af8d5 100644
+index 0579efc65f..a16dccbc25 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -603,9 +603,7 @@

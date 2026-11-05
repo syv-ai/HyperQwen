@@ -17,16 +17,16 @@ Validated against vLLM 0.28.0.
 Kind: local
 What: env vars to pick which layers run W4A8 with the Marlin kernel
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from abd78fb97 (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 57703e84ca (marlin-int8-layer-select); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index a2b460307..cbc6f8382 100755
+index 6fd9fb9044..b829da43a9 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -191,6 +191,8 @@
+@@ -189,6 +189,8 @@
      VLLM_RAY_EXTRA_ENV_VARS_TO_COPY: str = ""
      VLLM_MARLIN_USE_ATOMIC_ADD: bool = False
      VLLM_MARLIN_INPUT_DTYPE: Literal["int8", "fp8"] | None = None
@@ -35,7 +35,7 @@ index a2b460307..cbc6f8382 100755
      VLLM_HUMMING_ONLINE_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
-@@ -1579,6 +1581,14 @@
+@@ -1560,6 +1562,14 @@
      "VLLM_MARLIN_INPUT_DTYPE": env_with_choices(
          "VLLM_MARLIN_INPUT_DTYPE", None, ["int8", "fp8"]
      ),
@@ -51,7 +51,7 @@ index a2b460307..cbc6f8382 100755
      "VLLM_HUMMING_ONLINE_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
          os.environ.get("VLLM_HUMMING_ONLINE_QUANT_CONFIG", None)
 diff --git a/model_executor/layers/quantization/utils/marlin_utils.py b/model_executor/layers/quantization/utils/marlin_utils.py
-index 1ee52a178..d28d8b8e1 100644
+index 1ee52a1780..d28d8b8e1a 100644
 --- a/model_executor/layers/quantization/utils/marlin_utils.py
 +++ b/model_executor/layers/quantization/utils/marlin_utils.py
 @@ -720,7 +720,17 @@
