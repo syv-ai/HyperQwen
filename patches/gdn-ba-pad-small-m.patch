@@ -54,7 +54,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstreamed, or a cuBLAS that picks a sane kernel at M = 2..4
 
---- exported from 3181a15a60 (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from c513da2e88 (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index c69099ea9f..2cad20ed44 100755

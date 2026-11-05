@@ -77,7 +77,7 @@ Upstream: none yet (upstream pads)
 Cut-against: 0.33.0: #61183 moved the planning code to v1/core/kv_cache_planning.py; hunks unchanged
 Retires-when: upstream PR
 
---- exported from ecb90bd378 (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 560870719e (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_planning.py b/v1/core/kv_cache_planning.py
 index 0c1d9df03b..00a07ee0ad 100644

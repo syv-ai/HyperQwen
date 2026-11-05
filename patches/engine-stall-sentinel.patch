@@ -47,7 +47,7 @@ Upstream: upstream PR (syv-ai #94/#110)
 Cut-against: 0.33.0: envs.py beside upstream's VLLM_CHAT_TEMPLATE_FUEL
 Retires-when: upstreamed
 
---- exported from 322c274268 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 94b511cdd2 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index ccf193bf9e..d58f8ac6a1 100755

@@ -9,10 +9,10 @@ Cut-against: 0.33.0: #61161 (per-step draws) changed the shared sampler's seed, 
   prepare_context_anchor now takes (num_reqs, query_start_loc, num_rejected)
 Retires-when: upstreamed
 
---- exported from 3f78d8bf85 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ac8403718c (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 0bc1042ec5..0579efc65f 100644
+index 0bc1042ec5..6c060c021b 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -284,7 +284,7 @@ index 0bc1042ec5..0579efc65f 100644
 +                temperature,
 +                seeds,
 +                self.block_tables.input_block_tables[gid],
-+                self.block_tables.kernel_block_sizes[gid],
++                self.block_tables.block_sizes[gid],
 +                self.block_tables.cp_rank,
 +                self.dcp_size,
 +                self.block_tables.cp_interleave,

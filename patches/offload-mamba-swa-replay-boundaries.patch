@@ -13,7 +13,7 @@ Upstream: HyperQwen issue #405
 Cut-against: 0.33.0
 Retires-when: upstream native offload retains every hybrid replay window
 
---- exported from f1c0c53a4e (offload-mamba-swa-replay-boundaries); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 51095840bd (offload-mamba-swa-replay-boundaries); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 index fbc7b5176f..f8c5b0d1c8 100644

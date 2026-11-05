@@ -42,7 +42,7 @@ Upstream: vllm #61612 (open); the regression is from vllm #57214. vllm #61622 (o
 Cut-against: 0.33.0
 Retires-when: the pin that carries #61612, or another change that keeps the barrier under async scheduling
 
---- exported from e6424e6b0b (vllm-pr61612-flashinfer-async-barrier); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5865c86ad4 (vllm-pr61612-flashinfer-async-barrier); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
 index 1a8c6c377a..455ca0680c 100755

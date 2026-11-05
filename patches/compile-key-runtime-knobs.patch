@@ -19,7 +19,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: stays while the knobs exist
 
---- exported from 8cf008ec00 (compile-key-runtime-knobs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 64c89b7797 (compile-key-runtime-knobs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index 5cf1d4f961..5156251e5c 100755

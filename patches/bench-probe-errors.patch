@@ -46,7 +46,7 @@ Cut-against: 0.33.0: #59888 carries the 404, connection and generic hints; this 
   probe's Authorization and the keyed /metrics scrapes
 Retires-when: upstream PR
 
---- exported from 2ce76ede7e (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 589a819b39 (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/serve.py b/benchmarks/serve.py
 index d0909ea8c9..8cda0e9385 100644

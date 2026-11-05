@@ -26,7 +26,7 @@ Cut-against: 0.33.0: #51172 passes chunks unstripped upstream; what is left is t
   comments
 Retires-when: upstream skips SSE comments in async_request_openai_audio (#51172 carries the rest)
 
---- exported from a37717034d (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from b7080c4a1b (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/lib/endpoint_request_func.py b/benchmarks/lib/endpoint_request_func.py
 index 442b8fa53a..bfdaced5d3 100644

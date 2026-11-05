@@ -35,7 +35,7 @@ Upstream: none
 Cut-against: 0.33.0: beside the runner's new encoder-input update, both before apply_staged_writes
 Retires-when: rides with KVarN
 
---- exported from 548747033a (kvarn-recycled-pages-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 7c148b75e7 (kvarn-recycled-pages-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
 index 8e883169ec..0b9ebd177b 100644

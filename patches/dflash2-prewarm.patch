@@ -4,7 +4,7 @@ Upstream: none yet
 Cut-against: 0.33.0: #59166 added an is_padding kernel argument; every warm-up launch passes it
 Retires-when: upstream PR
 
---- exported from df25775bc7 (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ecbd52daf9 (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
 index 33fe482b20..41f0b21cfa 100644

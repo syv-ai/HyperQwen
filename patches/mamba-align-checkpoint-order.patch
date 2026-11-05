@@ -82,7 +82,7 @@ Upstream: vllm #45238 (not merged)
 Cut-against: 0.33.0
 Retires-when: check against upstream #52789 (internal prefill checkpoints, in 0.29) at each pin
 
---- exported from 8ac6cd252a (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3dae32cc73 (mamba-align-checkpoint-order); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
 index dd2ba5aa73..bbcec2512a 100644

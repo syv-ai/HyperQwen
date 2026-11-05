@@ -25,7 +25,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 1160881b46 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 82d8b5c567 (dspark-draft-quant-config); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/utils.py b/model_executor/models/utils.py
 index a86496b48a..1594b79944 100644

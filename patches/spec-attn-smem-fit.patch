@@ -25,7 +25,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstream with spec-decode-attn
 
---- exported from 1a4a6d78f2 (spec-attn-smem-fit); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from bf9abdfae8 (spec-attn-smem-fit); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
 index 06fa37fa42..9fe6e48450 100644

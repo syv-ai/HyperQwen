@@ -26,7 +26,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 57b399bc45 (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ac57e9751b (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/warmup/kernel_warmup.py b/model_executor/warmup/kernel_warmup.py
 index 0f1058a986..41cd8c8456 100644

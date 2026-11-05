@@ -14,7 +14,7 @@ Upstream: vllm #64141 (open), fixing #63944; runtime change credited to yueyinmo
 Cut-against: 0.33.0
 Retires-when: the pin carries vllm #64141 or an equivalent non-destructive scale-view implementation
 
---- exported from ff6840bbc0 (quant-scale-view-preserve-pages); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from b2eb3c10de (quant-scale-view-preserve-pages); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
 index 34fc17844e..3ddd3502ba 100644

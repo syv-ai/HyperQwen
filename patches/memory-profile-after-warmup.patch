@@ -10,7 +10,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream profiles after warmup
 
---- exported from fac5ebd076 (memory-profile-after-warmup); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from d275a0341b (memory-profile-after-warmup); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
 index 8724faf406..c68c7f2f21 100644

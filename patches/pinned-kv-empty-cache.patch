@@ -14,7 +14,7 @@ Upstream: vllm #59893
 Cut-against: 0.33.0
 Retires-when: upstream empties the cache on the pinned path
 
---- exported from bafe75a71d (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from f5d7c64c0a (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
 index c68c7f2f21..b8508b51d2 100644

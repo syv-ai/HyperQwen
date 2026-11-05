@@ -34,7 +34,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from 7211935725 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e519d8cca3 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/_custom_ops.py b/_custom_ops.py
 index effb39f7ac..645e866185 100644

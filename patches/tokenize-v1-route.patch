@@ -15,7 +15,7 @@ Upstream: none (vllm #59891 was closed: upstream keeps `/v1` for the official Op
 Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from 64a22101d8 (tokenize-v1-route); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 008ca193bb (tokenize-v1-route); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/serve/tokenize/api_router.py b/entrypoints/serve/tokenize/api_router.py
 index cd515d31d2..02fe0ea6c2 100644

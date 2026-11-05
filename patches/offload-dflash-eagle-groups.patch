@@ -44,7 +44,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 35a2e3b7dd (offload-dflash-eagle-groups); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 8d88c15de6 (offload-dflash-eagle-groups); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 index bbef4ce59f..fbc7b5176f 100644

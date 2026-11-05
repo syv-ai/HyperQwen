@@ -15,7 +15,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: stays while the knobs exist
 
---- exported from 1b2ebf0762 (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 4df880c006 (speed-knobs-envs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index 961359ac33..74279b97a0 100755

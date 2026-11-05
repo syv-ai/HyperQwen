@@ -15,7 +15,7 @@ Upstream: vllm #59890
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 9248dc25cc (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 526fc96c7f (serve-model-path-match); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/models/serving.py b/entrypoints/openai/models/serving.py
 index e4ac44e2ef..49fe1d72cf 100644

@@ -48,7 +48,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from 38bcb9e852 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 0452d8fbf5 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
 index 17c0be81b6..4f8c4867fc 100755

@@ -29,7 +29,7 @@ Cut-against: 0.33.0: #55226 moved the pooling early return above the stream inte
   there
 Retires-when: the pin that carries #40371
 
---- exported from 4320cad8bb (vllm-pr40371-prompt-progress); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 4e9e41142b (vllm-pr40371-prompt-progress); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/chat_completion/protocol.py b/entrypoints/openai/chat_completion/protocol.py
 index 1341ef2b86..69750902be 100644
@@ -73,7 +73,7 @@ index 1341ef2b86..69750902be 100644
  
      @model_validator(mode="before")
 diff --git a/entrypoints/openai/chat_completion/serving.py b/entrypoints/openai/chat_completion/serving.py
-index 8adc9d1b0e..0c29b08640 100644
+index 8adc9d1b0e..f1196f764b 100644
 --- a/entrypoints/openai/chat_completion/serving.py
 +++ b/entrypoints/openai/chat_completion/serving.py
 @@ -47,6 +47,7 @@
@@ -84,7 +84,7 @@ index 8adc9d1b0e..0c29b08640 100644
      PromptTokenUsageInfo,
      UsageInfo,
  )
-@@ -579,6 +580,37 @@
+@@ -579,6 +580,36 @@
                      if res.encoder_prompt_token_ids is not None:
                          num_prompt_tokens += len(res.encoder_prompt_token_ids)
  
@@ -116,8 +116,7 @@ index 8adc9d1b0e..0c29b08640 100644
 +                            time_ms=time_ms,
 +                        ),
 +                    )
-+                    data = progress_chunk.model_dump_json(exclude_unset=True)
-+                    yield f"data: {data}\n\n"
++                    yield progress_chunk
 +
                  # We need to do it here, because if there are exceptions in
                  # the result_generator, it needs to be sent as the FIRST

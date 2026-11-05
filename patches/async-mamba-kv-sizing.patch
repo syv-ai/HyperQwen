@@ -9,7 +9,7 @@ Cut-against: 0.33.0: #61183 moved check_enough_kv_cache_memory to kv_cache_plann
   a KVCacheConfigBuilder first; the null-block hunk stays in kv_cache_utils
 Retires-when: upstream accounts for async states and usable grouped capacity
 
---- exported from bbed35fcad (async-mamba-kv-sizing); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 229386fa48 (async-mamba-kv-sizing); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_planning.py b/v1/core/kv_cache_planning.py
 index 00a07ee0ad..8a6c5236e7 100644

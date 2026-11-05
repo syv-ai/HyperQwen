@@ -45,7 +45,7 @@ Upstream: none
 Cut-against: 0.33.0: imports merged with #56148's MAX_3D_QUERY_LEN
 Retires-when: rides with spec-decode-attn
 
---- exported from 79a3425b44 (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 0159bae46d (spec-decode-int8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
 index ca124ccb3d..17c0be81b6 100755

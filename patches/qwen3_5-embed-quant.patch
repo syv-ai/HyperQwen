@@ -16,7 +16,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 503b5d383e (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 199eaec7d2 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 index f105948f92..90f03ee543 100644

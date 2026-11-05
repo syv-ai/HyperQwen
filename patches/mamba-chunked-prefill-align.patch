@@ -21,7 +21,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 37584bca96 (mamba-chunked-prefill-align); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from bde6e23b97 (mamba-chunked-prefill-align); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/mamba_utils.py b/v1/worker/mamba_utils.py
 index a3b4eab340..be33ee8cd2 100644

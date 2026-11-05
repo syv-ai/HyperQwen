@@ -43,7 +43,7 @@ Upstream: vllm #59892
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from dc588a6e0e (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from b46d8e0155 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/common/cli_args.py b/entrypoints/common/cli_args.py
 index b861c9e73f..5e0391cdc6 100644

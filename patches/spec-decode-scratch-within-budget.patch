@@ -70,7 +70,7 @@ Cut-against: 0.33.0: #56148's 3D path reads this pool's scratch (its need is at 
   falls back to 2D on a short scratch); SM120 64-segment mode stays off
 Retires-when: rides with mq3d
 
---- exported from f0946717a6 (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 7a65fb4824 (spec-decode-scratch-within-budget); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
 index 4722fa2057..1ac084ec78 100644

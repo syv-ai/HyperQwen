@@ -29,7 +29,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 4b3b62ce16 (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 9f5161c6f2 (marlin-int8-asym-zp); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
 index a3200a3d4a..6b3f6e6ad1 100644

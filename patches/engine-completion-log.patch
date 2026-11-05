@@ -33,7 +33,7 @@ Upstream: upstream PR (syv-ai #94/#110)
 Cut-against: 0.33.0: the log stays in the finished branch, before #58778's continuing_reqs else
 Retires-when: upstreamed
 
---- exported from 4fc4b8ac4d (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5e695c6ed5 (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
 index d35b7dfac4..373d7548f2 100644

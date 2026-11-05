@@ -99,7 +99,7 @@ Cut-against: 0.33.0: #56148 gave upstream its own multi-query 3D path (q <= 8, n
   within-budget's plan covers both readers
 Retires-when: rides with mq3d
 
---- exported from ff50443fb0 (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 95d2242620 (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
 index 86aa8c12ef..4722fa2057 100644

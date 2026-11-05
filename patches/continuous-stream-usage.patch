@@ -7,13 +7,13 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream preserves continuous usage during parser buffering
 
---- exported from b2d8642506 (continuous-stream-usage); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 91db75ffe7 (continuous-stream-usage); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/chat_completion/serving.py b/entrypoints/openai/chat_completion/serving.py
-index 0c29b08640..fee45c885d 100644
+index f1196f764b..24e776e66f 100644
 --- a/entrypoints/openai/chat_completion/serving.py
 +++ b/entrypoints/openai/chat_completion/serving.py
-@@ -775,6 +775,7 @@
+@@ -774,6 +774,7 @@
                              output.finish_reason is None
                              and logprobs is None
                              and (not request.return_token_ids or hide_stream_metadata)

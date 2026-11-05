@@ -14,7 +14,7 @@ Upstream: none (KVarN is Huawei CSL's, Apache-2.0)
 Cut-against: 0.33.0: beside #59774's OCTAVE_* and #52670's CUSTOM; KVARN stays 100
 Retires-when: upstreamed
 
---- exported from 04a22d6e31 (kvarn-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 155a2e4417 (kvarn-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/cache.py b/config/cache.py
 index 626825dba8..f7760f15eb 100644

@@ -62,7 +62,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from 0ca244e469 (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5add2085b0 (triton-spec-attn-fp8-kv); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index d58f8ac6a1..5cf1d4f961 100755

@@ -16,7 +16,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: stays while the knob exists
 
---- exported from 4968dfafee (qwen3_5-embed-uva); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 80b21880dd (qwen3_5-embed-uva); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
 index bf8daed757..c69099ea9f 100755

@@ -18,7 +18,7 @@ Upstream: none yet
 Cut-against: 0.33.0
 Retires-when: upstream PR
 
---- exported from 355df46889 (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 6b6e33a550 (api-root-health); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/launchers/app.py b/entrypoints/launchers/app.py
 index 59c4fc37a0..d8f69da0bd 100644

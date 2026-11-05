@@ -6,7 +6,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from 077403d94b (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 775db7db19 (offload-wsl2-devptr); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/kv_offload/cpu/gpu_worker.py b/v1/kv_offload/cpu/gpu_worker.py
 index 9d20b7825a..3238133709 100644

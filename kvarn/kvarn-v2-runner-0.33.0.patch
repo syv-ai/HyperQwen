@@ -17,7 +17,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: rides with KVarN
 
---- exported from c8c778774e (kvarn-v2-runner-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 9d1669650e (kvarn-v2-runner-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
 index 24bf3c805f..74c87b60f0 100644
@@ -181,7 +181,7 @@ index ba704474e2..968a8d594b 100644
      def prepare_inputs(
          self,
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index a16dccbc25..0cb0e71fb5 100644
+index ce4a9289cc..755063fcc7 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@

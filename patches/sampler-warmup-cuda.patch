@@ -27,7 +27,7 @@ Cut-against: 0.33.0: #59260 registers these on CUDA only with speculative decodi
 Retires-when: upstream registers the top-k/top-p warmups on every CUDA config (#59260 gates them to speculative
   decoding)
 
---- exported from 7183d8cd59 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 2e1c067973 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
 index 0b9ebd177b..47a4e29560 100644

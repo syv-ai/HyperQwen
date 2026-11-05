@@ -8,7 +8,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from e14da23cc8 (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ee0837e9ad (vision-tower-cpu-offload); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_vl.py b/model_executor/models/qwen3_vl.py
 index 527e2b0f3e..9d35ecaf50 100644

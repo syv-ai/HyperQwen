@@ -65,7 +65,7 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from de3e5ca814 (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 594cf86e21 (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
 index 3567f49d95..68ef5348a4 100644
