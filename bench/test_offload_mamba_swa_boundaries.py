@@ -14,6 +14,7 @@ from unittest.mock import MagicMock
 import torch
 
 from vllm.distributed.kv_transfer.kv_connector.v1.offloading.scheduler import OffloadingConnectorScheduler
+from vllm.distributed.kv_transfer.kv_connector.v1.offloading.config import get_sliding_window_size_in_chunks
 from vllm.v1.kv_cache_interface import (
     FullAttentionSpec, MambaSpec, SlidingWindowSpec, KVCacheConfig,
     KVCacheGroupSpec, get_mamba_prefill_checkpoint_position,
@@ -34,7 +35,11 @@ class ReplayBoundaryTests(unittest.TestCase):
         specs = [full, full] + [mamba] * 6 + ([swa] if with_swa else [])
         groups = [KVCacheGroupSpec([f'layer{i}'], value) for i, value in enumerate(specs)]
         manager = CPUOffloadingManager(num_chunks=10000)
-        spec = NS(config=NS(groups=tuple(NS(group_id=i, tokens_per_block=block) for i in range(len(groups)))),
+        # 0.33's group config carries each group's servable window in chunks (None = full attention), built by
+        # the same helper the connector uses; blocks_per_chunk is 1 here.
+        spec = NS(config=NS(groups=tuple(NS(group_id=i, tokens_per_block=block,
+                                            sliding_window_size_in_chunks=get_sliding_window_size_in_chunks(value, block))
+                                         for i, value in enumerate(specs))),
                   tokens_per_block=(block,) * len(groups), tokens_per_hash=block,
                   blocks_per_chunk=1, offload_prompt_only=True,
                   kv_events_config=OffloadingKVEventsConfig(enable_kv_cache_events=False, self_describing_kv_events=False),
