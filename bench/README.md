@@ -79,7 +79,7 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_fa2_slab_dispatch.py` | test | CPU | 0 or 1 | Opt-in dispatch, workspace sharing and fallback for decode, capture and unsupported inputs. |
 | `test_fa2_slab_gpu.py` | kernel test | sm86 GPU, installed PTH/vLLM/FA2 | 0 or 1 | Explicit `--allow-gpu`: slab attention against full FA2 and FP32, including paged layouts and stable LSE merging; `--benchmark` adds timings. See [the adapter notes](../pthfa/LOCAL_CHANGES.md). |
 | `test_harness.py` | test | CPU, bash | 0 or 1 | `harness.py` against a stub server, including refusal of SSE streams closed before `[DONE]`. Its key chain is checked against `resolve_api_key.sh`. |
-| `test_kv_cache_seat_budget.py` | test | image | 0 or 1 | The KV cache seat budget line (`kv-cache-seat-budget.patch`) against five measured boots, with vLLM's own spec classes. |
+| `test_kv_cache_seat_budget.py` | test | image | 0 or 1 | The KV cache seat budget line (`kv-cache-seat-budget.patch`) against historical pool geometries and the launcher prediction, with the installed vLLM spec classes and current async/synchronous admission caps. |
 | `test_kvarn_recycled_pages.py` | test | image | 0 or 1 | KVarN's recycled-page drop (#208). |
 | `test_labd_bench_clock.py` | test | CPU | 0 or 1 | `labd_bench.py` against a stub server, with the wall clock stepped back: TTFT and decode rate as the stub served them. |
 | `test_labd_corpus.py` | test | CPU | 0 or 1 | LABD corpus discovery/reuse, blank frozen heads, and rejection in benchmarks, soak and sweeps before requests or tokenizer loading. |
