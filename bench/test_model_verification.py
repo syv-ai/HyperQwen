@@ -2,9 +2,11 @@
 """CPU-only regression checks for supported model verification and selection."""
 import json
 import os
+import re
 from pathlib import Path
 import subprocess
 import struct
+import shutil
 import sys
 import tempfile
 import unittest
@@ -13,6 +15,33 @@ REPO = Path(__file__).resolve().parents[1]
 
 
 class ModelVerificationTests(unittest.TestCase):
+    def test_effective_config_reports_selected_model_without_mutating_input(self):
+        for mode, fast, override in [("single", False, ""), ("single", True, ""),
+                                     ("single", True, "custom model"), ("batch", True, "")]:
+            with self.subTest(mode=mode, fast=fast, override=override), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "single-user").mkdir()
+                shutil.copyfile(REPO / "resolve_config.sh", root / "resolve_config.sh")
+                shutil.copyfile(REPO / "single-user/select_model.sh", root / "single-user/select_model.sh")
+                if fast:
+                    (root / "models/Qwen3.8-27B-W4A16-AutoRound-fast").mkdir(parents=True)
+                script = '''REPO=$PWD
+source resolve_config.sh
+resolve_effective_config "$MODE"
+printf 'input=%s\\n' "$MODEL"
+if [ "$MODE" = single ]; then source single-user/select_model.sh; fi
+printf 'served=%s\\n' "${MODEL:-$PWD/models/Qwen3.8-27B-W4A16-AutoRound}"
+'''
+                env = dict(os.environ, MODEL=override, MODE=mode, SPEC="off", CTX="fast", KV="fp8",
+                           PTH_FA="0", FA2_FP8KV="0", LSA="0", EXTRA_ARGS="", VLLM_API_KEY="secret-not-for-logs")
+                result = subprocess.run(["bash", "-c", script], cwd=root, env=env, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                reported = re.search(r"\[effective-config\] MODEL=(.*) PORT=", result.stderr).group(1)
+                served = result.stdout.split("served=", 1)[1].strip()
+                self.assertEqual(reported, served)
+                self.assertIn("input=" + override + "\n", result.stdout)
+                self.assertNotIn("secret-not-for-logs", result.stdout + result.stderr)
+
     def test_supported_and_invalid_heads(self):
         # Execute the upstream verifier block, including its shard-header checks.
         source = (REPO / "verify.sh").read_text(encoding="utf-8")
