@@ -14,6 +14,11 @@ No GPU. Run inside the vLLM venv after the patches are applied:
   CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py
 """
 import re
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import tempfile
 import types
 import unittest
 from unittest import mock
@@ -133,6 +138,45 @@ class MeasuredBoots(unittest.TestCase):
 
 
 class Behaviour(unittest.TestCase):
+    def test_launcher_prediction_matches_engine_group_caps(self):
+        repo = Path(__file__).resolve().parents[1]
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            for name in ["launcher_common.sh", "resolve_config.sh", "resolve_api_key.sh"]:
+                shutil.copyfile(repo/name, root/name)
+            shutil.copytree(repo/"single-user", root/"single-user")
+            (root/"venv/bin").mkdir(parents=True)
+            for name in ["vllm", "python"]:
+                binary = root/"venv/bin"/name
+                binary.write_text("#!/bin/sh\nexit 0\n")
+                binary.chmod(0o755)
+            draft = root/"models/Qwen3.8-27B-DFlash2-W4A16"
+            draft.mkdir(parents=True)
+            (draft/"model.safetensors").touch()
+            for k, block, pool, kv, depth in [(7,448,380,"bfloat16",2), (7,864,382,"int8_per_token_head",2),
+                                              (3,816,404,"int8_per_token_head",2), (1,800,412,"int8_per_token_head",2),
+                                              (7,880,387,"fp8",2), (7,448,380,"bfloat16",1)]:
+                with self.subTest(k=k, kv=kv, depth=depth):
+                    dtype = torch.int8 if kv.startswith("int8") else torch.bfloat16
+                    page = 8*block*({"bfloat16":4096,"int8_per_token_head":2112,"fp8":2048}[kv])
+                    env = dict(os.environ, MODEL="", SPEC="dflash2", CTX="fast", PRINT_ARGV="1", MAX_SEQS="32",
+                               MAX_LEN="65536", KV_MEM=str(pool*page), DFLASH_TOKENS=str(k), PTH_FA="0", FA2_FP8KV="0",
+                               EXTRA_ARGS="--kv-cache-dtype "+kv, ASYNC_SCHED=str(int(depth==2)), PREFIX_CACHE="1",
+                               VLLM_API_KEY="fixture", VLLM_OFFLOAD_KEEP_SHM="1", KV_OFFLOAD_GB="0")
+                    run = subprocess.run(["bash","single-user/start_qwen.sh"],cwd=root,env=env,capture_output=True,text=True)
+                    self.assertEqual(run.returncode,0,run.stdout+run.stderr)
+                    match = re.search(r"about (\d+)(?: to (\d+))? resident.*and (\d+) at MAX_LEN=.*request reserves (\d+)",run.stdout)
+                    self.assertIsNotNone(match,run.stdout+run.stderr)
+                    low,high,at_max,state = match.groups()
+                    cfg = vllm_config(65536,block_size=block,max_num_seqs=32)
+                    cfg.max_concurrent_batches=depth
+                    cfg.max_in_flight_tokens=depth*2048
+                    engine = logged(cfg,stack(block,k,pool,kv_dtype=dtype))
+                    expected = residency(engine)
+                    self.assertEqual((int(low),int(high or low)),expected[1024])
+                    self.assertEqual(int(at_max),expected[65536][0])
+                    self.assertIn(f"{state} blocks that do not grow with context",engine)
+
     def test_state_term_follows_the_mamba_cache_mode(self):
         line = logged(vllm_config(65536, mamba_cache_mode="none"), stack(448, 7, 380))
         self.assertIn("48 blocks that do not grow with context", line)
