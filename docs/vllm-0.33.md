@@ -171,6 +171,21 @@ patches apply, and `verify.sh --no-server` passes 91 of 91. `pthfa/install.sh` f
 glibc 2.43 declares `rsqrt` in a way CUDA 13.0's `math_functions.h` conflicts with. The image builds on Ubuntu 24.04
 and is not affected. The doc pins no transformers, so the native install got 5.20.2 where the image has 5.19.0.
 
+## Every launcher setting through vLLM's config checks
+
+Each of 312 launcher settings ran through its launcher in the image, and the argv and environment the launcher
+built went to vLLM 0.33.0's own `create_engine_config()` on CPU, with no model load. The settings cross SPEC, CTX,
+PREFIX_CACHE, VISION, a KV CPU tier, REQ_METRICS and its detailed level, alternative.sh's ASYNC_SCHED, and batch's
+KV and INT8_ACT. 216 build. The other 96 are every `REQ_METRICS=1` setting with speculation off, in all three
+launchers: vLLM refuses `--per-request-spec-decode-metrics` without a speculative config. That is #444's bug,
+present since 0.29.0 and not changed by this port. With #444's launcher changes laid over the same image, all 312
+build.
+
+`--mamba-cache-mode` is deprecated in 0.33.0 (vllm #60043) and has no effect: Mamba prefix caching follows
+`--enable-prefix-caching`, and 0.33.0 picks align mode for this model itself when prefix caching is on, which is the
+only time the launchers pass `--mamba-cache-mode align`. Behaviour is unchanged, so the flag stays for now; the pin
+that removes it would have vLLM's parser refuse it.
+
 ## What is still unproven
 
 - The 4090 ran the 0.33 image from before the two fixes. The image with them was built and checked on the 3090
@@ -186,3 +201,4 @@ and is not affected. The doc pins no transformers, so the native install got 5.2
 - `vllm-pr64137-logits-stats-no-specialize` carried until the pin that has #64137.
 - `fa2/` compiles at C++20.
 - `KVQuantMode.KVARN` stays 100.
+- The launchers keep passing `--mamba-cache-mode align` on 0.33.0, where it is deprecated and has no effect.

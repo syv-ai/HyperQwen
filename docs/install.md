@@ -26,6 +26,14 @@ weights with the streamer instead of the stock loader (gotcha 45: the stock
 loader peaks at whatever RAM exists; the streamer is bounded and faster). Everything below is CPU-safe to run while the GPU does other
 things; the container details live in [docker.md](docker.md).
 
+**Upgrading from an earlier pin.** When `docker/requirements.txt` moves to a new vLLM release, build a new
+venv instead of upgrading the old one in place: move it aside for rollback (`mv venv venv-0.32.0`), then run
+every step below from `python3 -m venv venv` on. A patched venv does not upgrade cleanly. pip replaces only the
+files the wheel owns, so the KVarN modules copied in by `kvarn/install.sh` stay behind, and applying the series
+to a tree that is not pristine can leave a patch half-applied: GNU patch writes the files that matched before it
+stops at the one that did not ([#437](https://github.com/syv-ai/HyperQwen/issues/437)). The same fix applies
+when `patches/apply.sh` has already failed partway: a fresh venv, then the steps below.
+
 ```bash
 git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
