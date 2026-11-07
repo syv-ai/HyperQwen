@@ -1,0 +1,16 @@
+--- a/v1/attention/backends/flash_attn.py
++++ b/v1/attention/backends/flash_attn.py
+@@ -1443,8 +1443,13 @@
+             # syv patch: split-KV Triton attention for speculative-decode
+             # batches (1 < queries/request <= 10). FA2 does not split the KV
+             # sequence when max_seqlen_q > 1, leaving most SMs idle.
++            # 170HX opt: the Triton path only pays off once enough requests fill
++            # the SMs; at 1-2 requests its extra combine launch loses to FA2, so
++            # small batches stay on FA2. The batch size is a captured constant
++            # under FULL cudagraph, so the choice is replay-stable.
+             if (
+                 _spec_attn_enabled()
++                and (cu_seqlens_q.shape[0] - 1) >= envs.VLLM_SPEC_ATTN_MIN_BATCH
+                 and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
+                 and not is_quantized_kv_cache(self.kv_cache_dtype)
+                 and (

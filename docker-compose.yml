@@ -78,6 +78,14 @@ x-qwen: &qwen
   volumes:
     - ${MODELS_DIR:-./models}:/app/models
     - qwen-cache:/cache
+    # 170HX opt (2026-11-07): adaptive split-KV segments + MIN_BATCH gate.
+    # Bind-mounted over the image so the experiment is reversible; remove these
+    # four lines to return to the stock image. Set VERIFY=0 in .env while active
+    # (verify.sh matches patch lines and will report these files as modified).
+    - ./opt-170hx/envs.py:/app/venv/lib/python3.12/site-packages/vllm/envs.py:ro
+    - ./opt-170hx/spec_decode_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/ops/spec_decode_attn.py:ro
+    - ./opt-170hx/flash_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/flash_attn.py:ro
+    - ./opt-170hx/triton_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/triton_attn.py:ro
 
 x-serve: &serve
   <<: *qwen

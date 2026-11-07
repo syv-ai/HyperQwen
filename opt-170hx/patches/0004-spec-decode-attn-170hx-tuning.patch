@@ -1,0 +1,86 @@
+--- a/v1/attention/ops/spec_decode_attn.py
++++ b/v1/attention/ops/spec_decode_attn.py
+@@ -48,6 +48,7 @@
+ from triton.runtime.errors import OutOfResources
+ 
+ NUM_SEGMENTS = 16
++TARGET_BLOCKS = 64  # blocks enough to cover the SMs at the shapes we see; more only adds overhead
+ BLOCK_M = 64       # query rows (q_len * G) per program at the default register budget
+ BLOCK_M_BIG = 128  # ... and with 8 warps, which keeps a 16-token block in one tile
+ QMAX_TOKENS = 64   # query tokens per request the caller may ask for
+@@ -209,6 +210,20 @@
+         self.part_m = torch.empty(n, dtype=torch.float32, device=device)
+         self.part_l = torch.empty(n, dtype=torch.float32, device=device)
+ 
++    def _segments(self, num_reqs, ntile, Hkv):
++        """Active KV segments. Chosen from the (captured) batch size only, so it is
++        fixed for the life of a CUDA graph and safe to vary between graphs. More
++        segments than the SMs can hold only add combine work: at batch 8 the table
++        is as fast with 2 segments as with 16."""
++        override = envs.VLLM_SPEC_ATTN_NSEG
++        if override:
++            n = max(1, min(self.nseg, override))
++        else:
++            n = max(1, min(self.nseg, triton.cdiv(TARGET_BLOCKS, num_reqs * ntile * Hkv)))
++        # The combine kernel's tl.arange(0, NSEG) needs a power of two, and HQ's
++        # capture sizes are not all powers of two (24, 48), so round down.
++        return 1 << (n.bit_length() - 1)
++
+     def _plan(self, q_len, G, D):
+         """(BLOCK_M, tokens per tile, tile count, warps). One tile is preferred: every
+         extra tile re-reads this request's KV segment."""
+@@ -225,7 +240,9 @@
+         block_m = max(block_m, G if G > 1 else 1)
+         block_m = 1 << (block_m - 1).bit_length()
+         qt = max(1, block_m // G)
+-        return block_m, qt, triton.cdiv(q_len, qt), 8 if block_m >= 128 else 4
++        # D=256 makes the [BLOCK_M, D] accumulator too large for 4 warps.
++        warps = 8 if (block_m >= 128 or D > 128) else 4
++        return block_m, qt, triton.cdiv(q_len, qt), warps
+ 
+     def run(self, q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, scale,
+             num_reqs, max_query_len, k_scale_cache=None, v_scale_cache=None,
+@@ -249,7 +266,11 @@
+         # Turing (sm75) has 64 KB, where a 64-token tile at D=256 needs 98,304 bytes; a tile
+         # that does not launch is halved below, and the size that did is remembered.
+         block_m, qt, ntile, warps = self._plan(max_query_len, G, D)
+-        tile = 64 if (block_m <= 32 or D <= 128) else 32
++        nseg = self._segments(num_reqs, ntile, Hkv)
++        # 170HX (GA100) has 163 KB smem per block, not sm86's 99 KB, so a
++        # 64-token tile fits at D=256 for the production 8-query shape. The
++        # OutOfResources retry below still halves it on any shape that does not.
++        tile = 64 if (block_m <= 32 or D <= 128 or (D == 256 and block_m <= 64)) else 32
+         fit = (q.device, block_m, D, key_cache.dtype)
+         tile = _TILE_FITS.get(fit, tile)
+         if envs.VLLM_SPEC_ATTN_DEBUG:
+@@ -261,10 +282,10 @@
+                       f"kc {key_cache.dtype} {tuple(key_cache.shape)} strides {key_cache.stride()} | out {out.dtype} strides {out.stride()} | "
+                       f"quant={quant} fp8={fp8} q_fp8={q_fp8} kd={None if k_descale is None else float(k_descale.reshape(-1)[0])} "
+                       f"vd={None if v_descale is None else float(v_descale.reshape(-1)[0])} qd={None if q_descale is None else float(q_descale.reshape(-1)[0])} | "
+-                      f"num_reqs={num_reqs} qlen={max_query_len} plan block_m={block_m} qt={qt} ntile={ntile} warps={warps} tile={tile} nseg={self.nseg} "
++                      f"num_reqs={num_reqs} qlen={max_query_len} plan block_m={block_m} qt={qt} ntile={ntile} warps={warps} tile={tile} nseg={nseg} "
+                       f"seqused={seqused_k[:num_reqs].tolist()}", flush=True)
+                 self._dbg_t0 = _t0
+-        grid = (num_reqs * ntile, Hkv, self.nseg)
++        grid = (num_reqs * ntile, Hkv, nseg)
+         while True:
+             try:
+                 _spec_attn_partial[grid](
+@@ -279,7 +300,7 @@
+                     *(k_scale_cache.stride() if quant else (0, 0, 0)),
+                     *(v_scale_cache.stride() if quant else (0, 0, 0)),
+                     G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
+-                    TILE=tile, NSEG=self.nseg, QT=qt, NTILE=ntile, QUANT=quant, FP8=fp8, Q_FP8=q_fp8,
++                    TILE=tile, NSEG=nseg, QT=qt, NTILE=ntile, QUANT=quant, FP8=fp8, Q_FP8=q_fp8,
+                     num_warps=warps, num_stages=1,
+                 )
+                 break
+@@ -291,7 +312,7 @@
+         _spec_attn_combine[(num_reqs, Hq, max_query_len)](
+             self.part_o, self.part_m, self.part_l, out, cu_seqlens_q,
+             out.stride(0), out.stride(1),
+-            Hq=Hq, QMAX=self.qmax, D=D, NSEG=self.nseg, num_warps=4,
++            Hq=Hq, QMAX=self.qmax, D=D, NSEG=nseg, num_warps=4,
+         )
+         if envs.VLLM_SPEC_ATTN_DEBUG and getattr(self, "_dbg_t0", None) is not None:
+             import time as _t
