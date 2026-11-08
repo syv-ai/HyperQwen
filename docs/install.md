@@ -26,6 +26,40 @@ weights with the streamer instead of the stock loader (gotcha 45: the stock
 loader peaks at whatever RAM exists; the streamer is bounded and faster). Everything below is CPU-safe to run while the GPU does other
 things; the container details live in [docker.md](docker.md).
 
+## Recovering after a failed patch apply
+
+If `patches/apply.sh` or `kvarn/install.sh` fails, stop the install sequence before
+building more plugins or starting a server. The current installer stops at the
+first failed patch, but GNU patch can already have written its matching hunks and
+other files. Earlier patches in the series also remain applied. KVarN currently
+copies its modules before applying their registration patches, so a failed install
+can leave importable modules without their `vllm.envs` entries, as in
+[#437](https://github.com/syv-ai/HyperQwen/issues/437).
+
+Running `python3 -m venv venv` again on that directory does not remove the old
+packages or partial patches. Preserve the failed environment for diagnosis and
+start with a fresh directory. From the repository root, after stopping any server
+using this venv:
+
+```bash
+test ! -e venv.failed && test ! -L venv.failed || { echo "Choose an unused backup path first" >&2; exit 1; }
+mv -- venv venv.failed && python3 -m venv venv
+```
+
+Then follow the installation commands below from the `venv/bin/pip install` step,
+using this checkout's pin in `docker/requirements.txt`, followed by the full patch
+series and any plugins you use. Existing model downloads and preparation do not
+need repeating merely because the venv was replaced. Keep `venv.failed` until the
+new environment passes `bash verify.sh --install` with exit 0, then verify your
+model/server normally. A dependency install or partial apply failure must be
+resolved before continuing; do not loosen `--fuzz 0` or skip failed hunks.
+
+[#445](https://github.com/syv-ai/HyperQwen/issues/445) tracks making patch application
+leave the installed tree unchanged on failure. These recovery steps do not
+provide that guarantee themselves.
+
+## Install
+
 ```bash
 git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
