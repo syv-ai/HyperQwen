@@ -71,3 +71,9 @@ dflash-context-capacity.patch
 async-mamba-kv-sizing.patch
 continuous-stream-usage.patch
 offload-mamba-swa-replay-boundaries.patch
+dflash2-fp16-residual-scale.patch
+spec-attn-fp16.patch
+flashinfer-sm75-optin.patch
+flashinfer-sm75-spec-graphs.patch
+gdn-sm75-cuda-prefill.patch
+terminal-request-progress.patch
