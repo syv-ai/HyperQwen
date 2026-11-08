@@ -1,0 +1,101 @@
+dflash2: keep the drafter's residual stream inside fp16 range (Turing / sm75).
+
+The DFlash2 drafter is trained in bf16. Its residual stream grows past 6e4 by the end of
+layer 1 (measured 58,592 at TP=1 on a real request) and keeps growing, past fp16's 65,504.
+Turing has no fast bf16, so there the whole stack runs --dtype float16 and the drafter
+inherits it: layer 2's input norm turns inf into NaN and every later layer is NaN. The
+drafts are then noise: 1 accepted of 434 drafted with lookup off, ~2% overall with lookup
+on, and DFlash2 decoded slower than SPEC=off (~40 vs 55 tok/s, 2x RTX 2080 Ti, TP=2).
+
+Every norm in the drafter is a pre-norm RMSNorm, which is invariant to a common scale on
+its input, so the residual is carried at 1/32 scale: the first layer scales the residual
+it starts from, and each layer scales its attention and MLP outputs before the (linear)
+grouped conv adds them in. The normed activations and the final norm's output are
+unchanged; the peak residual becomes ~4.5e3 (about 14x headroom). After: 50% draft
+acceptance (4.5 tokens/step), 192 tok/s on code and 139 tok/s on prose single-stream,
+greedy output byte-identical to SPEC=off.
+
+On by default only for float16; bf16 keeps scale 1 and is untouched.
+VLLM_DFLASH2_RESIDUAL_SCALE overrides it (1 disables).
+
+Kind: fix
+What: keep the DFlash2 drafter's residual stream inside fp16 range (Turing/sm75 runs fp16; without it every draft is NaN)
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream scales or otherwise bounds the drafter residual for fp16
+
+--- exported from 1e39742 (dflash2-fp16-residual-scale); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 25bf416..db6ec92 100644
+--- a/envs.py
++++ b/envs.py
+@@ -238,6 +238,7 @@
+     VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
+     VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
+     VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
++    VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
+     VLLM_V1_USE_OUTLINES_CACHE: bool = False
+     VLLM_TPU_USING_PATHWAYS: bool = False
+     VLLM_USE_DEEP_GEMM: bool = True
+@@ -1687,6 +1688,7 @@
+     "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
+         os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
+     ),
++    "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
+     # The activation dtype config for humming kernel. Explicit schemas disable
+     # fallback unless the config includes "allow_fallback": true.
+     "VLLM_HUMMING_INPUT_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
+diff --git a/model_executor/models/qwen3_dflash2.py b/model_executor/models/qwen3_dflash2.py
+index f8bc81f..e6501e1 100644
+--- a/model_executor/models/qwen3_dflash2.py
++++ b/model_executor/models/qwen3_dflash2.py
+@@ -5,6 +5,7 @@
+ import torch.nn.functional as F
+ from torch import nn
+ 
++from vllm import envs
+ from vllm.compilation.backends import set_model_tag
+ from vllm.compilation.decorators import support_torch_compile
+ from vllm.config import CacheConfig, VllmConfig
+@@ -270,6 +271,16 @@
+         self.mlp_conv = DFlashGroupedConv(
+             **conv_args, prefix=maybe_prefix(prefix, "mlp_conv")
+         )
++        # fp16 headroom (sm75 / Turing): the drafter is trained in bf16 and its residual
++        # stream reaches ~6e4 by layer 2, past fp16's 65504, so every draft after that is
++        # NaN (measured: 1/434 drafts accepted). Every norm here is a pre-norm RMSNorm,
++        # which is invariant to a common scale on the residual, so carry the residual at
++        # 1/32 scale: the normed activations and the final norm's output are unchanged.
++        # VLLM_DFLASH2_RESIDUAL_SCALE overrides (1 disables); bf16 defaults to 1.
++        _default = 1.0 / 32 if vllm_config.model_config.dtype == torch.float16 else 1.0
++        self.residual_scale = float(
++            envs.VLLM_DFLASH2_RESIDUAL_SCALE or _default
++        )
+ 
+     def forward(
+         self,
+@@ -279,17 +290,23 @@
+     ) -> tuple[torch.Tensor, torch.Tensor]:
+         if residual is None:
+             residual = hidden_states
++            if self.residual_scale != 1.0:
++                residual = residual * self.residual_scale
+             hidden_states = self.input_layernorm(hidden_states)
+         else:
+             hidden_states, residual = self.input_layernorm(hidden_states, residual)
+ 
+         hidden_states, coefficients = self.attention_conv.prepare(hidden_states)
+         hidden_states = self.self_attn(positions=positions, hidden_states=hidden_states)
++        if self.residual_scale != 1.0:
++            hidden_states = hidden_states * self.residual_scale
+         hidden_states = self.attention_conv.finish(hidden_states, coefficients)
+ 
+         hidden_states, residual = self.post_attention_layernorm(hidden_states, residual)
+         hidden_states, coefficients = self.mlp_conv.prepare(hidden_states)
+         hidden_states = self.mlp(hidden_states)
++        if self.residual_scale != 1.0:
++            hidden_states = hidden_states * self.residual_scale
+         hidden_states = self.mlp_conv.finish(hidden_states, coefficients)
+         return hidden_states, residual
+ 

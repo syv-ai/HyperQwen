@@ -965,10 +965,12 @@ qwen_vision_args
 # the escape hatch -- a limitation of these kernels, not of any checkpoint.
 case " ${EXTRA_ARGS:-} " in
   *" --dtype float16 "*|*" --dtype=float16 "*|*" --dtype fp16 "*|*" --dtype=fp16 "*|*" --dtype half "*|*" --dtype=half "*)
-    if [ "$SPEC" != "none" ] && [ "$SPEC" != "off" ]; then
+    if [ "$SPEC" != "none" ] && [ "$SPEC" != "off" ] && [ "${FP16_SPEC_OK:-0}" != 1 ]; then
       echo "--dtype float16 needs SPEC=off: this repo's speculative path is bf16-only." >&2
       echo "  the split-KV verify attention casts to tl.bfloat16 (patches/spec-decode-attn.patch)," >&2
       echo "  so it fails to compile at the first attention. See issue #27." >&2
+      echo "  FP16_SPEC_OK=1 overrides this (Turing/sm75 needs it, with SPEC_ATTN=0 so that" >&2
+      echo "  kernel is never called); it is untested upstream, not a supported setting." >&2
       exit 1
     fi ;;
 esac

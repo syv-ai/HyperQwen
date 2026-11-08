@@ -1,0 +1,134 @@
+spec_decode_attn: fp16 dot operands and a BLOCK_M fallback, so the verify kernel runs on Turing.
+
+The split-KV verify kernel cast every tl.dot operand to tl.bfloat16, so an fp16 model
+(Turing / sm75, which has no fast bf16) could not use it and fell back to the generic
+unified attention, which re-walks the whole context per draft token. The dot operand
+dtype now follows the model (CDT constexpr): bf16 where it was, fp16 for fp16 models.
+int8 and fp8 KV codes convert to either exactly; softmax probabilities are <= 1.
+
+The shared-memory retry only halved the KV tile. At TP=2 on Turing (64 KB per block)
+the launch still needed 80 KB at the 16-token floor: the rest is the query tile and the
+[BLOCK_M, D=256] fp32 accumulator. Once the tile is at its floor the retry now halves
+BLOCK_M (more query tiles per request) and remembers the (BLOCK_M, tile) that launched.
+
+2x RTX 2080 Ti, TP=2, DFlash2, int8 KV, 24k-token prompt: 23 -> 74 tok/s decode.
+
+Kind: fix
+What: split-KV verify attention follows the model dtype (fp16 dot operands) and halves BLOCK_M when shared memory is short, so it runs on Turing
+Upstream: none yet
+Cut-against: 0.32.0
+Retires-when: upstream's verify kernel takes fp16 models and retries BLOCK_M
+
+--- exported from working-tree (spec-attn-fp16); regenerate with scripts/export-patch.sh, do not edit ---
+
+--- a/v1/attention/ops/spec_decode_attn.py
++++ b/v1/attention/ops/spec_decode_attn.py
+@@ -68,6 +68,7 @@
+     G: tl.constexpr, Hq: tl.constexpr, QMAX: tl.constexpr, D: tl.constexpr, BLOCK_SIZE: tl.constexpr,
+     BLOCK_M: tl.constexpr, TILE: tl.constexpr, NSEG: tl.constexpr, QT: tl.constexpr,
+     NTILE: tl.constexpr, QUANT: tl.constexpr, FP8: tl.constexpr, Q_FP8: tl.constexpr,
++    CDT: tl.constexpr,
+ ):
+     pid = tl.program_id(0)
+     req = pid // NTILE
+@@ -101,7 +102,7 @@
+     m_i = tl.full([BLOCK_M], float("-inf"), tl.float32)
+     l_i = tl.zeros([BLOCK_M], tl.float32)
+     acc = tl.zeros([BLOCK_M, D], tl.float32)
+-    qs = (q * scale).to(tl.bfloat16)
++    qs = (q * scale).to(CDT)
+     if FP8:
+         # fp8 e4m3 data with one f32 scale per layer tensor (vLLM's `fp8` cache): fp8 -> bf16 is exact
+         # (3 mantissa bits into 8), and the scalar scales fold in after each dot, the way the int8
+@@ -123,16 +124,16 @@
+         v = tl.load(v_ptrs, mask=k_ok[:, None], other=0.0)
+         if QUANT:
+             # int8 data, one f32 scale per (token, head); both constant along D.
+-            k = k.to(tl.bfloat16)
+-            v = v.to(tl.bfloat16)
++            k = k.to(CDT)
++            v = v.to(CDT)
+             k_sc = tl.load(ks_ptr + blk * stride_ksb + slot * stride_kss + kvh * stride_ksh,
+                            mask=k_ok, other=0.0)
+             v_sc = tl.load(vs_ptr + blk * stride_vsb + slot * stride_vss + kvh * stride_vsh,
+                            mask=k_ok, other=0.0)
+             s = tl.dot(qs, tl.trans(k)).to(tl.float32) * k_sc[None, :]
+         elif FP8:
+-            k = k.to(tl.bfloat16)
+-            v = v.to(tl.bfloat16)
++            k = k.to(CDT)
++            v = v.to(CDT)
+             s = tl.dot(qs, tl.trans(k)).to(tl.float32) * k_dsc
+         else:
+             s = tl.dot(qs, tl.trans(k)).to(tl.float32)            # [BLOCK_M, TILE]
+@@ -144,11 +145,11 @@
+         alpha = tl.exp(tl.where(m_i == float("-inf"), float("-inf"), m_i - m_safe))
+         l_i = l_i * alpha + tl.sum(p, 1)
+         if QUANT:
+-            acc = acc * alpha[:, None] + tl.dot((p * v_sc[None, :]).to(tl.bfloat16), v).to(tl.float32)
++            acc = acc * alpha[:, None] + tl.dot((p * v_sc[None, :]).to(CDT), v).to(tl.float32)
+         elif FP8:
+-            acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v).to(tl.float32) * v_dsc
++            acc = acc * alpha[:, None] + tl.dot(p.to(CDT), v).to(tl.float32) * v_dsc
+         else:
+-            acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v).to(tl.float32)
++            acc = acc * alpha[:, None] + tl.dot(p.to(CDT), v).to(tl.float32)
+         m_i = m_new
+ 
+     # store partials at flat index ((req*Hq + head)*QMAX + i)*NSEG + seg
+@@ -252,6 +253,12 @@
+         tile = 64 if (block_m <= 32 or D <= 128) else 32
+         fit = (q.device, block_m, D, key_cache.dtype)
+         tile = _TILE_FITS.get(fit, tile)
++        if isinstance(tile, tuple):
++            # A smaller BLOCK_M was needed to launch on this device (see the retry below).
++            block_m, tile = tile
++            qt = max(1, block_m // G)
++            ntile = triton.cdiv(max_query_len, qt)
++            warps = 8 if block_m >= 128 else 4
+         if envs.VLLM_SPEC_ATTN_DEBUG:
+             self._dbg_calls = getattr(self, "_dbg_calls", 0) + 1
+             if self._dbg_calls in (1, 2, 500, 2000):
+@@ -264,7 +271,11 @@
+                       f"num_reqs={num_reqs} qlen={max_query_len} plan block_m={block_m} qt={qt} ntile={ntile} warps={warps} tile={tile} nseg={self.nseg} "
+                       f"seqused={seqused_k[:num_reqs].tolist()}", flush=True)
+                 self._dbg_t0 = _t0
++        # Dot-operand dtype follows the model: bf16 where it is native, fp16 on Turing (sm75),
++        # whose tensor cores have no bf16 MMA. int8 and fp8 codes convert to either exactly.
++        cdt = tl.float16 if out.dtype == torch.float16 else tl.bfloat16
+         grid = (num_reqs * ntile, Hkv, self.nseg)
++        block_m0 = block_m
+         while True:
+             try:
+                 _spec_attn_partial[grid](
+@@ -280,14 +291,27 @@
+                     *(v_scale_cache.stride() if quant else (0, 0, 0)),
+                     G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
+                     TILE=tile, NSEG=self.nseg, QT=qt, NTILE=ntile, QUANT=quant, FP8=fp8, Q_FP8=q_fp8,
++                    CDT=cdt,
+                     num_warps=warps, num_stages=1,
+                 )
+                 break
+             except OutOfResources:
+-                if tile <= 16:
++                if tile > 16:
++                    tile //= 2
++                    continue
++                # The KV tile is at its floor and the launch still does not fit: the rest is
++                # the query tile and the [BLOCK_M, D] fp32 accumulator, which scale with
++                # BLOCK_M (Turing, 64 KB: 64 rows x D=256 needs 80 KB at a 16-token tile).
++                # Halve BLOCK_M (more query tiles per request) and restore the tile.
++                if block_m // 2 < max(16, G):
+                     raise
+-                tile //= 2
+-        _TILE_FITS[fit] = tile
++                block_m //= 2
++                qt = max(1, block_m // G)
++                ntile = triton.cdiv(max_query_len, qt)
++                warps = 8 if block_m >= 128 else 4
++                grid = (num_reqs * ntile, Hkv, self.nseg)
++                tile = 64 if (block_m <= 32 or D <= 128) else 32
++        _TILE_FITS[fit] = tile if block_m == block_m0 else (block_m, tile)
+         _spec_attn_combine[(num_reqs, Hq, max_query_len)](
+             self.part_o, self.part_m, self.part_l, out, cu_seqlens_q,
+             out.stride(0), out.stride(1),
