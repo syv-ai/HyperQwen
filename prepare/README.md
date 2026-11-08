@@ -62,6 +62,11 @@ syv-ai/HyperQwen#196 thread.
 
 ## A different checkpoint
 
+For an already prepared Arete-27B checkpoint, its provenance and a measured
+single-RTX-3090 batch profile, see [the Arete recipe](../docs/arete.md). Arete has
+no MTP head, so its preparation omits the MTP and draft-vocabulary steps.
+
+
 `quant_heads_stream.py` does the work of `quant_lm_head.py` + `quant_embed.py` +
 `quant_mtp.py` in one pass, for **single-shard** checkpoints those three cannot open
 (they read a shard into RAM whole; the uncensored build ships one 18.6 GB
