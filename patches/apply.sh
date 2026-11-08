@@ -114,9 +114,10 @@ STAMP=.hyperqwen-patches
 STAGE=
 trap '[ -z "$STAGE" ] || rm -rf "$STAGE"' EXIT
 
-# targets PATCH_FILE...: every package-relative path the patches touch, sorted, once each.
+# targets PATCH_FILE...: every package-relative path the patches touch, sorted, once each. A
+# stray extra path is harmless (a file that is not there is not staged), so both headers count.
 targets() {
-  sed -n 's#^diff --git a/.* b/##p' "$@" | sort -u
+  sed -n -e 's#^diff --git a/.* b/##p' -e 's#^+++ b/##p' "$@" | sed 's/\t.*//' | sort -u
 }
 
 # hash_of NAME...: one hash over the names and contents of the patches, in this order.

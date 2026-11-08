@@ -125,9 +125,12 @@ venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A1
 
 # patch vllm (all compatible patches are written against 0.32.0; reapply after upgrades).
 # patches/apply.sh applies patches/series in order, with --fuzz 0, and stops at the first
-# patch that does not apply, by name. The order matters: a few patches carry hunk context
-# that an earlier patch adds. A new independent patch goes on the last line of
-# patches/series; one that must apply before an existing patch is listed before it.
+# patch that does not apply, by name. It patches a copy of the files first, so a failed run
+# leaves the venv as it was. A rerun on a venv it already patched is a no-op, and a venv that
+# carries a different series (an older checkout or pin) is refused: make a new venv for it.
+# The order matters: a few patches carry hunk context that an earlier patch adds. A new
+# independent patch goes on the last line of patches/series; one that must apply before an
+# existing patch is listed before it.
 # the venv's own vllm directory: python3 -m venv names it after the interpreter (python3.12,
 # python3.14, ...), so ask the interpreter rather than spelling the path (verify.sh and
 # kvarn/install.sh find it the same way; tail -n1 because importing vllm can log to stdout)
