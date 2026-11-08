@@ -113,6 +113,30 @@ difference is gotcha 16 below.
   `GPU_UTIL=0.93` in `.env` (see the WSL2 notes below, an independent
   containerized reproduction that predates this compose file).
 
+### RTX 20-series (Turing, sm75)
+
+A `turing` profile runs `start-turing.sh` (fp16 W4A16 + DFlash2, FlashInfer full CUDA graphs,
+CUDA GDN prefill; [turing.md](turing.md) has the measurements). It is for cards without usable
+bf16, such as two RTX 2080 Ti 22 GB.
+
+```bash
+echo 'GPU_COUNT=2' >> .env                 # the default hands the container one card
+docker compose build turing                # the prebuilt :latest image predates these patches
+docker compose --profile turing up -d
+docker compose logs -f turing
+```
+
+- `prepare` downloads the same `Qwen3.8-27B-W4A16-AutoRound` checkpoint and the DFlash2 drafter that
+  `start-turing.sh` expects, so `./models` is shared with the other profiles.
+- The six `*-sm75`, `*-fp16` and `terminal-request-progress` patches are in `patches/series` and are
+  applied at build time like the rest. The sm75 GDN kernel compiles once with the image's `nvcc`
+  before CUDA graph capture; the FlashInfer sm75 kernels JIT on first use into the `/cache` volume.
+- Watch prefill and decode speed from outside the container:
+  `docker compose exec turing venv/bin/python scripts/watch_turing.py` (`--metrics` for the
+  Prometheus view). The dashboard in [turing.md](turing.md) needs a Project Maya checkout, which
+  the image does not carry; it falls back to a plain curses display.
+- As with the other profiles, run one profile at a time per set of GPUs.
+
 ### Plain docker (no compose)
 
 Compose is convenience, not a requirement — profiles, `.env` passing and the

@@ -69,7 +69,8 @@ esac
 # versus ~16 s for Triton, with identical deterministic smoke-test completions.
 # Requires nvcc/C++; set VLLM_GDN_SM75=0 to use the original Triton prefill.
 export VLLM_GDN_SM75=${VLLM_GDN_SM75:-1}
-# Maya-style per-request terminal progress, also available to watch_turing.py.
+# Per-request terminal progress (modeled on Project Maya's console output, MIT), also
+# available to watch_turing.py.
 export VLLM_TERMINAL_PROGRESS=${VLLM_TERMINAL_PROGRESS:-1}
 export HYPERQWEN_LOG_FILE=${HYPERQWEN_LOG_FILE:-$REPO/logs/turing.log}
 mkdir -p "$(dirname "$HYPERQWEN_LOG_FILE")"
