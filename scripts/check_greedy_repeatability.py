@@ -5,7 +5,8 @@ Sends a fixed set of prompts (short, code, long-context) ROUNDS times each, one 
 prompt's output differs between rounds. Round 1 is a cold prefill; later rounds hit the prefix cache, so a
 difference between them also catches cached-vs-cold drift. With --save FILE the outputs are written; with
 --compare FILE they are checked against an earlier run, which is how to compare two server configurations
-(e.g. VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS=0 vs 1, or CUDA GDN on vs off). Concurrent requests are not exercised:
+(e.g. VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS=0 vs 1, or CUDA GDN on vs off). Note that a rebuilt torch.compile cache
+(a changed env knob, a new VLLM_CACHE_ROOT) can by itself change a few outputs; see docs/turing.md. Concurrent requests are not exercised:
 batch composition can change greedy output on any vLLM setup.
 
     python3 scripts/check_greedy_repeatability.py [--rounds 3] [--max-tokens 256] [--save out.json | --compare out.json]

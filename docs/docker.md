@@ -135,6 +135,8 @@ docker compose logs -f turing
   `docker compose exec turing venv/bin/python scripts/watch_turing.py` (`--metrics` for the
   Prometheus view). The dashboard in [turing.md](turing.md) needs a Project Maya checkout, which
   the image does not carry; it falls back to a plain curses display.
+- `turing-unlock` is a host kernel module and cannot be loaded from inside the container; with it
+  loaded on the host the container's GPUs run unlocked (see [turing.md](turing.md#turing-unlock-faster-fp16-tensor-cores)).
 - As with the other profiles, run one profile at a time per set of GPUs.
 
 ### Plain docker (no compose)
