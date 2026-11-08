@@ -1,7 +1,8 @@
 # Turing: two RTX 2080 Ti 22 GB cards
 
 Launch `bash start-turing.sh` for fp16 W4A16 target + DFlash2, TP=2,
-FlashInfer attention, and a 262136-token maximum request length.
+FlashInfer attention, and a 262136-token maximum request length. In Docker use
+`docker compose --profile turing up -d` ([docker.md](docker.md#rtx-20-series-turing-sm75)).
 
 ## Full CUDA graphs
 
@@ -120,6 +121,18 @@ The earlier Prometheus view is still available with
 totals since server startup. Those are aggregate summaries and do not offer
 Maya's request-specific progress. Several completions between polls are grouped.
 
+## Terminal dashboard
+
+`python3 scripts/tui_turing.py` draws [Project Maya](https://github.com/mw00/project-maya)'s boxed
+dashboard (big decode tok/s, prefill, context, per-GPU and hardware tiles, recent requests) from
+vLLM's `/metrics`, `nvidia-smi`, `/proc` and the `[hyperqwen]` request log. It never sends requests.
+Maya's code (MIT) is not vendored: the script imports it from your own Project Maya checkout, found
+through `MAYA_DIR`, `../project-maya` or `~/project-maya`, and runs under the checkout's `.venv` when
+the current Python has no Textual. Without a checkout it falls back to a plain curses display
+(`scripts/tui_turing_stdlib.py`). `HYPERQWEN_URL`, `VLLM_API_KEY` and `HYPERQWEN_LOG_FILE` select the
+server and log; `q` leaves and the server keeps running. `scripts/turing_metrics.py` is the adapter
+that turns vLLM's data into the JSON Maya's dashboard reads.
+
 ## Greedy repeatability
 
 `python3 scripts/check_greedy_repeatability.py` sends five fixed prompts (short, code,
@@ -140,3 +153,4 @@ change greedy output on any vLLM setup.
   separated, answering, done) is modeled on the terminal output of Project Maya (https://github.com/mw00/project-maya, MIT, Peasant Smith and the Project Maya contributors).
 - The CUDA GDN prefill kernel is adapted from weicj's
   [vLLM-2080Ti-Definitive](https://github.com/weicj/vLLM-2080Ti-Definitive) (Apache-2.0), see above.
+- `scripts/tui_turing.py` imports the dashboard modules of the same project at run time (see above).
