@@ -49,6 +49,11 @@ docker compose --profile batch  up -d     # API backend, many concurrent request
 
 First start pulls the image (9.5 GB) and requantizes the model (~20 GB, once,
 into `./models`), then serves on `:18020`. One GPU runs one mode at a time.
+While the model downloads, compose shows `prepare-1 Waiting` and the server
+container stays at `Starting`; on a slow link that is tens of minutes, not a hang.
+Follow it with `docker compose logs -f prepare` (then `make logs` for the server).
+The model needs one card with 24 GB or more, or two cards together: on 16 GB or smaller cards, see
+[docs/multi-gpu.md](docs/multi-gpu.md) before the first start.
 
 - **Before exposing it** — compose publishes the port on `127.0.0.1` only (`BIND` in `.env`, default `127.0.0.1`), so another machine cannot reach it until you set a key and `BIND=0.0.0.0`; outside a container, no key means the server binds `127.0.0.1` only:
   `echo "VLLM_API_KEY=$(openssl rand -hex 24)" >> .env && echo BIND=0.0.0.0 >> .env`
