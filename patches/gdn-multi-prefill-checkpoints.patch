@@ -1,0 +1,674 @@
+Opt-in exact GDN states at periodic retention boundaries inside each prefill,
+in addition to the existing final reusable hash checkpoint. Coordinate
+reservation, worker metadata and export; preserve the default-off path.
+
+Reuses the numerically verified exporter from cd37c261a1a2 (#425); multiple
+interior states address the deep-divergence criterion that version lacked.
+
+Kind: feature
+What: opt-in CUDA Triton/FLA GDN multi-checkpoint prefill export and allocation for deep-divergence prefix reuse
+Upstream: syv-ai/HyperQwen #392 and #425 (closed single-checkpoint version)
+Cut-against: 0.33.0: Triton-only opt-in; upstream FlashInfer checkpoint planning/export stays unchanged
+Retires-when: upstream GDN exports and allocates equivalent periodic interior states
+
+--- exported from d0c6405 (gdn-multi-prefill-checkpoints); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index b7508f5..d31264c 100755
+--- a/envs.py
++++ b/envs.py
+@@ -16,6 +16,7 @@
+     VLLM_PORT: int | None = None
+     VLLM_RPC_BASE_PATH: str = tempfile.gettempdir()
+     VLLM_USE_MODELSCOPE: bool = False
++    VLLM_GDN_PREFILL_CHECKPOINTS: bool = False
+     VLLM_USE_FASTOKENS: bool = False
+     VLLM_RINGBUFFER_WARNING_INTERVAL: int = 60
+     VLLM_NCCL_SO_PATH: str | None = None
+@@ -783,6 +784,9 @@
+     # (`hf`, `deepseek_v32`, `deepseek_v4`, …). The `fastokens`
+     # Python package must be installed.
+     "VLLM_USE_FASTOKENS": lambda: bool(int(os.getenv("VLLM_USE_FASTOKENS", "0"))),
++    "VLLM_GDN_PREFILL_CHECKPOINTS": lambda: bool(
++        int(os.getenv("VLLM_GDN_PREFILL_CHECKPOINTS", "0"))
++    ),
+     # Interval in seconds to log a warning message when the ring buffer is full
+     "VLLM_RINGBUFFER_WARNING_INTERVAL": lambda: int(
+         os.environ.get("VLLM_RINGBUFFER_WARNING_INTERVAL", "60")
+diff --git a/model_executor/layers/mamba/checkpoint.py b/model_executor/layers/mamba/checkpoint.py
+index da74702..313424a 100644
+--- a/model_executor/layers/mamba/checkpoint.py
++++ b/model_executor/layers/mamba/checkpoint.py
+@@ -14,6 +14,7 @@
+ from vllm.v1.kv_cache_interface import (
+     MambaSpec,
+     get_mamba_prefill_checkpoint_position,
++    get_mamba_periodic_prefill_checkpoints,
+     is_mamba_prefill_checkpoint_valid,
+ )
+ 
+@@ -84,6 +85,9 @@
+     # with the same spec can re-derive its own ``state_indices``.
+     request_rows: torch.Tensor | None = None
+     block_cols: torch.Tensor | None = None
++    # Relative source row for each flattened export. None means one per row,
++    # preserving the upstream Mamba2/KDA metadata layout.
++    source_rows: list[int] | None = None
+ 
+     def regather_state_indices(
+         self, block_table: torch.Tensor
+@@ -140,6 +144,31 @@
+             cache_hit_alignment_tokens=cache_hit_alignment_tokens,
+             num_hash_lookahead_tokens=self.vllm_config.num_hash_lookahead_tokens,
+         )
++        source_rows = None
++        interval = self.kv_cache_spec.prefill_checkpoint_interval
++        if interval:
++            offsets, cols, sources, rows = [], [], [], []
++            for i, row in enumerate(request_rows):
++                start = seq_lens[row] - query_lens[i]
++                exports = get_mamba_periodic_prefill_checkpoints(
++                    start,
++                    seq_lens[row],
++                    interval,
++                    block_size,
++                    hash_block_size,
++                    self.kv_cache_spec.prefill_checkpoint_alignment,
++                    checkpoint_cols[i],
++                    start + checkpoint_offsets[i] if checkpoint_offsets[i] else 0,
++                )
++                if checkpoint_offsets[i]:
++                    exports.append((start + checkpoint_offsets[i], checkpoint_cols[i]))
++                for position, col in sorted(exports):
++                    offsets.append(position - start)
++                    cols.append(col)
++                    sources.append(i)
++                    rows.append(row)
++            checkpoint_offsets, checkpoint_cols = offsets, cols
++            request_rows, source_rows = rows, sources
+         if not any(checkpoint_offsets):
+             return None
+         checkpoint_offsets_tensor = async_tensor_h2d(
+@@ -162,6 +191,7 @@
+             query_lens=query_lens,
+             request_rows=request_rows_tensor,
+             block_cols=checkpoint_cols_tensor,
++            source_rows=source_rows,
+         )
+ 
+ 
+diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index 3eb14c0..87ce6c0 100644
+--- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -27,6 +27,7 @@
+ )
+ from vllm.forward_context import ForwardContext, get_forward_context
+ from vllm.logger import init_logger
++from vllm.v1.kv_cache_interface import MambaSpec
+ from vllm.model_executor.custom_op import CustomOp, PluggableLayer
+ from vllm.model_executor.layers.layernorm import RMSNormGated
+ from vllm.model_executor.layers.linear import (
+@@ -751,6 +752,42 @@
+ 
+     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec | None:
+         spec = super().get_kv_cache_spec(vllm_config)
++        if envs.VLLM_GDN_PREFILL_CHECKPOINTS and isinstance(spec, MambaSpec):
++            if vllm_config.cache_config.mamba_cache_mode != "align":
++                raise RuntimeError(
++                    "GDN prefill checkpoints require mamba_cache_mode=align"
++                )
++            # Only the tested CUDA Triton/FLA prefill path exports checkpoints.
++            # Unsupported paths must not reserve blocks they cannot write.
++            if (
++                not current_platform.is_cuda()
++                or _resolve_gdn_prefill_backend(vllm_config)[1] != "triton"
++            ):
++                raise RuntimeError(
++                    "GDN prefill checkpoints require the CUDA Triton/FLA "
++                    "prefill backend. Select gdn_prefill_backend=triton."
++                )
++            interval = vllm_config.cache_config.prefix_cache_retention_interval
++            if interval == 0:
++                raise RuntimeError(
++                    "GDN periodic prefill checkpoints require dense retention "
++                    "(prefix_cache_retention_interval=None) or a positive interval"
++                )
++            interval = interval or spec.block_size
++            if interval % spec.block_size:
++                raise RuntimeError(
++                    "GDN checkpoint interval must be a multiple of mamba_block_size"
++                )
++            # At most ceil(batch/interval) periodic destinations plus the final
++            # hash checkpoint. Budget each in-flight batch in MambaSpec.
++            max_tokens = vllm_config.scheduler_config.max_num_batched_tokens
++            return replace(
++                spec,
++                num_prefill_checkpoint_blocks=(max_tokens + interval - 1) // interval
++                + 1,
++                prefill_checkpoint_alignment=1,
++                prefill_checkpoint_interval=interval,
++            )
+         if not self._exports_checkpoints or not isinstance(spec, MambaSpec):
+             return spec
+         # FlashInfer emits states at one stride for the whole batch, the gcd of
+@@ -1088,6 +1125,86 @@
+ 
+         return query, key, value
+ 
++    def _store_gdn_checkpoint_conv(
++        self,
++        attn_metadata,
++        raw_qkv: torch.Tensor,
++        conv_state: torch.Tensor,
++    ) -> None:
++        """Save the exact pre-convolution history before normal cache updates."""
++        plan = attn_metadata.checkpoint_plan
++        if plan is None:
++            return
++        width = self.conv_kernel_size - 1
++        for i, ((_, length), start) in enumerate(
++            zip(plan.source_slices, plan.conv_source_starts)
++        ):
++            dst = plan.state_indices[i : i + 1]
++            history = raw_qkv[start : start + length].transpose(0, 1)
++            if length < width:
++                rows = plan.non_spec_rows[i : i + 1]
++                src = attn_metadata.non_spec_state_indices_tensor.index_select(0, rows)
++                initial = conv_state.index_select(0, src.to(torch.int64))[..., :width]
++                has_initial = attn_metadata.has_initial_state.index_select(0, rows)
++                initial = torch.where(has_initial[:, None, None], initial, 0)
++                history = torch.cat(
++                    (initial.squeeze(0), history.to(initial.dtype)), dim=-1
++                )
++            # Extra speculative slots are scratch, not part of the resumed
++            # convolution history. A fresh request starts at accepted index 1.
++            saved = torch.zeros_like(conv_state.index_select(0, dst))
++            saved[..., :width] = history[..., -width:].to(saved.dtype)
++            conv_state.index_copy_(0, dst, saved)
++
++    def _store_gdn_prefill_checkpoint(
++        self,
++        attn_metadata,
++        initial_state,
++        q,
++        k,
++        v,
++        g,
++        beta,
++        ssm_state,
++    ) -> None:
++        """Recompute selected prefixes; never substitute a full row's end state.
++
++        Convolution is already causal and normalized Q/K/V/g/beta can be
++        cropped directly. Prefix FLA metadata is prepared on the CPU by the
++        builder, so exporting adds no device-to-host synchronization.
++        """
++        plan = attn_metadata.checkpoint_plan
++        if plan is None:
++            return
++
++        for batch in plan.export_batches or [plan]:
++
++            def crop(value):
++                return torch.cat(
++                    [
++                        value[:, start : start + length]
++                        for start, length in batch.source_slices
++                    ],
++                    dim=1,
++                )
++
++            _, checkpoints = self.chunk_gated_delta_rule(
++                q=crop(q),
++                k=crop(k),
++                v=crop(v),
++                g=crop(g),
++                beta=crop(beta),
++                initial_state=initial_state.index_select(0, batch.prefill_rows),
++                output_final_state=True,
++                cu_seqlens=batch.query_start_loc,
++                chunk_indices=batch.chunk_indices,
++                chunk_offsets=batch.chunk_offsets,
++                use_qk_l2norm_in_kernel=False,
++            )
++            ssm_state.index_copy_(
++                0, batch.state_indices, checkpoints.to(ssm_state.dtype)
++            )
++
+     def forward(
+         self,
+         hidden_states: torch.Tensor,
+@@ -1655,6 +1772,11 @@
+             mixed_qkv_spec = None
+             mixed_qkv_non_spec = mixed_qkv
+ 
++        if attn_metadata.checkpoint_plan is not None:
++            assert mixed_qkv_non_spec is not None
++            self._store_gdn_checkpoint_conv(attn_metadata, mixed_qkv_non_spec,
++                                            conv_state)
++
+         # 1.1: Process the multi-query part
+         if spec_sequence_masks is not None:
+             # spec_state_indices_tensor is always set when spec_sequence_masks is set
+@@ -1833,6 +1955,11 @@
+             initial_state[~prefill_has_initial_state, ...] = 0
+             plan = attn_metadata.flashinfer_checkpoint_plan
+             if plan is None:
++                if self.gdn_prefill_backend == "triton":
++                    self._store_gdn_prefill_checkpoint(
++                        attn_metadata, initial_state, query_non_spec, key_non_spec,
++                        value_non_spec, g_non_spec, beta_non_spec, ssm_state,
++                    )
+                 (
+                     core_attn_out_non_spec,
+                     last_recurrent_state,
+diff --git a/v1/attention/backends/gdn_attn.py b/v1/attention/backends/gdn_attn.py
+index 660ef53..83342fa 100644
+--- a/v1/attention/backends/gdn_attn.py
++++ b/v1/attention/backends/gdn_attn.py
+@@ -85,6 +85,23 @@
+         return True
+ 
+ 
++@dataclass
++class GDNPrefillCheckpointPlan:
++    # All Python values are derived from CPU scheduling metadata, once per step.
++    source_slices: list[tuple[int, int]]
++    conv_source_starts: list[int]
++    prefill_rows: torch.Tensor
++    non_spec_rows: torch.Tensor
++    state_indices: torch.Tensor
++    query_start_loc: torch.Tensor
++    chunk_indices: torch.Tensor | None
++    chunk_offsets: torch.Tensor | None
++    # Split duplicated prefixes into bounded FLA calls. A single prefill with
++    # many checkpoints must not concatenate O(query_length ** 2) tokens into
++    # one temporary allocation on every layer.
++    export_batches: list["GDNPrefillCheckpointPlan"] | None = None
++
++
+ @dataclass
+ class GDNAttentionMetadata:
+     num_prefills: int
+@@ -97,6 +114,7 @@
+ 
+     checkpoint: MambaPrefillCheckpointMetadata | None = None
+     flashinfer_checkpoint_plan: GDNFlashInferCheckpointPlan | None = None
++    checkpoint_plan: GDNPrefillCheckpointPlan | None = None
+     has_initial_state: torch.Tensor | None = None
+ 
+     spec_query_start_loc: torch.Tensor | None = None  # shape: [num_spec_decodes + 1,]
+@@ -187,6 +205,7 @@
+             and device.type == "cuda"
+             # Not isinstance: KDA's RecoverSSM/checkpoint metadata is per group.
+             and type(self) is GDNAttentionMetadataBuilder
++            and kv_cache_spec.num_prefill_checkpoint_blocks == 0
+         )
+         if self.supports_update_block_table:
+             # Opts into MRV2's CUDA-only aligned-index precompute.
+@@ -310,6 +329,77 @@
+             ),
+         )
+ 
++    def _build_checkpoint_plan(
++        self,
++        checkpoint: MambaPrefillCheckpointMetadata,
++        num_decodes: int,
++        num_decode_tokens: int,
++        non_spec_query_start_loc_cpu: torch.Tensor,
++        device: torch.device,
++    ) -> GDNPrefillCheckpointPlan | None:
++        offsets = checkpoint.offsets
++        assert offsets is not None
++        # Geometry alone is not an allocation acknowledgement. The scheduler
++        # can decline geometrically valid positions and represent them with
++        # the null block. Read the small list
++        # once per metadata build; never write into the shared null state.
++        destinations = checkpoint.state_indices.cpu().tolist()
++        source_rows = checkpoint.source_rows
++        if source_rows is None:
++            source_rows = list(range(len(offsets)))
++        selected = [
++            i
++            for i, offset in enumerate(offsets)
++            if source_rows[i] >= num_decodes
++            and offset > 0
++            and destinations[i] != NULL_BLOCK_ID
++        ]
++        if not selected:
++            return None
++        starts = non_spec_query_start_loc_cpu.tolist()
++
++        def assemble(entries_cpu):
++            lengths = [offsets[i] for i in entries_cpu]
++            cu_cpu = torch.tensor(
++                [0, *torch.tensor(lengths).cumsum(0).tolist()], dtype=torch.int32
++            )
++            cu = async_tensor_h2d(cu_cpu.tolist(), dtype=torch.int32, device=device)
++            ci, co = self._build_chunk_metadata(cu, cu_cpu, device)
++            rows = async_tensor_h2d(
++                [source_rows[i] for i in entries_cpu], dtype=torch.int64, device=device
++            )
++            entries = async_tensor_h2d(entries_cpu, dtype=torch.int64, device=device)
++            return GDNPrefillCheckpointPlan(
++                source_slices=[
++                    (starts[source_rows[i]] - num_decode_tokens, offsets[i])
++                    for i in entries_cpu
++                ],
++                conv_source_starts=[starts[source_rows[i]] for i in entries_cpu],
++                prefill_rows=rows - num_decodes,
++                non_spec_rows=rows,
++                state_indices=checkpoint.state_indices.index_select(0, entries).to(
++                    torch.int64
++                ),
++                query_start_loc=cu,
++                chunk_indices=ci,
++                chunk_offsets=co,
++            )
++
++        plan = assemble(selected)
++        budget = starts[-1] - num_decode_tokens
++        batches, batch, tokens = [], [], 0
++        for entry in selected:
++            length = offsets[entry]
++            if batch and tokens + length > budget:
++                batches.append(batch)
++                batch, tokens = [], 0
++            batch.append(entry)
++            tokens += length
++        batches.append(batch)
++        if len(batches) > 1:
++            plan.export_batches = [assemble(batch) for batch in batches]
++        return plan
++
+     def build(  # type: ignore[override]
+         self,
+         common_prefix_len: int,
+@@ -601,6 +691,15 @@
+                 rows=plan[len(cu_starts) :],
+             )
+ 
++        checkpoint_plan = None
++        if (checkpoint is not None and self.gdn_prefill_backend == "triton"
++                and type(self) is GDNAttentionMetadataBuilder):
++            assert non_spec_query_start_loc_cpu is not None
++            checkpoint_plan = self._build_checkpoint_plan(
++                checkpoint, num_decodes, num_decode_tokens,
++                non_spec_query_start_loc_cpu, query_start_loc.device,
++            )
++
+         # Function code counted on either presency non-spec decode or spec decode,
+         # but not both.
+         assert not (num_decodes > 0 and num_spec_decodes > 0), (
+@@ -680,6 +779,7 @@
+             num_actual_tokens=m.num_actual_tokens,
+             checkpoint=checkpoint,
+             flashinfer_checkpoint_plan=flashinfer_checkpoint_plan,
++            checkpoint_plan=checkpoint_plan,
+             has_initial_state=has_initial_state,
+             chunk_indices=chunk_indices,
+             chunk_offsets=chunk_offsets,
+diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
+index 4914fa0..0a68a60 100644
+--- a/v1/core/kv_cache_coordinator.py
++++ b/v1/core/kv_cache_coordinator.py
+@@ -234,6 +234,7 @@
+ 
+         """
+         num_blocks_to_allocate = 0
++        periodic_prefill_end = prefill_end
+         if self.retention_interval != 0:
+             prefill_end = 0
+         for i, manager in enumerate(self.single_type_managers):
+@@ -258,7 +259,12 @@
+                     num_local_computed_tokens,
+                     num_tokens_main_model,
+                     apply_admission_cap=apply_admission_cap,
+-                    prefill_end=prefill_end,
++                    prefill_end=(
++                        periodic_prefill_end
++                        if isinstance(manager.kv_cache_spec, MambaSpec)
++                        and manager.kv_cache_spec.prefill_checkpoint_interval
++                        else prefill_end
++                    ),
+                 )
+         return num_blocks_to_allocate
+ 
+diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
+index bbcec25..c954eb3 100644
+--- a/v1/core/single_type_kv_cache_manager.py
++++ b/v1/core/single_type_kv_cache_manager.py
+@@ -46,6 +46,7 @@
+     SlidingWindowMLASpec,
+     SlidingWindowSpec,
+     get_mamba_prefill_checkpoint_position,
++    get_mamba_periodic_prefill_checkpoints,
+     is_mamba_prefill_checkpoint_valid,
+ )
+ from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
+@@ -1469,6 +1470,7 @@
+             # checkpoint position and reserved block index for the current
+             # allocation.
+             self._checkpoints: dict[str, tuple[int, int]] = {}
++            self._periodic_checkpoints: dict[str, list[int]] = {}
+             # Requests that registered their own last-prompt-boundary partial
+             # tail (producers). A later CoW hands its private copy to the
+             # connector; a request that finishes first hands off this table
+@@ -1714,7 +1716,13 @@
+         blocks = self.req_to_blocks[request_id]
+         return (
+             self.has_prefill_checkpoint_blocks
+-            and query_end >= prefill_end
++            and (
++                query_end >= prefill_end
++                or (
++                    self.kv_cache_spec.prefill_checkpoint_interval
++                    and query_start < prefill_end
++                )
++            )
+             and is_mamba_prefill_checkpoint_valid(
+                 query_start=query_start,
+                 query_end=query_end,
+@@ -1801,8 +1809,9 @@
+             # Keyed on the chunk end like the worker's
+             # `compute_mamba_prefill_checkpoints`, which writes the state there.
+             # The helper returns a boundary strictly below its input, so every
+-            # chunk has one; under sparse retention only the prefill-end chunk's
+-            # is kept, so `prefill_end` skips reserving blocks for the others.
++            # chunk has one; the upstream path can skip non-final chunks under
++            # sparse retention. Periodic exporters also reserve intermediate
++            # chunks, using the actual prefill end supplied by the coordinator.
+             checkpoint_position = get_mamba_prefill_checkpoint_position(
+                 num_tokens,
+                 self.cache_hit_alignment_tokens,
+@@ -1818,9 +1827,24 @@
+             ):
+                 checkpoint_position = 0
+             checkpoint_block = int(checkpoint_position > 0)
++            checkpoint_idx = (
++                cdiv(num_tokens, self.block_size) - 2 if checkpoint_block else -1
++            )
++            periodic = []
++            if total_computed_tokens < prefill_end:
++                periodic = get_mamba_periodic_prefill_checkpoints(
++                    total_computed_tokens,
++                    num_tokens,
++                    self.kv_cache_spec.prefill_checkpoint_interval,
++                    self.block_size,
++                    self.block_pool.hash_block_size,
++                    self.kv_cache_spec.prefill_checkpoint_alignment,
++                    checkpoint_idx,
++                    checkpoint_position,
++                )
+             if not apply_admission_cap:
++                self._periodic_checkpoints[request_id] = [col for _, col in periodic]
+                 if checkpoint_position > 0:
+-                    checkpoint_idx = cdiv(num_tokens, self.block_size) - 2
+                     self._checkpoints[request_id] = (
+                         checkpoint_position,
+                         checkpoint_idx,
+@@ -1837,7 +1861,13 @@
+             num_evictable_computed_blocks = self._get_num_evictable_blocks(
+                 new_computed_blocks
+             )
+-            return num_new_blocks + num_evictable_computed_blocks
++            periodic_count = len(periodic)
++            if apply_admission_cap:
++                periodic_count = min(
++                    periodic_count,
++                    max(0, self.kv_cache_spec.num_prefill_checkpoint_blocks - 1),
++                )
++            return num_new_blocks + periodic_count + num_evictable_computed_blocks
+ 
+     def allocate_new_blocks(
+         self, request_id: str, num_tokens: int, num_tokens_main_model: int
+@@ -1865,6 +1895,7 @@
+                 cdiv(num_tokens, self.block_size) + self.num_speculative_blocks
+             )
+             checkpoint_block = int(request_id in self._checkpoints)
++            periodic_cols = self._periodic_checkpoints.get(request_id, [])
+             partial_hit = self._partial_hit_reqs.get(request_id)
+             has_partial_hit = partial_hit is not None
+             # `num_required_blocks` might be less than `len(req_blocks)` if blocks are
+@@ -1873,6 +1904,7 @@
+                 num_required_blocks <= len(req_blocks)
+                 and not has_partial_hit
+                 and not checkpoint_block
++                and not periodic_cols
+             ):
+                 self._allocated_block_reqs.add(request_id)
+                 return []
+@@ -1910,6 +1942,15 @@
+                     for block_idx in range(
+                         prev_block_len - self.num_speculative_blocks, prev_block_len
+                     ):
++                        if block_idx in periodic_cols:
++                            # Its physical column is already known to the
++                            # worker. Keep this exclusively owned scratch slot
++                            # in place for export, and replace the moved tail's
++                            # missing scratch with a fresh page below.
++                            assert self.block_pool.is_block_writable(
++                                req_blocks[block_idx]
++                            )
++                            continue
+                         if block_idx < num_skipped_blocks - checkpoint_block:
+                             self._relocate_speculative_block(req_blocks, block_idx)
+                         else:
+@@ -1917,11 +1958,22 @@
+                 num_new_blocks = max(num_required_blocks - len(req_blocks), 0)
+                 if has_partial_hit:
+                     num_new_blocks = max(num_new_blocks, 0) + 1
+-                max_new_blocks = 1 + int(has_partial_hit) + checkpoint_block
++                missing_periodic = [
++                    col for col in periodic_cols if req_blocks[col].is_null
++                ]
++                num_new_blocks += len(missing_periodic)
++                max_new_blocks = (
++                    1 + int(has_partial_hit) + checkpoint_block + len(periodic_cols)
++                )
+                 if not blocks_allocated:
+                     max_new_blocks += self.num_speculative_blocks
+                 assert num_new_blocks <= max_new_blocks
+                 new_blocks = self.block_pool.get_new_blocks(num_new_blocks)
++                if missing_periodic:
++                    periodic_blocks = new_blocks[-len(missing_periodic) :]
++                    new_blocks = new_blocks[: -len(missing_periodic)]
++                    for col, block in zip(missing_periodic, periodic_blocks):
++                        req_blocks[col] = block
+                 returned_blocks = req_blocks[prev_block_len:]
+                 if partial_hit is not None:
+                     block_idx, source_block = partial_hit
+@@ -1958,10 +2010,7 @@
+                             # The moved entry is only filled by this step's
+                             # copy, so defer same-step hits on it.
+                             self.cached_blocks_this_step.add(cow_block.block_hash)
+-                        if (
+-                            _KEEP_ALIGN_CHECKPOINTS
+-                            and cow_block.block_hash is not None
+-                        ):
++                        if _KEEP_ALIGN_CHECKPOINTS and cow_block.block_hash is not None:
+                             # This block now carries the chain's reachable
+                             # boundary state — the one snapshot the NEXT turn's
+                             # hit resumes from. Releasing it right after the
+@@ -2032,6 +2081,7 @@
+             self.last_state_block_idx.pop(request_id, None)
+             self._num_retired_blocks.pop(request_id, None)
+             self._checkpoints.pop(request_id, None)
++            self._periodic_checkpoints.pop(request_id, None)
+             self._producer_partial_tail_reqs.pop(request_id, None)
+             # An offer is only guaranteed to hold committed bytes until the end
+             # of the pass that made it. This request's blocks are going back to
+diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
+index 054c623..47f2b30 100644
+--- a/v1/kv_cache_interface.py
++++ b/v1/kv_cache_interface.py
+@@ -1100,6 +1100,9 @@
+     num_speculative_blocks: int = 0
+     num_prefill_checkpoint_blocks: int = 0
+     prefill_checkpoint_alignment: int | None = None
++    # Opt-in backends that export several exact states in one prefill. Zero
++    # preserves the upstream single-checkpoint allocation/metadata contract.
++    prefill_checkpoint_interval: int = 0
+     num_heads: int = 1
+     tokens_per_state: int = -1
+     # False: the state is sharded across TP ranks (e.g. GDN). True: every TP
+@@ -1143,6 +1146,11 @@
+                 state_blocks
+                 + self.num_speculative_blocks
+                 + self.num_prefill_checkpoint_blocks
++                * (
++                    vllm_config.max_concurrent_batches
++                    if self.prefill_checkpoint_interval
++                    else 1
++                )
+             )
+         else:
+             return self.page_size_bytes * (1 + self.num_speculative_blocks)
+@@ -1167,6 +1175,7 @@
+             and spec.num_speculative_blocks == self.num_speculative_blocks
+             and spec.num_prefill_checkpoint_blocks == self.num_prefill_checkpoint_blocks
+             and spec.prefill_checkpoint_alignment == self.prefill_checkpoint_alignment
++            and spec.prefill_checkpoint_interval == self.prefill_checkpoint_interval
+             and spec.page_size_bytes == self.page_size_bytes
+             and spec.tp_replicated == self.tp_replicated
+             for spec in kv_cache_specs.values()
+@@ -1193,6 +1202,38 @@
+     return max(checkpoint_position, 0)
+ 
+ 
++def get_mamba_periodic_prefill_checkpoints(
++    query_start: int,
++    query_end: int,
++    interval: int,
++    mamba_block_size: int,
++    hash_block_size: int,
++    checkpoint_alignment: int | None,
++    checkpoint_col: int = -1,
++    checkpoint_position: int = 0,
++) -> list[tuple[int, int]]:
++    """Exact periodic states strictly inside a query, never its source slot.
++
++    Columns keep their normal positional meaning. The separately exported
++    final hash checkpoint may borrow a column; do not also write a periodic
++    state into that same physical destination.
++    """
++    if interval <= 0 or checkpoint_alignment is None:
++        return []
++    assert interval % mamba_block_size == 0
++    assert interval % hash_block_size == 0
++    initial_col = (query_start - 1) // mamba_block_size
++    first = (query_start // interval + 1) * interval
++    return [
++        (position, position // mamba_block_size - 1)
++        for position in range(first, query_end, interval)
++        if position // mamba_block_size - 1 > initial_col
++        and position // mamba_block_size - 1 != checkpoint_col
++        and position != checkpoint_position
++        and (position - query_start) % checkpoint_alignment == 0
++    ]
++
++
+ def is_mamba_prefill_checkpoint_valid(
+     query_start: int,
+     query_end: int,

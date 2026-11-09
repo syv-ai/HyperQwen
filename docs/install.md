@@ -26,13 +26,42 @@ weights with the streamer instead of the stock loader (gotcha 45: the stock
 loader peaks at whatever RAM exists; the streamer is bounded and faster). Everything below is CPU-safe to run while the GPU does other
 things; the container details live in [docker.md](docker.md).
 
-**Upgrading from an earlier pin.** When `docker/requirements.txt` moves to a new vLLM release, build a new
-venv instead of upgrading the old one in place: move it aside for rollback (`mv venv venv-0.32.0`), then run
-every step below from `python3 -m venv venv` on. A patched venv does not upgrade cleanly. pip replaces only the
-files the wheel owns, so the KVarN modules copied in by `kvarn/install.sh` stay behind, and applying the series
-to a tree that is not pristine can leave a patch half-applied: GNU patch writes the files that matched before it
-stops at the one that did not ([#437](https://github.com/syv-ai/HyperQwen/issues/437)). The same fix applies
-when `patches/apply.sh` has already failed partway: a fresh venv, then the steps below.
+## Recovering after a failed patch apply
+
+Since [#449](https://github.com/syv-ai/HyperQwen/pull/449), `patches/apply.sh` stages
+every patch in a copy and writes nothing into the venv unless the whole run applies,
+and `kvarn/install.sh` copies its modules only after its patches apply. A failed run
+from this checkout therefore leaves the venv as it was: fix the cause it names and
+rerun. A venv that an earlier checkout's scripts failed on can still be half patched:
+GNU patch wrote the matching hunks of the failing patch, earlier patches stayed
+applied, and KVarN modules could be importable without their `vllm.envs` entries, as in
+[#437](https://github.com/syv-ai/HyperQwen/issues/437). Recover such a venv as below.
+
+Running `python3 -m venv venv` again on that directory does not remove the old
+packages or partial patches. Preserve the failed environment for diagnosis and
+start with a fresh directory. From the repository root, after stopping any server
+using this venv:
+
+```bash
+test ! -e venv.failed && test ! -L venv.failed || { echo "Choose an unused backup path first" >&2; exit 1; }
+mv -- venv venv.failed && python3 -m venv venv
+```
+
+Then follow the installation commands below from the `venv/bin/pip install` step,
+using this checkout's pin in `docker/requirements.txt`, followed by the full patch
+series and any plugins you use. Existing model downloads and preparation do not
+need repeating merely because the venv was replaced. Keep `venv.failed` until the
+new environment passes `bash verify.sh --install` with exit 0, then verify your
+model/server normally. A dependency install failure must be resolved before
+continuing; do not loosen `--fuzz 0` or skip failed hunks.
+
+**Upgrading from an earlier pin.** When `docker/requirements.txt` moves to a new vLLM
+release, build a new venv instead of upgrading the old one in place. Preserve the
+old directory for rollback as above, then repeat every step below from
+`python3 -m venv venv` on. pip replaces only files the wheel owns, so custom modules
+copied into the old venv can otherwise remain alongside the new pin.
+
+## Install
 
 ```bash
 git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
