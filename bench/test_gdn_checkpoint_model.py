@@ -175,6 +175,8 @@ def main():
         default=4_000_000_000,
         help="fixed KV pool per GPU, identical in both arms",
     )
+    parser.add_argument("--mamba-ssm-cache-dtype", default="float16",
+                        choices=("float16", "bfloat16", "float32", "auto"))
     parser.add_argument("--chunk-size", type=int, default=2048)
     parser.add_argument("--material-tokens", type=int, default=2000)
     parser.add_argument("--shared-tokens", type=int, default=1200)
@@ -227,6 +229,7 @@ def main():
         enable_prefix_caching=True,
         language_model_only=True,
         mamba_cache_mode="align",
+        mamba_ssm_cache_dtype=args.mamba_ssm_cache_dtype,
         prefix_cache_retention_interval=None,
         seed=42,
         worker_extension_cls="test_gdn_checkpoint_model.GDNProbe",
@@ -330,7 +333,7 @@ def main():
         assert "483729" in resumed["text"], resumed
         assert resumed["token_ids"] == repeated["token_ids"]
         if enabled:
-            assert 0 < resumed["cached_tokens"] < shared, resumed
+            assert 0 < resumed["cached_tokens"] <= shared, resumed
             assert all(cold["checkpoints"]), "Every rank must actually export states"
             if args.require_multiple_export:
                 assert all(

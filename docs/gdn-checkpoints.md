@@ -58,6 +58,8 @@ cached weights, with two free GPUs. The model probe sets dense retention in
 both arms, greedy sampling, a fixed GPU KV budget and frozen prompt token IDs.
 Its default prompt contains 2000 material tokens; the second request shares
 1200, then changes the suffix, inside the first shipped 2048-token chunk.
+The recurrent cache defaults to `--mamba-ssm-cache-dtype float16`, as in the
+launchers; `auto` retains the earlier probe's checkpoint-native cache dtype.
 These lengths are fixed before inference and are not tuned to exported offsets.
 Use `--chunk-size 8192 --material-tokens 8000 --shared-tokens 4800` to reproduce
 the historical larger-chunk profile, and `--tensor-parallel-size 1` on a single
@@ -82,7 +84,8 @@ a warm repeat is not the deep-divergence verdict.
 
 ## Scoped 0.33 validation
 
-On two RTX A4000s, TP=2, BF16/FLASH_ATTN, eager, no speculation, dense
+Initial diagnostic on two RTX A4000s, TP=2, BF16/FLASH_ATTN, eager, no speculation,
+`--mamba-ssm-cache-dtype auto` (FP32), dense
 retention, 2048-token chunks, 4e9 KV bytes per GPU, seed 42: the default
 2000-material / 1200-shared-token probe produced an enabled-only 784-token
 hit (default off: 0). All output token IDs matched and the passcode was
