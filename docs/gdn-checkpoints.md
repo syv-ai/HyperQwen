@@ -79,3 +79,22 @@ probe source hashes, prompt hashes and output tokens, correct
 passcodes, multiple checkpoints on every TP rank, and an enabled-only hit.
 It records elapsed request time, cache hits and peak GPU memory separately;
 a warm repeat is not the deep-divergence verdict.
+
+## Scoped 0.33 validation
+
+On two RTX A4000s, TP=2, BF16/FLASH_ATTN, eager, no speculation, dense
+retention, 2048-token chunks, 4e9 KV bytes per GPU, seed 42: the default
+2000-material / 1200-shared-token probe produced an enabled-only 784-token
+hit (default off: 0). All output token IDs matched and the passcode was
+correct. One fresh-process pair after warmup/cache reset measured divergent
+request time 0.619 / 1.138 s on/off and cold time 1.651 / 1.641 s. Peak torch
+allocation on the cold request was 12,079,501,312 / 12,014,858,752 bytes per
+rank. These are request durations, not TTFT, and one pair is not a general
+speed or quality claim. The first divergence is fixed at token 1200,
+inside the first 2048-token chunk; it is not chosen from observed exports.
+
+The historical 8000/4800 probe at 8192-token chunks remains a separate
+profile. Its positive result does not imply an extra hit at 2048 chunks:
+the maintainer observed that the default path already hits for that
+long-prompt shape. Likewise, this short probe does not establish a benefit
+for every longer conversation or retention interval.
