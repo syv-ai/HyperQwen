@@ -82,7 +82,7 @@ Why these values:
   there too.
 - **`NSEG=16`** is fixed instead of adaptive. Adaptive is fine at C4 but at C8
   long context it creates only 2 segments → `8 × 1 × 4 × 2 = 64` blocks,
-  leaving 44 of the 108 GA100 SMs idle (4.6% slower than fixed 16).
+  leaving 10 of the 74 SMs on this card idle (4.6% slower than fixed 16).
 - **`VERIFY=0`** while the bind mounts are active: `verify.sh` matches patch
   lines and will report these files as modified.
 - **`VLLM_MARLIN_REPACK_STAGED=1`** and
@@ -148,8 +148,9 @@ C1 192K, so it is only worth using if C4 long-context traffic dominates.
 
 ## Caveats
 
-- Not measured: C8 at 64K+ (8 × 64K ≈ 89% of the 589k-token pool) and more
-  than 8 streams.
+- Not measured: C8 at 64K+ (8 × 64K ≈ 93% of the 565,684-token pool on the
+  25 GB export; 607,096 tokens with the 16 GB `-fast` one) and more than 8
+  streams.
 - The TILE=64 gain is a GA100 shared-memory fact; do not assume it on sm86.
   The `OutOfResources` retry keeps the kernel correct elsewhere, but there is
   no gain to expect there.
