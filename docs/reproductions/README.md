@@ -100,6 +100,8 @@ will not have in production.
 | RTX 5090 32 GB (sm120) | 600 W (the default and maximum) | **260.4 tok/s** | setup B (`SPEC=dflash2 PREFIX_CACHE=1`, `CTX=fast`), greedy (237.0 at the default temperature), `tok/step` 3.32 / 3.07, vLLM 0.31.0 image at ce9615c, Docker on CachyOS, driver 615.78. 68,605-token bf16 pool. C8 1,117 greedy / 991 default, mean TTFT about 1.06 s at C8. 64/64 requests completed. The setup A follow-up is in the same thread | [#403](https://github.com/syv-ai/HyperQwen/issues/403) |
 | H200 141 GB SXM (sm90) | 700 W (the default, no cap) | **263.2 tok/s** | setup B, greedy (258.4 at the default temperature), `tok/step` 3.19 / 3.24, GSM8K 0.955 over 200 (the 3090 reference's number), main at ce9615c, driver 580.105 / CUDA 13.0, Ubuntu 22.04 native venv. About 2x the 3090 at the default power. C8 1,307 greedy. Long context on this card is a separate finding: with `VLLM_SPEC_DECODE_ATTN=1` decode fell 36% at 100K and 68% at 600K against stock attention (vLLM 0.32 with the series ported), neutral below that; see [#405](https://github.com/syv-ai/HyperQwen/issues/405) | [#406](https://github.com/syv-ai/HyperQwen/issues/406) |
 | RTX 3090, setup B on vLLM 0.32, with and without gpu-unlock | 250 W (300 and 350 W ladders in the notes) | 136.2 tok/s locked, 138.3 unlocked | `SPEC=dflash2 PREFIX_CACHE=1`, greedy (129.4 / 124.7 at the default temperature), `tok/step` 3.36 in both arms, GSM8K 0.965 locked / 0.970 unlocked over 200, main at f382342, driver 615.71 / CUDA 13.1, Ubuntu 26.04, Docker. One box, one commit, one variable. Unlocked over locked, greedy, at 250 W: C1 +1.5%, C2 +4.5%, C4 +16.3%, C8 +21.1% (387.8 to 469.8), and C8 mean TTFT 2.4 s to 1.8 s. At 300 W: +1.3 / -0.7 / +28.5 / +20.3%. At 350 W: +1.2 / +8.0 / +27.4 / +35.4%. Locked C1 goes from 136.2 at 250 W to 145.3 at 350 W, the burst effect in the power note above. The shape #402 found: nothing at C1, the gain at concurrency. gpu-unlock is a third-party out-of-tree driver module and this repo neither ships nor tests it | [#428](https://github.com/syv-ai/HyperQwen/issues/428) (locked), [#427](https://github.com/syv-ai/HyperQwen/issues/427) (unlocked) |
+| RTX 5090 32 GB (sm120), setup B on vLLM 0.32 | 600 W (the default and maximum) | **261.1 tok/s** | `SPEC=dflash2 PREFIX_CACHE=1`, `CTX=fast`, `GPU_UTIL=0.92` (three idle services held ~1.9 GB, and the pinned `KV_MEM` keeps the pool the same), greedy (255.1 at the default temperature), `tok/step` 3.32 / 3.26, GSM8K 0.960 over 200, main at 6ab9bd0, native venv on Python 3.14, driver 595.99, Ubuntu 26.04. The 0.32 counterpart to #403 on the same card model: C1 greedy 260.4 to 261.1, C8 greedy 1,117 to 1,044 and default 991 to 1,075. The pool is 67,312 tokens against 68,605 from the same `KV_MEM`, because 0.32's async admission reserves 60 recurrent pages per request at k=7 where 0.31 reserved 54 (the launcher's seat note now says so, #443). On 24 identical T=0 prompts, 0.32 took 1,441 verify steps against 0.31's 1,443, at 13.13 against 13.04 ms per step | [#436](https://github.com/syv-ai/HyperQwen/issues/436) |
+| RTX 3090, setup B, 350 W, native Linux and WSL2 | 350 W | 141.0 tok/s | `SPEC=dflash2 PREFIX_CACHE=1`, greedy (129.7 at the default temperature), `tok/step` 3.35 / 3.12, main at f382342, Docker on native Ubuntu. C8 610.7 greedy, with C8 mean TTFT about 8 s: eight seats on a pool that holds about six short requests, so the rest queue. No quality check was posted. The same card on Windows 11 / WSL2 + Docker Desktop (`VLLM_WSL2_ENABLE_PIN_MEMORY=1`, `GPU_UTIL=0.93`) was faster at concurrency: C4/C8 e2e 325/330 against 265/274 natively, with C1 TTFT 169 against 159 ms. That is one run on each OS, so this is not a general claim that WSL2 is faster | [#441](https://github.com/syv-ai/HyperQwen/issues/441) |
 
 Batch profile (setup A), `bench/run_benchmarks.sh batch`, 64 concurrent on
 128 in / 512 out, aggregate decode:
@@ -319,6 +321,22 @@ other only loosely, and not rows for either table above:
   driver. The stack needs no change to benefit from it and a container image
   cannot install it, so this repo neither ships nor tests it
   ([#430](https://github.com/syv-ai/HyperQwen/issues/430)).
+- **RTX 4090 (sm89, 450 W), an independent 150k-context, cache and reasoning
+  study (main at 6ab9bd0, vLLM 0.32, native venv)**: 149 serial requests with its
+  own streaming client, not the harness, on `SPEC=mtp CTX=long MAX_LEN=150000`
+  with fp8 KV, plus a DFlash2 baseline and a no-MTP diagnostic. Cold prefill took
+  about 51.5 s at 100k input, 66.2 s at 120k and 72.5 s at 128k. An exact repeat
+  of the same prompt took 0.71-0.73 s at 100k and 1.30-1.31 s at 128k. In six-turn
+  conversations, 22 of 40 follow-ups reused the cache and 18 reported zero cached
+  tokens despite long shared prefixes; the allocator was not traced, so that is an
+  observation, not an established bug. At 128k, `reasoning_effort` low took 17-45%
+  less total time than xhigh, with no consistent quality advantage for xhigh. One
+  answer stopped at 16,282 tokens on an EOS the model emitted, which replay
+  reproduced. The no-MTP diagnostic first failed to boot because `REQ_METRICS=1`
+  passed spec-decode metrics with speculation off, fixed in #444. No GSM8K. The
+  [results repository](https://github.com/piotrmasior/hyperqwen-results) has the
+  method and per-request data
+  ([#439](https://github.com/syv-ai/HyperQwen/issues/439)).
 - **Dual-GPU reports**: the controlled 1-vs-2×3090 A/B in
   [#40](https://github.com/syv-ai/HyperQwen/issues/40) (+16–35%,
   161.6 C1 greedy at 275 W, PCIe x8 without NVLink; independently reproduced

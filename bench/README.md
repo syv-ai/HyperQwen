@@ -36,6 +36,7 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | file | kind | needs | exit | what it does |
 |---|---|---|---|---|
 | `act_calib.py` | measurement | GPU, model | 0 | Error that int8 activations add to each linear layer. Picks `INT8_LAYERS`. |
+| `test_draft_vocab_stats.py` | test | image, no GPU | 0 or 1 | Offline draft-vocab script tables, held-out corpus coverage, read-only statistics and ordinary ID-list head construction. |
 | `test_dflash_context_capacity.py` | test | image, no GPU | 0 or 1 | DFlash constructor rejects oversized target contexts and reserves its fixed lookahead without rewriting draft configuration. |
 | `test_doctor.py` | test | CPU, bash | 0 or 1 | Doctor health failures, configuration-pipeline failures and redacted output. |
 | `api_smoke.py` | smoke test, run by hand | server | 0 if all 12 features pass, 2 if no request reaches a server, else 1 | Request-level API features: logprobs, n, stop, seeds, structured output, penalties, streaming, thinking. |
@@ -79,13 +80,14 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_fa2_slab_dispatch.py` | test | CPU | 0 or 1 | Opt-in dispatch, workspace sharing and fallback for decode, capture and unsupported inputs. |
 | `test_fa2_slab_gpu.py` | kernel test | sm86 GPU, installed PTH/vLLM/FA2 | 0 or 1 | Explicit `--allow-gpu`: slab attention against full FA2 and FP32, including paged layouts and stable LSE merging; `--benchmark` adds timings. See [the adapter notes](../pthfa/LOCAL_CHANGES.md). |
 | `test_harness.py` | test | CPU, bash | 0 or 1 | `harness.py` against a stub server, including refusal of SSE streams closed before `[DONE]`. Its key chain is checked against `resolve_api_key.sh`. |
-| `test_kv_cache_seat_budget.py` | test | image | 0 or 1 | The KV cache seat budget line (`kv-cache-seat-budget.patch`) against five measured boots, with vLLM's own spec classes. |
+| `test_kv_cache_seat_budget.py` | test | image | 0 or 1 | The KV cache seat budget line (`kv-cache-seat-budget.patch`) against historical pool geometries and the launcher prediction, with the installed vLLM spec classes and current async/synchronous admission caps. |
 | `test_kvarn_recycled_pages.py` | test | image | 0 or 1 | KVarN's recycled-page drop (#208). |
 | `test_labd_bench_clock.py` | test | CPU | 0 or 1 | `labd_bench.py` against a stub server, with the wall clock stepped back: TTFT and decode rate as the stub served them. |
 | `test_labd_corpus.py` | test | CPU | 0 or 1 | LABD corpus discovery/reuse, blank frozen heads, and rejection in benchmarks, soak and sweeps before requests or tokenizer loading. |
 | `test_long_corpus.py` | test | CPU | 0 or 1 | Explicit/checkout/fallback source selection without importing vLLM, missing-source/cohort refusals and byte-preserved frozen heads. |
 | `test_lookup_kernels.py` | kernel test | GPU | 0 or 1 | The LABD kernels against a Python reference. |
 | `test_marlin_int8_asym.py` | kernel test | GPU | 0 or 1 | Marlin W4A8-INT8 with zero points against W4A16. |
+| `test_request_metrics.py` | test | CPU, bash | 0 or 1 | All launchers retain timing/usage metrics without speculation; active MTP/DFlash profiles keep summary/detailed acceptance metrics. |
 | `test_model_verification.py` | test | CPU | 0 or 1 | Model verification, selection and redacted effective-model diagnostics. Cuts a heredoc out of `verify.sh`. |
 | `test_alt_wsl_gpu_util.sh` | test | CPU, bash, tar | 0 or 1 | `single-user/alternative.sh` defaults `GPU_UTIL` to 0.95 natively and 0.93 under WSL2 (vLLM sees 22.75 GiB of a 3090 there, #401); an explicit value wins in both. Faked with `WSL_DISTRO_NAME`, stub `vllm`, `PRINT_ARGV=1`. |
 | `test_no_key_bind.sh` | test | CPU, bash, tar | 0 or 1. Skips under `/.dockerenv`. | The `--host` each launcher binds, with and without a key (#204). Cuts a block out of `verify.sh` and evaluates it. |
