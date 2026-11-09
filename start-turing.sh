@@ -3,17 +3,16 @@
 #
 # Turing has no usable bf16 (torch emulates it ~10x slower), so everything runs
 # --dtype float16, with DFlash2 speculation and TP=2 by default. The attention
-# kernels are picked with ATTN (see below): FlashInfer by default, because this
-# Triton build emits no tensor-core code on sm75 and its attention slows with context.
+# kernels are picked with ATTN (see below): FlashInfer by default, measured on sm75.
 # DFlash2 in fp16 needs patches/dflash2-fp16-residual-scale.patch: without it the
 # drafter's residual overflows fp16, every draft is NaN, and acceptance is ~2%.
 #
-# Measured on 2x RTX 2080 Ti 22 GB (TP=2, 0.90 util, 262k context), single stream:
-#   ATTN=flashinfer (default) 24k-token prompt: 185-208 tok/s decode (full graphs), ~14 s cold prefill
-#   ATTN=triton               short prompt: ~200 tok/s; 24k prompt: 74 tok/s, 80 s prefill
-#   SPEC=off ATTN=triton      54.8 tok/s short prompt
+# Measured on vLLM 0.33.0, 2x RTX 2080 Ti 22 GB (TP=2, 0.90 util), single stream:
+#   ATTN=flashinfer (default) 24k prompt: 183-206 tok/s median decode across
+#       512/800-token completions, ~14.2-14.6 s cold time to first token.
+# See docs/reproductions/turing-0.33.md for the exact runs and settings.
 # TP=1 does not fit DFlash2 at the default KV pin; for TP=1 use
-# SPEC=off (32.7 tok/s), or KV_MEM=3000000000 DFLASH_MAX_LEN=8192 with dflash2.
+# SPEC=off (32.8 tok/s at 1k), or KV_MEM=3000000000 DFLASH_MAX_LEN=8192 with dflash2.
 #
 # Everything below can be overridden from the environment, e.g.
 #   TP=1 MAX_LEN=32768 bash start-turing.sh
@@ -43,13 +42,9 @@ TP_ARGS=()
 
 export MODEL=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}
 export SPEC=${SPEC:-dflash2}   # SPEC=off for no speculation
-# ATTN picks the attention kernels. Triton 3.7 emits no tensor-core (mma) code on sm75, so
-# its attention runs on the FP32 units and slows with context; FlashInfer's CUDA kernels use
-# Turing's tensor cores. Measured at TP=2 with DFlash2 (decode tok/s, 24k-token prompt):
-#   ATTN=flashinfer (default): 129-185 short-prompt, 185-208 at 24k, ~14 s cold prefill /
-#                              ~0.8 s cached, fp16 KV (full target + drafter CUDA graphs)
-#   ATTN=triton:               ~200 short-prompt, 24k -> 74, 24k prefill 80 s cold / 7 s cached,
-#                              int8 KV, 530k-token pool (split-KV verify kernel, SPEC_ATTN=1)
+# ATTN picks the attention kernels. FlashInfer's CUDA kernels use Turing's
+# tensor cores. ATTN=triton uses int8 KV and the split-KV verify kernel; it was
+# measured on vLLM 0.32.0 but has not been remeasured on 0.33.0.
 ATTN=${ATTN:-flashinfer}
 case "$ATTN" in
   flashinfer)

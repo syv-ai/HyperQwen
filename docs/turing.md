@@ -57,18 +57,18 @@ separate 1.2 GB W4A16 drafter, `Qwen3.8-27B-DFlash2-W4A16`, configured as `metho
 the block in one pass with noncausal sliding-window attention (window 2048), and
 `VLLM_DFLASH2_LOOKUP=1` adds n-gram lookup drafting from the context, which helps when the model
 repeats text it has already seen. Drafts are verified by the target, so the output is what the target itself would
-choose (up to the numeric caveats in the repeatability section). Measured mean acceptance length is
-5.3 to 6.0 tokens per step (see the CUDA GDN section). `SPEC=off` runs plain decoding.
+choose (up to the numeric caveats in the repeatability section). Acceptance varies
+with the completion; `SPEC=off` runs plain decoding.
 
-**What did the work in the measured build** (vLLM 0.32.0, torch 2.13, Triton 3.7.1):
-The repository now pins vLLM 0.33.0, and the six Turing patches have been re-exported
-against it. The performance and repeatability numbers below have not been remeasured
-on 0.33.0.
+**Measured stack:** vLLM 0.33.0, torch 2.14.0, Triton 3.8.0, FlashInfer
+0.7.2.post1, Python 3.14.8, and the six Turing patches cut against 0.33.0.
+The November 9 runs and raw per-run rates are in
+[the reproduction record](reproductions/turing-0.33.md).
 
 | Part | Used for | Notes |
 | --- | --- | --- |
 | Marlin (`MarlinLinearKernel`) | W4A16 linear layers | fp16 activations, from vLLM |
-| FlashInfer 0.7.0.post1 (FA2 paged prefill) | attention for target and drafter | opted in with `VLLM_FLASHINFER_SM75=1`; full CUDA graphs with `VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS=1` |
+| FlashInfer 0.7.2.post1 (FA2 paged prefill) | attention for target and drafter | opted in with `VLLM_FLASHINFER_SM75=1`; full CUDA graphs with `VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS=1` |
 | CUDA GDN kernel | recurrent prefill of the linear-attention layers | `VLLM_GDN_SM75=1`, compiled once with nvcc |
 | Triton GDN | speculative decode of those layers | vLLM's fused CUDA decode kernel needs bf16, so fp16 falls back to Triton (logged at boot) |
 | NCCL / custom all-reduce over NVLink | tensor parallel, TP=2 | the heads (24 query, 4 KV) allow TP 1, 2 or 4 |
@@ -78,8 +78,8 @@ on 0.33.0.
 to two requests share each step, with a 2048-token step budget (`max_num_batched_tokens=2048`; vLLM
 logs that it caps this at 2048 because of the speculative settings). Prompts are read in chunks
 inside that budget, which is what the per-request "reading the prompt" progress shows,
-scheduling is asynchronous, and prefix caching is on (Mamba cache mode `align`). At the maximum 262,136-token context the KV pool holds about 319,000
-tokens, 1.22 times one full-length request. Raise `MAX_SEQS` for more concurrent requests; this has
+scheduling is asynchronous, and prefix caching is on (Mamba cache mode `align`). At the maximum 262,136-token context the KV pool holds 317,842
+tokens, 1.21 times one full-length request. Raise `MAX_SEQS` for more concurrent requests; this has
 not been benchmarked here. The throughput numbers in this document are single
 stream, and, as noted below, concurrent requests can change greedy output relative to running
 them one at a time.
@@ -93,24 +93,26 @@ Both target verification and noncausal DFlash query attention capture full
 graphs. Planning still occurs eagerly before replay; this does not claim
 in-place draft metadata updates.
 
-Measured November 8, 2026, single stream, 23,674 prompt tokens, 800 generated
-tokens, prefill excluded from decode timing:
+Measured November 9, 2026 on vLLM 0.33.0, single stream, about 24,063 prompt
+tokens and 800 generated tokens. Decode is the median of three runs, excluding
+prefill and the first output token. Cold prefill is the first run; cached prefill
+is the median time to first token of the next two runs. All rows use DFlash2,
+TP=2 and the CUDA GDN prefill kernel except the last row:
 
 | Configuration | Decode | Cold prefill | Cold prefill rate | Cached prefill |
 | --- | ---: | ---: | ---: | ---: |
-| FlashInfer, graphs disabled | 89.7–92.2 tok/s | 15.6 s | 1,518 tok/s | 0.8 s |
-| FlashInfer, full graphs | 201.1–203.8 tok/s | 15.7 s | 1,508 tok/s | 0.8 s |
-| FlashInfer, full graphs, FP8 KV | 194.9–198.7 tok/s | 15.7 s | 1,508 tok/s | 7.0 s |
-| Full graphs, fp16 KV, CUDA GDN | 185.3–199.1 tok/s | 14.2 s | 1,667 tok/s | 0.7 s |
+| Full graphs, fp16 KV (default) | 205.8 tok/s | 14.20 s | 1,694 tok/s | 0.31 s |
+| Graphs disabled, fp16 KV | 104.6 tok/s | 14.32 s | 1,680 tok/s | 0.33 s |
+| Full graphs, FP8 KV | 191.3 tok/s | 14.57 s | 1,652 tok/s | 2.16 s |
+| Full graphs, fp16 KV, Triton GDN prefill | 209.8 tok/s | 15.79 s | 1,524 tok/s | 0.33 s |
 
-Prefill rate is the 23,674-token prompt divided by its cold prefill time. Cached prefill only
+Prefill rate is the uncached prompt tokens divided by cold time to first token. Cached prefill only
 computes the tokens after the cached prefix, so a tok/s figure for it would not be comparable.
 
-Two greedy 512-token completions matched exactly before and after enabling
-graphs. Their end-to-end rates rose from 83.3/61.0 to 175.9/129.1 tok/s.
-Attention graph replay matched eager output at lengths 8, 31, 32, 33, 1024,
+Native speculative graphs nearly doubled median decode rate for this prompt
+(205.8 versus 104.6 tok/s). Attention graph replay matched eager output at lengths 8, 31, 32, 33, 1024,
 23700, 65, then 8, for causal full attention and noncausal window-2048
-attention. Reproduce with `venv/bin/python scripts/check_sm75_attention_graphs.py`.
+attention on the 0.33 stack. Reproduce with `venv/bin/python scripts/check_sm75_attention_graphs.py`.
 
 Concurrent requests can change greedy completions relative to running them
 individually, including with graphs disabled. This setup does not promise
@@ -122,48 +124,50 @@ batch-invariant arithmetic.
 length it sends a never-seen prompt (cold prefill), then the same prompt twice more (cached prefill), and
 reports decode tokens per second after the first token for each of the three runs. Settings: greedy,
 `ignore_eos`, 512 generated tokens, prompts built from a repetitive synthetic document, so read decode
-rates as "this kind of text" rather than a universal figure. All three configurations ran on the same
-unlocked machine (see above), one request at a time.
+rates as "this kind of text" rather than a universal figure. Measured November 9, 2026
+on vLLM 0.33.0. All three configurations ran on the same unlocked machine (see above),
+one request at a time. The raw rates are in [the reproduction record](reproductions/turing-0.33.md).
 
 | Configuration | Prompt | Cold prefill | Cold rate | Cached prefill | Decode (median of 3) |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| 2 GPUs, TP=2, DFlash2 | 1,068 | 0.62 s | 1,736 tok/s | 0.38 s | 163.6 tok/s |
-| | 4,067 | 2.26 s | 1,798 tok/s | 0.33 s | 201.1 tok/s |
-| | 7,052 | 4.00 s | 1,763 tok/s | 0.51 s | 171.7 tok/s |
-| | 24,063 | 14.69 s | 1,638 tok/s | 0.63 s | 187.4 tok/s |
-| 1 GPU, TP=1, DFlash2 | 1,069 | 1.06 s | 1,005 tok/s | 0.64 s | 126.3 tok/s |
-| | 4,068 | 3.91 s | 1,042 tok/s | 0.56 s | 128.7 tok/s |
-| | 7,074 | 6.92 s | 1,022 tok/s | 0.90 s | 114.3 tok/s |
-| 1 GPU, TP=1, no speculation | 1,068 | 1.02 s | 1,043 tok/s | 0.30 s | 32.7 tok/s |
-| | 4,066 | 3.95 s | 1,030 tok/s | 0.13 s | 32.1 tok/s |
-| | 7,073 | 6.98 s | 1,013 tok/s | 0.35 s | 31.7 tok/s |
-| | 24,062 | 25.70 s | 936 tok/s | 0.19 s | 29.7 tok/s |
+| 2 GPUs, TP=2, DFlash2 | 1,067 | 0.67 s | 1,599 tok/s | 0.17 s | 210.1 tok/s |
+| | 4,068 | 2.34 s | 1,737 tok/s | 0.17 s | 217.0 tok/s |
+| | 7,074 | 3.96 s | 1,786 tok/s | 0.26 s | 177.8 tok/s |
+| | 24,062 | 14.57 s | 1,651 tok/s | 0.31 s | 183.4 tok/s |
+| 1 GPU, TP=1, DFlash2 | 1,069 | 1.07 s | 1,001 tok/s | 0.24 s | 96.7 tok/s |
+| | 4,066 | 3.97 s | 1,025 tok/s | 0.20 s | 132.0 tok/s |
+| | 7,052 | 6.88 s | 1,026 tok/s | 0.44 s | 115.1 tok/s |
+| 1 GPU, TP=1, no speculation | 1,067 | 1.04 s | 1,027 tok/s | 0.30 s | 32.8 tok/s |
+| | 4,068 | 3.95 s | 1,029 tok/s | 0.14 s | 32.1 tok/s |
+| | 7,052 | 6.94 s | 1,016 tok/s | 0.31 s | 31.7 tok/s |
+| | 24,063 | 25.71 s | 936 tok/s | 0.20 s | 29.8 tok/s |
 
 How each was launched, and what the card holds:
 
-| | Launch | Context | Weights | KV pool | VRAM in use |
-| --- | --- | ---: | ---: | ---: | ---: |
-| 2 GPUs | `bash start-turing.sh` | 262,136 | split over 2 | 319,103 tokens | 21,214 MiB per card |
-| 1 GPU, DFlash2 | `CUDA_VISIBLE_DEVICES=0 TP=1 KV_MEM=3000000000 DFLASH_MAX_LEN=8192 bash start-turing.sh` | 8,192 | 15.79 GiB with the drafter | 14,716 tokens | 21,214 of 22,528 MiB |
-| 1 GPU, no speculation | `CUDA_VISIBLE_DEVICES=0 TP=1 SPEC=off bash start-turing.sh` | 32,768 | 14.41 GiB | 64,455 tokens | 20,656 of 22,528 MiB |
+| | Launch | Context | Weights | KV pool |
+| --- | --- | ---: | ---: | ---: |
+| 2 GPUs | `bash start-turing.sh` | 262,136 | split over 2 | 317,842 tokens |
+| 1 GPU, DFlash2 | `CUDA_VISIBLE_DEVICES=0 TP=1 KV_MEM=3000000000 DFLASH_MAX_LEN=8192 bash start-turing.sh` | 8,192 | 15.79 GiB with the drafter | 14,716 tokens |
+| 1 GPU, no speculation | `CUDA_VISIBLE_DEVICES=0 TP=1 SPEC=off bash start-turing.sh` | 32,768 | 14.41 GiB | 64,815 tokens |
 
 What this shows:
-- **Speculation is the big single-GPU win:** DFlash2 decodes at 114 to 129 tok/s against 32 tok/s
-  without it (about 3.9x at 1k tokens), but on one card it only fits an 8,192-token context. The
+- **Speculation is the big single-GPU win:** DFlash2 decoded at 97 to 132 tok/s against 32 tok/s
+  without it (about 2.9x at 1k and 4.1x at 4k), but on one card it only fits an 8,192-token context. The
   default launcher settings do not fit DFlash2 on one card, so the reduced KV pool and context above are
   required.
-- **Two cards over one, with the same speculation:** 1.3x to 1.6x the decode rate (164 vs 126, 201 vs
-  129, 172 vs 114 tok/s at about 1k, 4k and 7k tokens) and about 1.7x the prefill rate, and the
+- **Two cards over one, with the same speculation:** 1.5x to 2.2x the decode rate (210 vs 97, 217 vs
+  132, 178 vs 115 tok/s at about 1k, 4k and 7k tokens) and about 1.6x to 1.8x the prefill rate, and the
   context grows from 8,192 to 262,136 tokens.
-- **Without speculation one card slows with context:** 32.7 tok/s at 1k tokens, 29.7 at 24k, and a
-  24k-token prompt takes 25.7 s to read.
-- Cached prefill with DFlash2 on one card (0.56 to 0.90 s) is slower than without speculation (0.13 to
-  0.35 s); these are time-to-first-token figures, so they include the first speculative step. This was
-  measured once per length and not investigated.
+- **Without speculation one card slows with context:** 32.8 tok/s at 1k tokens, 29.8 at 24k, and a
+  24k-token prompt takes 25.71 s to read.
+- Cached time to first token includes the first decode step, so the DFlash2 and no-speculation values
+  do not isolate prefix-cache speed. The 1k DFlash2 completion was slower than on 0.32.0;
+  different generated text and draft acceptance can change this synthetic benchmark, so that
+  observation does not isolate the cause.
 
 ## Rank balance and draft attention
 
-With full graphs, both GPUs reported 76–77% utilization. A two-rank torch
+On the earlier 0.32.0 build, with full graphs, both GPUs reported 76–77% utilization. A two-rank torch
 profile recorded 201626 kernels on each rank, totaling 4.00 and 3.98 seconds
 of GPU kernel time. Disabling graphs reproduced an approximately 90%/44%
 utilization split. Host launch/synchronization overhead is the leading
@@ -176,11 +180,10 @@ Its full query graph is captured separately from the target verification graph.
 ## Optional FP8 KV
 
 `KV_DTYPE=fp8 bash start-turing.sh` keeps fp16 queries and full graphs while
-storing attention KV in FP8 E4M3. The measured pool rose from 317632 to 474838
-tokens (49.5%). Decode measured 194.9/198.7 tok/s. Cold prefill stayed 15.7 s;
-cached prefill regressed to 7.0 s because the mixed 880/64 block groups require
-3520-token prefix alignment and disable fine-grained prefix hits. FP16 KV stays
-the default. Quantized KV can change outputs; this trial is not an accuracy eval.
+storing attention KV in FP8 E4M3. On 0.33.0, the KV pool rose from 317,842 to
+536,108 tokens (68.7%). The 24k/800-token trial measured 191.3 tok/s median
+decode, 14.57 s cold prefill, and 2.16 s cached time to first token. FP16 KV
+stays the default. Quantized KV can change outputs; this trial is not an accuracy eval.
 
 ## Optional CUDA GDN prefill
 
@@ -190,23 +193,19 @@ the default. Quantized KV can change outputs; this trial is not an accuracy eval
 It requires nvcc and a C++ compiler, and compiles once before graph capture.
 The original Triton path remains available with `VLLM_GDN_SM75=0`.
 
-At the target TP=2 geometry (8 key heads, 24 value heads, dimension 128),
+On the earlier 0.32.0 build, at the target TP=2 geometry (8 key heads, 24 value heads, dimension 128),
 a 2048-token microbenchmark measured 11.45 ms for Triton versus 2.73 ms
 for CUDA. The bounded comparison used the first GDN-state Triton autotune
 configuration. Output/state relative L2 errors were 0.00051/0.00037. A separate
 direct recurrence check passed. The integration copies initial state before
 the kernel's in-place update and supports packed variable-length requests.
 
-The end-to-end gain is smaller than the isolated kernel gain: cold 24k prefill
-measured 14.2 s, down from 15.7 s. Cached prefill was 0.7 s. Decode measured
-199.1 and 185.3 tok/s; the slower run had mean acceptance length 5.27 versus
-6.02 on the faster run. Both original deterministic 512-token completions still
-matched exactly. Packed two-request output/state checks also passed, including
-an exact check that the input state was not modified.
-
-A repeat cold run with a fresh prefix (23681 tokens) again measured 14.2 s
-prefill (1,668 tok/s over 23,681 tokens) and 207.8 tok/s decode. This confirms the prefill reduction; decode
-varies with the completion and draft acceptance.
+On 0.33.0, the same 24k/800-token benchmark measured 14.20 s cold prefill
+with CUDA GDN versus 15.79 s with Triton GDN, a 10.1% reduction. Cached time
+to first token was 0.31 versus 0.33 s. Median decode was 205.8 versus 209.8
+tok/s; this trial does not establish a decode benefit from the prefill kernel.
+On 0.32.0, packed two-request output/state checks passed, including an exact
+check that the input state was not modified.
 
 ## Verified interconnect
 
@@ -267,7 +266,12 @@ Round 1 is a cold prefill and later rounds hit the prefix cache, so cold-vs-cach
 is covered. `--save a.json` records the outputs and `--compare a.json` checks a later run against them.
 Each completion is 256 tokens (86 for the short prompt).
 
-What was measured (November 8, 2026, 2 GPUs, DFlash2, full graphs, fp16 KV, unlocked cards):
+On November 9, 2026, the 0.33.0 default server returned byte-identical
+completions for all five prompts across three rounds, including cold and cached
+prefill within one boot (`logs/repeat-033-default.json`). Cross-restart
+repeatability has not been checked on 0.33.0.
+
+Earlier 0.32.0 results (November 8, 2026, 2 GPUs, DFlash2, full graphs, fp16 KV, unlocked cards):
 
 | Boot | Result |
 | --- | --- |
@@ -277,7 +281,7 @@ What was measured (November 8, 2026, 2 GPUs, DFlash2, full graphs, fp16 KV, unlo
 | Reworked vs previous patch versions | 3 of 5 identical; `code` and `story` differ |
 | Previous patch versions, fresh empty compile cache (`VLLM_CACHE_ROOT` in a temp directory) | 3 of 5 identical to its warm-cache run; `story` and `long-context` differ |
 
-So the output is fully repeatable for a fixed build and compile cache: across rounds, across cached
+In those 0.32.0 tests, the output was repeatable for a fixed build and compile cache: across rounds, across cached
 and cold prefill, and across restarts. It is not invariant to rebuilding the compile cache. The
 previous patch versions give different text for two prompts when their cache is rebuilt from scratch,
 and registering the env knobs (which changes the cache key and so forces a rebuild) moved two
