@@ -3,7 +3,7 @@
 > **WSL2 + RTX 3090 checklist** — full path: [quickstart.md](quickstart.md).
 > 1. `cp .env.example .env` and `make keygen` (never commit `.env`).
 > 2. Keep `VLLM_WSL2_ENABLE_PIN_MEMORY=1` or the V2 runner aborts on UVA.
-> 3. First boot takes 2–15 min; follow it with `make logs`.
+> 3. First boot takes 2–15 min after the ~20 GB model download (`prepare-1 Waiting` until it is done; `docker compose logs -f prepare`); follow the server with `make logs`.
 > 4. Boot OOM? Fall back to `GPU_UTIL=0.93` in `.env`.
 > 5. Exit 137 in prepare? Raise WSL memory (`memory=20GB`, `swap=8GB`), then `wsl --shutdown`.
 > 6. Verify with `make doctor`. Stuck? See [gotchas.md](gotchas.md).
