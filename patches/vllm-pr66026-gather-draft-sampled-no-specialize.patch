@@ -1,0 +1,38 @@
+Ports upstream PR vllm-project/vllm#66026 (open) to this pin.
+
+_gather_draft_sampled_kernel in the V2 runner's rejection sampler is a plain @triton.jit kernel that takes
+num_logits, which changes with the batch. Triton specializes the integer, and the rejection-sampler warm-up compiles
+one request's shape, therefore the first concurrent requests compile the kernel again inside serving. On an RTX 3090
+with the single-user launcher's defaults (MTP k=4, max_num_seqs 8) and a cold cache, two boots each logged it as a
+JIT compilation during inference, 6.0 s and 11.6 s into an 8-stream burst, and the streams running at that moment
+waited 178 ms between tokens where the worst gap otherwise was about 100 ms. 0.32.0 compiles it the same way
+(docs/vllm-0.33.md, "First-request JIT"). Stock vLLM (a 0.33.0rc1 nightly, Qwen3-0.6B, ngram k=4) shows the same
+compile and a 68-80 ms stall.
+
+The PR marks num_logits do_not_specialize, as #64137 did for the logits-stats kernels, so one compiled kernel serves
+every batch. With it, two more boots under the same load compiled nothing during serving.
+
+Applied unchanged: the PR's one-line change applies to 0.33.0 without conflicts.
+
+Kind: fix
+What: the rejection sampler's draft-token gather kernel no longer recompiles per batch size (num_logits not
+  specialized)
+Upstream: vllm #66026 (open)
+Cut-against: 0.33.0
+Retires-when: the pin that carries #66026
+
+--- exported from c713ee236d (vllm-pr66026-gather-draft-sampled-no-specialize); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/gpu/spec_decode/rejection_sampler.py b/v1/worker/gpu/spec_decode/rejection_sampler.py
+index 2200c173ab..6b012ee3c4 100644
+--- a/v1/worker/gpu/spec_decode/rejection_sampler.py
++++ b/v1/worker/gpu/spec_decode/rejection_sampler.py
+@@ -74,7 +74,7 @@
+         tl.store(flat_sampled_ptr + start_idx + i, token_id)
+ 
+ 
+-@triton.jit
++@triton.jit(do_not_specialize=["num_logits"])
+ def _gather_draft_sampled_kernel(
+     # [num_logits]
+     draft_sampled_ptr,
