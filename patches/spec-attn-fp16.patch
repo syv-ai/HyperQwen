@@ -16,11 +16,13 @@ BLOCK_M (more query tiles per request) and remembers the (BLOCK_M, tile) that la
 Kind: fix
 What: split-KV verify attention follows the model dtype (fp16 dot operands) and halves BLOCK_M when shared memory is short, so it runs on Turing
 Upstream: none yet
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream's verify kernel takes fp16 models and retries BLOCK_M
 
---- exported from working-tree (spec-attn-fp16); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ec6ece886b (spec-attn-fp16); regenerate with scripts/export-patch.sh, do not edit ---
 
+diff --git a/v1/attention/ops/spec_decode_attn.py b/v1/attention/ops/spec_decode_attn.py
+index 9fe6e48450..f0bdaa66a2 100644
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
 @@ -68,6 +68,7 @@

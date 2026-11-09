@@ -21,16 +21,16 @@ VLLM_DFLASH2_RESIDUAL_SCALE overrides it (1 disables).
 Kind: fix
 What: keep the DFlash2 drafter's residual stream inside fp16 range (Turing/sm75 runs fp16; without it every draft is NaN)
 Upstream: none yet
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream scales or otherwise bounds the drafter residual for fp16
 
---- exported from 1e39742 (dflash2-fp16-residual-scale); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 7e806a96cf (dflash2-fp16-residual-scale); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 25bf416..db6ec92 100644
+index 2cad20ed44..2a2db9c6a1 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -238,6 +238,7 @@
+@@ -256,6 +256,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -38,7 +38,7 @@ index 25bf416..db6ec92 100644
      VLLM_V1_USE_OUTLINES_CACHE: bool = False
      VLLM_TPU_USING_PATHWAYS: bool = False
      VLLM_USE_DEEP_GEMM: bool = True
-@@ -1687,6 +1688,7 @@
+@@ -1713,6 +1714,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -47,7 +47,7 @@ index 25bf416..db6ec92 100644
      # fallback unless the config includes "allow_fallback": true.
      "VLLM_HUMMING_INPUT_QUANT_CONFIG": lambda: maybe_convert_json_str_or_file(
 diff --git a/model_executor/models/qwen3_dflash2.py b/model_executor/models/qwen3_dflash2.py
-index f8bc81f..e6501e1 100644
+index f8bc81f3d1..e6501e1a04 100644
 --- a/model_executor/models/qwen3_dflash2.py
 +++ b/model_executor/models/qwen3_dflash2.py
 @@ -5,6 +5,7 @@

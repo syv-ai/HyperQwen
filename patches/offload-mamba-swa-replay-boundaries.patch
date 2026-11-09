@@ -10,16 +10,16 @@ policy remain unchanged.
 Kind: fix
 What: retain SWA history at the earlier Mamba replay boundary under sparse offload
 Upstream: HyperQwen issue #405
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream native offload retains every hybrid replay window
 
---- exported from f9080f5 (offload-mamba-swa-replay-boundaries); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 51095840bd (offload-mamba-swa-replay-boundaries); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-index d1c3b93..1c42cea 100644
+index fbc7b5176f..f8c5b0d1c8 100644
 --- a/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
 +++ b/distributed/kv_transfer/kv_connector/v1/offloading/scheduler.py
-@@ -39,6 +39,7 @@
+@@ -42,6 +42,7 @@
      KVCacheSpec,
      MambaSpec,
      SlidingWindowSpec,
@@ -27,7 +27,7 @@ index d1c3b93..1c42cea 100644
  )
  from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
  from vllm.v1.kv_offload.base import (
-@@ -627,6 +628,10 @@
+@@ -623,6 +624,10 @@
          self._mamba_align_size: int | None = resolve_mamba_align_size(
              spec, kv_cache_config
          )
@@ -38,7 +38,7 @@ index d1c3b93..1c42cea 100644
          self._partial_tail_block_size = (
              self.config.kv_group_configs[0].tokens_per_block
              if self.config.supports_partial_tail
-@@ -1596,6 +1601,26 @@
+@@ -1841,6 +1846,26 @@
              return None
          return alignment_tokens // group_config.tokens_per_block
  
@@ -65,7 +65,7 @@ index d1c3b93..1c42cea 100644
      def _build_store_jobs(
          self,
          scheduler_output: SchedulerOutput,
-@@ -1634,11 +1659,7 @@
+@@ -1879,11 +1904,7 @@
              new_offload_keys: list[OffloadKey] = []
              group_store_ranges: list[tuple[int, int]] = []
  

@@ -15,14 +15,13 @@ Validated against vLLM 0.28.0.
 Kind: feature
 What: vocab-truncated draft head for MTP
 Upstream: none
-Cut-against: 0.32.0: the draft_lm_head skip follows #60152's is_unused_checkpoint_weight check in
-  remap_weight_names
+Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from 34c6b593b (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3bfe8f1d2a (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 4d19e5447..24eeedc7c 100644
+index 4d19e54475..24eeedc7c1 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
 @@ -88,6 +88,26 @@

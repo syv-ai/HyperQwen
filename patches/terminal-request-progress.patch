@@ -9,19 +9,22 @@ The Turing launcher enables this and tees its server log to logs/turing.log.
 
 The output format is modeled on Project Maya (https://github.com/mw00/project-maya, MIT, Peasant Smith and the Project Maya contributors).
 
+Re-cut against 0.33.0: in the output processor, the progress call now follows 0.33's new
+streaming_chunk_boundary assignment, just before step 4.
+
 Kind: feature
 What: VLLM_TERMINAL_PROGRESS=1: per-request reading, prefill, answering and done lines on the server console (ids and counts, never text)
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream has per-request progress logging
 
---- exported from 15072ef (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ea0c47a5dc (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 78c1bae..0440730 100644
+index 97c2abc4ac..b0a058d612 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -238,6 +238,7 @@
+@@ -256,6 +256,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -29,7 +32,7 @@ index 78c1bae..0440730 100644
      VLLM_GDN_SM75: bool = False
      VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
      VLLM_FLASHINFER_SM75: bool = False
-@@ -1691,6 +1692,7 @@
+@@ -1717,6 +1718,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -37,7 +40,7 @@ index 78c1bae..0440730 100644
      "VLLM_GDN_SM75": lambda: os.environ.get("VLLM_GDN_SM75", "0") == "1",
      "VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS": lambda: os.environ.get("VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS", "0") == "1",
      "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
-@@ -2473,6 +2475,8 @@
+@@ -2522,6 +2524,8 @@
          "VLLM_RINGBUFFER_WARNING_INTERVAL",
          "VLLM_DEBUG_DUMP_PATH",
          "VLLM_PORT",
@@ -47,7 +50,7 @@ index 78c1bae..0440730 100644
          # Runtime memory-plan persistence; does not affect compiled graphs.
          "VLLM_ENABLE_STARTUP_PLAN",
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index 4ae83d1..d5ee743 100644
+index e8b422779f..daa29f7da2 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
 @@ -1,6 +1,7 @@
@@ -58,7 +61,7 @@ index 4ae83d1..d5ee743 100644
  import time
  from collections import defaultdict, deque
  from collections.abc import Iterable
-@@ -1350,6 +1351,10 @@
+@@ -1554,6 +1555,10 @@
                      request.record_event(
                          EngineCoreEventType.SCHEDULED, scheduled_timestamp
                      )
@@ -69,7 +72,7 @@ index 4ae83d1..d5ee743 100644
                  if request.status == RequestStatus.WAITING:
                      scheduled_new_reqs.append(request)
                  elif request.status == RequestStatus.PREEMPTED:
-@@ -2152,6 +2157,13 @@
+@@ -2388,6 +2393,13 @@
              if request.has_encoder_inputs:
                  self._free_encoder_inputs(request)
  
@@ -84,7 +87,7 @@ index 4ae83d1..d5ee743 100644
              new_logprobs = None
              new_sampling_mask = None
 diff --git a/v1/engine/output_processor.py b/v1/engine/output_processor.py
-index a0669a9..54bcb30 100644
+index bfbad0fbff..1484b6ee2a 100644
 --- a/v1/engine/output_processor.py
 +++ b/v1/engine/output_processor.py
 @@ -2,6 +2,7 @@
@@ -95,7 +98,7 @@ index a0669a9..54bcb30 100644
  from collections import defaultdict, deque
  from collections.abc import Iterable
  from dataclasses import dataclass
-@@ -187,6 +188,8 @@
+@@ -234,6 +235,8 @@
          self.spec_decode_metrics: RequestSpecDecodeMetrics | None = None
  
          self.stats = RequestStateStats(arrival_time=arrival_time) if log_stats else None
@@ -104,7 +107,7 @@ index a0669a9..54bcb30 100644
  
          # Routed experts accumulation (prompt + sample chunks)
          self.routed_experts_chunks: list[np.ndarray] = []
-@@ -590,6 +593,8 @@
+@@ -637,6 +640,8 @@
          for request_id in internal_req_ids:
              req_state = self.request_states.pop(request_id, None)
              if req_state is not None:
@@ -113,19 +116,18 @@ index a0669a9..54bcb30 100644
                  self.lora_states.request_finished(request_id, req_state.lora_name)
                  request_ids_to_abort.append(request_id)
                  # Produce final abort output.
-@@ -790,6 +795,9 @@
-                 # if required.
-                 req_state.logprobs_processor.update_from_output(engine_core_output)
- 
+@@ -850,6 +855,8 @@
+             streaming_chunk_boundary = req_state.streaming_input and (
+                 finish_reason not in (FinishReason.ABORT, FinishReason.ERROR)
+             )
 +            if terminal_progress.ENABLED and pooling_output is None:
 +                terminal_progress.output(req_state, engine_core_timestamp, finish_reason)
-+
+ 
              # 4) Create and handle RequestOutput objects.
              if request_output := req_state.make_request_output(
-                 new_token_ids,
 diff --git a/v1/metrics/terminal_progress.py b/v1/metrics/terminal_progress.py
 new file mode 100644
-index 0000000..1faf4f5
+index 0000000000..1faf4f572a
 --- /dev/null
 +++ b/v1/metrics/terminal_progress.py
 @@ -0,0 +1,61 @@
