@@ -5,8 +5,11 @@ checkpoints at periodic retention boundaries inside each prefill. It is off by
 default. It requires `mamba_cache_mode="align"` and either dense retention
 (`prefix_cache_retention_interval=None`) or a positive interval that is a
 multiple of `mamba_block_size`. Retention 0, other cache modes and unsupported
-backends fail before allocating checkpoint pages. Other Mamba/KDA backends keep
-their existing behavior.
+backends fail before allocating checkpoint pages. On vLLM 0.33 the opt-in remains Triton/FLA only: selecting FlashInfer with
+this knob raises before allocation. The upstream FlashInfer single-checkpoint
+planner, kernel emission and exporter are preserved with the knob off; this
+patch does not extend periodic export to that backend. Other Mamba/KDA backends
+keep their existing behavior.
 
 The single-checkpoint version in #425 saved only the final reusable hash
 boundary, which the default-off scheduler already materialized. This version
@@ -53,7 +56,14 @@ python bench/test_gdn_checkpoint_export.py --device cuda:0
 For full-model TP=2 validation, run each arm in a fresh process against the same
 cached weights, with two free GPUs. The model probe sets dense retention in
 both arms, greedy sampling, a fixed GPU KV budget and frozen prompt token IDs.
-Its second request shares about 60% of the first, then changes the suffix.
+Its default prompt contains 2000 material tokens; the second request shares
+1200, then changes the suffix, inside the first shipped 2048-token chunk.
+These lengths are fixed before inference and are not tuned to exported offsets.
+Use `--chunk-size 8192 --material-tokens 8000 --shared-tokens 4800` to reproduce
+the historical larger-chunk profile, and `--tensor-parallel-size 1` on a single
+card with a suitably sized KV budget. `--require-multiple-export` separately
+requires multiple states in one prefill; a smaller chunk may correctly export
+only one, which is not an inference error.
 The default pool is 4,000,000,000 bytes per GPU (`--kv-cache-bytes` overrides it);
 the GDN checkpoint pages and DFlash scratch must fit as well as attention KV.
 

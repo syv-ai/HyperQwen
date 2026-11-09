@@ -51,13 +51,13 @@ Kind: feature
 What: pad 2-4 token batches of the bf16 GDN `in_proj_ba` GEMM to 5 rows (cuBLAS cliff at
   that shape; MTP-3 verify)
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstreamed, or a cuBLAS that picks a sane kernel at M = 2..4
 
---- exported from daf4558 (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from c513da2e88 (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 83f6313..ce101cf 100644
+index c69099ea9f..2cad20ed44 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -132,6 +132,7 @@
@@ -68,7 +68,7 @@ index 83f6313..ce101cf 100644
      VLLM_DISABLE_PYNCCL: bool = False
      VLLM_USE_OINK_OPS: bool = False
      VLLM_MXFP4_EMULATION_DEQUANT_AT_LOAD: bool = False
-@@ -1307,6 +1308,11 @@
+@@ -1305,6 +1306,11 @@
          ["cuda", "triton"],
          case_sensitive=False,
      ),
@@ -81,18 +81,18 @@ index 83f6313..ce101cf 100644
      "VLLM_DISABLE_PYNCCL": lambda: (
          os.getenv("VLLM_DISABLE_PYNCCL", "False").lower() in ("true", "1")
 diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-index 516ef13..976ac2c 100644
+index d9a1ad83a9..3eb14c0019 100644
 --- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
 +++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-@@ -29,6 +29,7 @@
+@@ -33,6 +33,7 @@
      ColumnParallelLinear,
      MergedColumnParallelLinear,
      RowParallelLinear,
 +    UnquantizedLinearMethod,
  )
- from vllm.model_executor.layers.mamba.gdn.base import GatedDeltaNetAttention
- from vllm.model_executor.layers.mamba.mamba_mixer2 import mamba_v2_sharded_weight_loader
-@@ -619,6 +620,18 @@
+ from vllm.model_executor.layers.mamba.abstract import (
+     get_mamba_prefill_checkpoint_alignment,
+@@ -728,6 +729,18 @@
          if self.speculative_config is not None:
              logger.info_once("GDN spec decode kernel: %s", self.gdn_decode_kernel)
  
@@ -111,7 +111,7 @@ index 516ef13..976ac2c 100644
          compilation_config = get_current_vllm_config().compilation_config
          if prefix in compilation_config.static_forward_context:
              raise ValueError(f"Duplicate layer name: {prefix}")
-@@ -993,7 +1006,10 @@
+@@ -1145,7 +1158,10 @@
          # Part 1: Input Projection
          # ============================================================
          mixed_qkvz, _ = self.in_proj_qkvz(hidden_states)
@@ -123,7 +123,7 @@ index 516ef13..976ac2c 100644
  
          use_fused_gdn_spec_decode = (
              self.enable_fused_gdn_spec_decode
-@@ -2057,3 +2073,30 @@
+@@ -2310,3 +2326,30 @@
      op_func=qwen_gdn_attention_core_fused_norm_packed,
      mutates_args=["core_attn_out"],
  )

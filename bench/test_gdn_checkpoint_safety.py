@@ -21,9 +21,10 @@ def function(path, name, owner=None):
         tree = next(
             n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == owner
         )
-    return next(
-        n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name
-    )
+    matches = [n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name]
+    if len(matches) != 1:
+        raise AssertionError(f"Expected exactly one active {owner}.{name}, found {len(matches)}")
+    return matches[0]
 
 
 @dataclass(frozen=True)
@@ -35,6 +36,8 @@ class Spec:
 
 
 class Base:
+    _exports_checkpoints = False
+
     def get_kv_cache_spec(self, config):
         return self.original
 
@@ -86,6 +89,7 @@ class CheckpointSafetyTests(unittest.TestCase):
         cls.envs = NS(VLLM_GDN_PREFILL_CHECKPOINTS=False)
         cls.scope = dict(
             Base=Base,
+            get_mamba_prefill_checkpoint_grid=lambda config: 256,
             MambaSpec=Spec,
             replace=replace,
             envs=cls.envs,
@@ -121,6 +125,15 @@ class CheckpointSafetyTests(unittest.TestCase):
         self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = False
         spec = Spec()
         self.assertIs(self.layer(spec).get_kv_cache_spec(object()), spec)
+
+    def test_default_off_preserves_upstream_flashinfer_checkpoint_allocation(self):
+        self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = False
+        value = self.layer(Spec())
+        value._exports_checkpoints = True
+        result = value.get_kv_cache_spec(object())
+        self.assertEqual(result.num_prefill_checkpoint_blocks, 1)
+        self.assertEqual(result.prefill_checkpoint_alignment, 256)
+        self.assertEqual(result.prefill_checkpoint_interval, 0)
 
     def test_non_mamba_spec_is_unchanged(self):
         self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = True
@@ -207,6 +220,7 @@ class CheckpointSafetyTests(unittest.TestCase):
         calls = []
         pool = NS(
             hash_block_size=2048,
+            num_hash_lookahead_tokens=0,
             cache_partial_block=lambda **kwargs: calls.append(kwargs) or "published",
         )
         manager = NS(

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: Apache-2.0
-"""Real TP=2 GDN deep-divergence replay: multiple checkpoints per prefill.
+"""Real GDN divergence replay with configurable prefill chunks and frozen token IDs.
 
 Run --variant enabled then default-off with the same --output-dir, each in a
 fresh process. Add -dflash to both variants for the actual seven-draft path.
@@ -175,11 +175,21 @@ def main():
         default=4_000_000_000,
         help="fixed KV pool per GPU, identical in both arms",
     )
+    parser.add_argument("--chunk-size", type=int, default=2048)
+    parser.add_argument("--material-tokens", type=int, default=2000)
+    parser.add_argument("--shared-tokens", type=int, default=1200)
+    parser.add_argument("--tensor-parallel-size", type=int, default=2)
+    parser.add_argument("--require-multiple-export", action="store_true",
+                        help="require more than one checkpoint exported in one prefill")
     parser.add_argument("--compare-only", action="store_true")
     parser.add_argument("--require-off-miss", action="store_true")
     args = parser.parse_args()
     if args.kv_cache_bytes <= 0:
         parser.error("--kv-cache-bytes must be positive")
+    if args.chunk_size <= 0 or args.tensor_parallel_size <= 0:
+        parser.error("chunk size and tensor parallel size must be positive")
+    if not 0 < args.shared_tokens < args.material_tokens <= 11000:
+        parser.error("require 0 < shared tokens < material tokens <= 11000")
     if args.compare_only:
         compare_results(
             args.output_dir, args.variant.endswith("dflash"), args.require_off_miss
@@ -204,11 +214,11 @@ def main():
         }
     parameters = dict(
         model=args.model,
-        tensor_parallel_size=2,
+        tensor_parallel_size=args.tensor_parallel_size,
         dtype="bfloat16",
         max_model_len=11264,
         max_num_seqs=2,
-        max_num_batched_tokens=8192,
+        max_num_batched_tokens=args.chunk_size,
         gpu_memory_utilization=0.80,
         kv_cache_memory_bytes=args.kv_cache_bytes,
         kv_cache_dtype="auto",
@@ -249,8 +259,8 @@ def main():
         if tokens and isinstance(tokens[0], list):
             tokens = tokens[0]
         print("PROMPT_LENGTH", len(tokens), flush=True)
-        prefix = tokens[:8000]
-        assert len(prefix) == 8000
+        prefix = tokens[:args.material_tokens]
+        assert len(prefix) == args.material_tokens
         tail = tokenizer.encode(
             "\nWhat is the unique archive passcode? Reply with digits only."
             "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n",
@@ -291,10 +301,10 @@ def main():
         llm.reset_prefix_cache()
         cold = generate("cold", prefix + tail)
         assert cold["cached_tokens"] == 0, cold
-        # Fixed independently of exported offsets: a new suffix starts after
-        # exactly 4,800 of the first 8,000 material tokens (about 60%). Do not
-        # tune the shared length to whichever checkpoint happened to be saved.
-        shared = 4800
+        # Fixed before the model runs, independently of exported offsets. The
+        # default 1200/2000 case diverges inside the shipped 2048-token chunk;
+        # the historical long case is --material-tokens 8000 --shared-tokens 4800.
+        shared = args.shared_tokens
         generate(
             "interleave",
             tokenizer.encode("Count from 1 to 3.", add_special_tokens=False),
@@ -321,10 +331,12 @@ def main():
         assert resumed["token_ids"] == repeated["token_ids"]
         if enabled:
             assert 0 < resumed["cached_tokens"] < shared, resumed
-            assert all(
-                any(len(record["slices"]) > 1 for record in rank)
-                for rank in cold["checkpoints"]
-            ), "Every TP rank must export multiple states in one prefill"
+            assert all(cold["checkpoints"]), "Every rank must actually export states"
+            if args.require_multiple_export:
+                assert all(
+                    any(len(record["slices"]) > 1 for record in rank)
+                    for rank in cold["checkpoints"]
+                ), "Requested multiple states in one prefill were not observed"
         if speculative:
             assert all(cold["draft_calls"]), "DFlash propose must actually execute"
         if speculative:

@@ -51,6 +51,7 @@ def fixture(speculative=0, interval=256, drop=False):
     )
     manager.drop_eagle_checkpoint_block = drop
     config = NS(
+        num_hash_lookahead_tokens=0,
         cache_config=NS(
             mamba_cache_mode="align",
             hash_block_size=128,

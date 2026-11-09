@@ -13,7 +13,7 @@ PTH_FA inherits Triton's scale-view creation and cache writer; selecting
 `CUSTOM` does not isolate it from bugs in those methods. The series carries
 `quant-scale-view-preserve-pages.patch` (vLLM #64141/#63944) so first-use view
 creation preserves live hybrid state and existing shared KV scales rather than
-filling their storage. This applies to the 0.31 pin as well as 0.32.
+filling their storage. This applies to the 0.31 and 0.32 pins as well as 0.33.
 
 ## What is vendored, and from where
 

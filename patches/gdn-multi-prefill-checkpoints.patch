@@ -8,13 +8,13 @@ interior states address the deep-divergence criterion that version lacked.
 Kind: feature
 What: opt-in CUDA Triton/FLA GDN multi-checkpoint prefill export and allocation for deep-divergence prefix reuse
 Upstream: syv-ai/HyperQwen #392 and #425 (closed single-checkpoint version)
-Cut-against: 0.32.0
+Cut-against: 0.33.0: Triton-only opt-in; upstream FlashInfer checkpoint planning/export stays unchanged
 Retires-when: upstream GDN exports and allocates equivalent periodic interior states
 
---- exported from b676719 (gdn-multi-prefill-checkpoints); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from d0c6405 (gdn-multi-prefill-checkpoints); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 25bf416..deb08fd 100755
+index b7508f5..d31264c 100755
 --- a/envs.py
 +++ b/envs.py
 @@ -16,6 +16,7 @@
@@ -25,7 +25,7 @@ index 25bf416..deb08fd 100755
      VLLM_USE_FASTOKENS: bool = False
      VLLM_RINGBUFFER_WARNING_INTERVAL: int = 60
      VLLM_NCCL_SO_PATH: str | None = None
-@@ -781,6 +782,9 @@
+@@ -783,6 +784,9 @@
      # (`hf`, `deepseek_v32`, `deepseek_v4`, …). The `fastokens`
      # Python package must be installed.
      "VLLM_USE_FASTOKENS": lambda: bool(int(os.getenv("VLLM_USE_FASTOKENS", "0"))),
@@ -36,7 +36,7 @@ index 25bf416..deb08fd 100755
      "VLLM_RINGBUFFER_WARNING_INTERVAL": lambda: int(
          os.environ.get("VLLM_RINGBUFFER_WARNING_INTERVAL", "60")
 diff --git a/model_executor/layers/mamba/checkpoint.py b/model_executor/layers/mamba/checkpoint.py
-index 2f3122f..45cc95c 100644
+index da74702..313424a 100644
 --- a/model_executor/layers/mamba/checkpoint.py
 +++ b/model_executor/layers/mamba/checkpoint.py
 @@ -14,6 +14,7 @@
@@ -47,7 +47,7 @@ index 2f3122f..45cc95c 100644
      is_mamba_prefill_checkpoint_valid,
  )
  
-@@ -78,6 +79,9 @@
+@@ -84,6 +85,9 @@
      # with the same spec can re-derive its own ``state_indices``.
      request_rows: torch.Tensor | None = None
      block_cols: torch.Tensor | None = None
@@ -57,9 +57,9 @@ index 2f3122f..45cc95c 100644
  
      def regather_state_indices(
          self, block_table: torch.Tensor
-@@ -131,6 +135,31 @@
-             drop_eagle_block=drop_eagle_block,
+@@ -140,6 +144,31 @@
              cache_hit_alignment_tokens=cache_hit_alignment_tokens,
+             num_hash_lookahead_tokens=self.vllm_config.num_hash_lookahead_tokens,
          )
 +        source_rows = None
 +        interval = self.kv_cache_spec.prefill_checkpoint_interval
@@ -89,8 +89,8 @@ index 2f3122f..45cc95c 100644
          if not any(checkpoint_offsets):
              return None
          checkpoint_offsets_tensor = async_tensor_h2d(
-@@ -152,6 +181,7 @@
-             offsets=checkpoint_offsets,
+@@ -162,6 +191,7 @@
+             query_lens=query_lens,
              request_rows=request_rows_tensor,
              block_cols=checkpoint_cols_tensor,
 +            source_rows=source_rows,
@@ -98,18 +98,10 @@ index 2f3122f..45cc95c 100644
  
  
 diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-index 976ac2c..6c1344b 100644
+index 3eb14c0..87ce6c0 100644
 --- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
 +++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-@@ -3,6 +3,7 @@
- """Inference-only Qwen3-Next/Qwen3.5 model."""
- 
- import os
-+from dataclasses import replace
- from typing import Literal
- 
- import torch
-@@ -23,6 +24,7 @@
+@@ -27,6 +27,7 @@
  )
  from vllm.forward_context import ForwardContext, get_forward_context
  from vllm.logger import init_logger
@@ -117,15 +109,11 @@ index 976ac2c..6c1344b 100644
  from vllm.model_executor.custom_op import CustomOp, PluggableLayer
  from vllm.model_executor.layers.layernorm import RMSNormGated
  from vllm.model_executor.layers.linear import (
-@@ -453,6 +455,48 @@
+@@ -751,6 +752,42 @@
  
- @PluggableLayer.register("qwen_gated_delta_net_attention")
- class QwenGatedDeltaNetAttention(GatedDeltaNetAttention):
-+    def get_kv_cache_spec(self, vllm_config: VllmConfig):
-+        spec = super().get_kv_cache_spec(vllm_config)
-+        if not isinstance(spec, MambaSpec):
-+            return spec
-+        if envs.VLLM_GDN_PREFILL_CHECKPOINTS:
+     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec | None:
+         spec = super().get_kv_cache_spec(vllm_config)
++        if envs.VLLM_GDN_PREFILL_CHECKPOINTS and isinstance(spec, MambaSpec):
 +            if vllm_config.cache_config.mamba_cache_mode != "align":
 +                raise RuntimeError(
 +                    "GDN prefill checkpoints require mamba_cache_mode=align"
@@ -161,12 +149,10 @@ index 976ac2c..6c1344b 100644
 +                prefill_checkpoint_alignment=1,
 +                prefill_checkpoint_interval=interval,
 +            )
-+        return spec
-+
-     def get_state_shape(
-         self,
-     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-@@ -936,6 +980,86 @@
+         if not self._exports_checkpoints or not isinstance(spec, MambaSpec):
+             return spec
+         # FlashInfer emits states at one stride for the whole batch, the gcd of
+@@ -1088,6 +1125,86 @@
  
          return query, key, value
  
@@ -253,7 +239,7 @@ index 976ac2c..6c1344b 100644
      def forward(
          self,
          hidden_states: torch.Tensor,
-@@ -1439,6 +1563,11 @@
+@@ -1655,6 +1772,11 @@
              mixed_qkv_spec = None
              mixed_qkv_non_spec = mixed_qkv
  
@@ -265,22 +251,23 @@ index 976ac2c..6c1344b 100644
          # 1.1: Process the multi-query part
          if spec_sequence_masks is not None:
              # spec_state_indices_tensor is always set when spec_sequence_masks is set
-@@ -1614,6 +1743,10 @@
-             assert prefill_has_initial_state is not None
-             initial_state = ssm_state[prefill_state_indices]
+@@ -1833,6 +1955,11 @@
              initial_state[~prefill_has_initial_state, ...] = 0
-+            self._store_gdn_prefill_checkpoint(
-+                attn_metadata, initial_state, query_non_spec, key_non_spec,
-+                value_non_spec, g_non_spec, beta_non_spec, ssm_state,
-+            )
-             (
-                 core_attn_out_non_spec,
-                 last_recurrent_state,
+             plan = attn_metadata.flashinfer_checkpoint_plan
+             if plan is None:
++                if self.gdn_prefill_backend == "triton":
++                    self._store_gdn_prefill_checkpoint(
++                        attn_metadata, initial_state, query_non_spec, key_non_spec,
++                        value_non_spec, g_non_spec, beta_non_spec, ssm_state,
++                    )
+                 (
+                     core_attn_out_non_spec,
+                     last_recurrent_state,
 diff --git a/v1/attention/backends/gdn_attn.py b/v1/attention/backends/gdn_attn.py
-index 08369ad..6ff2e2c 100644
+index 660ef53..83342fa 100644
 --- a/v1/attention/backends/gdn_attn.py
 +++ b/v1/attention/backends/gdn_attn.py
-@@ -43,6 +43,23 @@
+@@ -85,6 +85,23 @@
          return True
  
  
@@ -304,15 +291,15 @@ index 08369ad..6ff2e2c 100644
  @dataclass
  class GDNAttentionMetadata:
      num_prefills: int
-@@ -54,6 +71,7 @@
-     num_actual_tokens: int
+@@ -97,6 +114,7 @@
  
      checkpoint: MambaPrefillCheckpointMetadata | None = None
+     flashinfer_checkpoint_plan: GDNFlashInferCheckpointPlan | None = None
 +    checkpoint_plan: GDNPrefillCheckpointPlan | None = None
      has_initial_state: torch.Tensor | None = None
  
      spec_query_start_loc: torch.Tensor | None = None  # shape: [num_spec_decodes + 1,]
-@@ -136,6 +154,7 @@
+@@ -187,6 +205,7 @@
              and device.type == "cuda"
              # Not isinstance: KDA's RecoverSSM/checkpoint metadata is per group.
              and type(self) is GDNAttentionMetadataBuilder
@@ -320,7 +307,7 @@ index 08369ad..6ff2e2c 100644
          )
          if self.supports_update_block_table:
              # Opts into MRV2's CUDA-only aligned-index precompute.
-@@ -259,6 +278,77 @@
+@@ -310,6 +329,77 @@
              ),
          )
  
@@ -398,12 +385,13 @@ index 08369ad..6ff2e2c 100644
      def build(  # type: ignore[override]
          self,
          common_prefix_len: int,
-@@ -528,6 +618,14 @@
-                 request_rows = (~spec_sequence_masks_cpu).nonzero().flatten().tolist()
-             checkpoint = self.checkpoint_builder.build(m, request_rows)
+@@ -601,6 +691,15 @@
+                 rows=plan[len(cu_starts) :],
+             )
  
 +        checkpoint_plan = None
-+        if checkpoint is not None and type(self) is GDNAttentionMetadataBuilder:
++        if (checkpoint is not None and self.gdn_prefill_backend == "triton"
++                and type(self) is GDNAttentionMetadataBuilder):
 +            assert non_spec_query_start_loc_cpu is not None
 +            checkpoint_plan = self._build_checkpoint_plan(
 +                checkpoint, num_decodes, num_decode_tokens,
@@ -413,19 +401,19 @@ index 08369ad..6ff2e2c 100644
          # Function code counted on either presency non-spec decode or spec decode,
          # but not both.
          assert not (num_decodes > 0 and num_spec_decodes > 0), (
-@@ -606,6 +704,7 @@
-             num_spec_decode_tokens=num_spec_decode_tokens,
+@@ -680,6 +779,7 @@
              num_actual_tokens=m.num_actual_tokens,
              checkpoint=checkpoint,
+             flashinfer_checkpoint_plan=flashinfer_checkpoint_plan,
 +            checkpoint_plan=checkpoint_plan,
              has_initial_state=has_initial_state,
              chunk_indices=chunk_indices,
              chunk_offsets=chunk_offsets,
 diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
-index 7d4f2d5..429567d 100644
+index 4914fa0..0a68a60 100644
 --- a/v1/core/kv_cache_coordinator.py
 +++ b/v1/core/kv_cache_coordinator.py
-@@ -230,6 +230,7 @@
+@@ -234,6 +234,7 @@
  
          """
          num_blocks_to_allocate = 0
@@ -433,7 +421,7 @@ index 7d4f2d5..429567d 100644
          if self.retention_interval != 0:
              prefill_end = 0
          for i, manager in enumerate(self.single_type_managers):
-@@ -254,7 +255,12 @@
+@@ -258,7 +259,12 @@
                      num_local_computed_tokens,
                      num_tokens_main_model,
                      apply_admission_cap=apply_admission_cap,
@@ -448,10 +436,10 @@ index 7d4f2d5..429567d 100644
          return num_blocks_to_allocate
  
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index d779d56..4e1c88a 100644
+index bbcec25..c954eb3 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -45,6 +45,7 @@
+@@ -46,6 +46,7 @@
      SlidingWindowMLASpec,
      SlidingWindowSpec,
      get_mamba_prefill_checkpoint_position,
@@ -459,7 +447,7 @@ index d779d56..4e1c88a 100644
      is_mamba_prefill_checkpoint_valid,
  )
  from vllm.v1.kv_cache_spec_registry import KVCacheSpecRegistry
-@@ -1453,6 +1454,7 @@
+@@ -1469,6 +1470,7 @@
              # checkpoint position and reserved block index for the current
              # allocation.
              self._checkpoints: dict[str, tuple[int, int]] = {}
@@ -467,7 +455,7 @@ index d779d56..4e1c88a 100644
              # Requests that registered their own last-prompt-boundary partial
              # tail (producers). A later CoW hands its private copy to the
              # connector; a request that finishes first hands off this table
-@@ -1698,7 +1700,13 @@
+@@ -1714,7 +1716,13 @@
          blocks = self.req_to_blocks[request_id]
          return (
              self.has_prefill_checkpoint_blocks
@@ -482,7 +470,7 @@ index d779d56..4e1c88a 100644
              and is_mamba_prefill_checkpoint_valid(
                  query_start=query_start,
                  query_end=query_end,
-@@ -1785,8 +1793,9 @@
+@@ -1801,8 +1809,9 @@
              # Keyed on the chunk end like the worker's
              # `compute_mamba_prefill_checkpoints`, which writes the state there.
              # The helper returns a boundary strictly below its input, so every
@@ -494,7 +482,7 @@ index d779d56..4e1c88a 100644
              checkpoint_position = get_mamba_prefill_checkpoint_position(
                  num_tokens,
                  self.cache_hit_alignment_tokens,
-@@ -1801,9 +1810,24 @@
+@@ -1818,9 +1827,24 @@
              ):
                  checkpoint_position = 0
              checkpoint_block = int(checkpoint_position > 0)
@@ -520,7 +508,7 @@ index d779d56..4e1c88a 100644
                      self._checkpoints[request_id] = (
                          checkpoint_position,
                          checkpoint_idx,
-@@ -1820,7 +1844,13 @@
+@@ -1837,7 +1861,13 @@
              num_evictable_computed_blocks = self._get_num_evictable_blocks(
                  new_computed_blocks
              )
@@ -535,7 +523,7 @@ index d779d56..4e1c88a 100644
  
      def allocate_new_blocks(
          self, request_id: str, num_tokens: int, num_tokens_main_model: int
-@@ -1848,6 +1878,7 @@
+@@ -1865,6 +1895,7 @@
                  cdiv(num_tokens, self.block_size) + self.num_speculative_blocks
              )
              checkpoint_block = int(request_id in self._checkpoints)
@@ -543,7 +531,7 @@ index d779d56..4e1c88a 100644
              partial_hit = self._partial_hit_reqs.get(request_id)
              has_partial_hit = partial_hit is not None
              # `num_required_blocks` might be less than `len(req_blocks)` if blocks are
-@@ -1856,6 +1887,7 @@
+@@ -1873,6 +1904,7 @@
                  num_required_blocks <= len(req_blocks)
                  and not has_partial_hit
                  and not checkpoint_block
@@ -551,7 +539,7 @@ index d779d56..4e1c88a 100644
              ):
                  self._allocated_block_reqs.add(request_id)
                  return []
-@@ -1893,6 +1925,15 @@
+@@ -1910,6 +1942,15 @@
                      for block_idx in range(
                          prev_block_len - self.num_speculative_blocks, prev_block_len
                      ):
@@ -567,7 +555,7 @@ index d779d56..4e1c88a 100644
                          if block_idx < num_skipped_blocks - checkpoint_block:
                              self._relocate_speculative_block(req_blocks, block_idx)
                          else:
-@@ -1900,11 +1941,22 @@
+@@ -1917,11 +1958,22 @@
                  num_new_blocks = max(num_required_blocks - len(req_blocks), 0)
                  if has_partial_hit:
                      num_new_blocks = max(num_new_blocks, 0) + 1
@@ -591,7 +579,7 @@ index d779d56..4e1c88a 100644
                  returned_blocks = req_blocks[prev_block_len:]
                  if partial_hit is not None:
                      block_idx, source_block = partial_hit
-@@ -1941,10 +1993,7 @@
+@@ -1958,10 +2010,7 @@
                              # The moved entry is only filled by this step's
                              # copy, so defer same-step hits on it.
                              self.cached_blocks_this_step.add(cow_block.block_hash)
@@ -603,7 +591,7 @@ index d779d56..4e1c88a 100644
                              # This block now carries the chain's reachable
                              # boundary state — the one snapshot the NEXT turn's
                              # hit resumes from. Releasing it right after the
-@@ -2015,6 +2064,7 @@
+@@ -2032,6 +2081,7 @@
              self.last_state_block_idx.pop(request_id, None)
              self._num_retired_blocks.pop(request_id, None)
              self._checkpoints.pop(request_id, None)
@@ -612,10 +600,10 @@ index d779d56..4e1c88a 100644
              # An offer is only guaranteed to hold committed bytes until the end
              # of the pass that made it. This request's blocks are going back to
 diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
-index b41c53e..8fcac77 100644
+index 054c623..47f2b30 100644
 --- a/v1/kv_cache_interface.py
 +++ b/v1/kv_cache_interface.py
-@@ -1041,6 +1041,9 @@
+@@ -1100,6 +1100,9 @@
      num_speculative_blocks: int = 0
      num_prefill_checkpoint_blocks: int = 0
      prefill_checkpoint_alignment: int | None = None
@@ -625,7 +613,7 @@ index b41c53e..8fcac77 100644
      num_heads: int = 1
      tokens_per_state: int = -1
      # False: the state is sharded across TP ranks (e.g. GDN). True: every TP
-@@ -1084,6 +1087,11 @@
+@@ -1143,6 +1146,11 @@
                  state_blocks
                  + self.num_speculative_blocks
                  + self.num_prefill_checkpoint_blocks
@@ -637,7 +625,7 @@ index b41c53e..8fcac77 100644
              )
          else:
              return self.page_size_bytes * (1 + self.num_speculative_blocks)
-@@ -1108,6 +1116,7 @@
+@@ -1167,6 +1175,7 @@
              and spec.num_speculative_blocks == self.num_speculative_blocks
              and spec.num_prefill_checkpoint_blocks == self.num_prefill_checkpoint_blocks
              and spec.prefill_checkpoint_alignment == self.prefill_checkpoint_alignment
@@ -645,7 +633,7 @@ index b41c53e..8fcac77 100644
              and spec.page_size_bytes == self.page_size_bytes
              and spec.tp_replicated == self.tp_replicated
              for spec in kv_cache_specs.values()
-@@ -1129,6 +1138,38 @@
+@@ -1193,6 +1202,38 @@
      return max(checkpoint_position, 0)
  
  

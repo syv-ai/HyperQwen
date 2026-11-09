@@ -32,7 +32,7 @@ print(load(
     sources=[str(source / "fp8_attn.cu")],
     extra_include_paths=[str(source / "headers"), str(args.cutlass_include.resolve()),
                          str(flashinfer_include.resolve())],
-    extra_cuda_cflags=["-O3", "--use_fast_math", "-std=c++17", "--ptxas-options=-v",
+    extra_cuda_cflags=["-O3", "--use_fast_math", "-std=c++20", "--ptxas-options=-v",
         "-DFLASHATTENTION_DISABLE_DROPOUT", "-DFLASHATTENTION_DISABLE_ALIBI",
         "-DFLASHATTENTION_DISABLE_SOFTCAP", "-lineinfo",
         "-U__CUDA_NO_HALF_OPERATORS__", "-U__CUDA_NO_HALF_CONVERSIONS__",
@@ -44,5 +44,5 @@ if args.prefill:
     prefill_build = source / "build-prefill"
     prefill_build.mkdir(exist_ok=True)
     print(load(name="fa2_fp8kv_prefill", sources=[str(source / "prefill.cu")],
-               extra_cuda_cflags=["-O3", "-std=c++17", "-lineinfo"],
+               extra_cuda_cflags=["-O3", "-std=c++20", "-lineinfo"],
                build_directory=str(prefill_build), is_python_module=False, verbose=True))

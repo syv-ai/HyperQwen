@@ -62,13 +62,13 @@ failed on 0.28 is gone. Mechanisms 2 and 3 below still apply. To be proven by bo
 Kind: feature
 What: int4 per-token-head KV cache with the DFlash2 drafter
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from f082a25d3 (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 594cf86e21 (int4-kv-per-token-head); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
-index 3567f49d9..68ef5348a 100644
+index 3567f49d95..68ef5348a4 100644
 --- a/v1/attention/ops/int4_per_token_head.py
 +++ b/v1/attention/ops/int4_per_token_head.py
 @@ -386,6 +386,9 @@
@@ -129,10 +129,10 @@ index 3567f49d9..68ef5348a 100644
  
      out_f = single_rht(out.float(), inverse=True) / rht_norm
 diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
-index 63a9cdc7f..0835c0a75 100644
+index d914e574f2..93c6bba4be 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -869,9 +869,6 @@
+@@ -882,9 +882,6 @@
      # Sub-byte packed mode (INT4) needs a bespoke kernel (split-dot +
      # sub-byte unpack); everything else goes through the core kernel below.
      if kv_quant_mode == KVQuantMode.INT4_PER_TOKEN_HEAD:
@@ -142,7 +142,7 @@ index 63a9cdc7f..0835c0a75 100644
          from vllm.v1.attention.ops.int4_per_token_head import (
              unified_attention_int4,
          )
-@@ -904,6 +901,8 @@
+@@ -917,6 +914,8 @@
              softmax_segm_output=softmax_segm_output,
              softmax_segm_max=softmax_segm_max,
              softmax_segm_expsum=softmax_segm_expsum,
