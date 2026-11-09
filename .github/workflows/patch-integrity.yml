@@ -77,6 +77,8 @@ jobs:
         run: bash bench/test_pthfa_knob.sh
       - name: Check pthfa/install.sh builds with an nvcc of torch's CUDA major and checks with a cuobjdump not older
         run: bash bench/test_pthfa_install_toolchain.sh
+      - name: Check patches/apply.sh leaves the package unchanged when a patch fails, and what its stamp tells apart (#445)
+        run: bash bench/test_apply_staged.sh
       - name: Rerun the launcher tests as a compute capability 8.6 host (stub nvidia-smi), where FA2_FP8KV and PTH_FA can default on
         run: |
           mkdir -p "$RUNNER_TEMP/cc86"
