@@ -538,10 +538,17 @@ if [ "$SPEC" = "dflash2" ]; then
     # (the hunk that did retired with the port), so the pinned KV_MEM is the only budget here.
   elif [ "$CTX" = "long" ]; then
     # int8 KV: measured 136,429 tokens of pool at DFLASH_TOKENS=7 with prefix caching on
-    # (138,696 without), against bf16's 69,758 in the same pinned 5.2 GiB. DFLASH_TOKENS>7
-    # at this context is untested -- the graphs and the state pages both grow.
+    # (138,696 without), against bf16's 69,758 in the same pinned 5.2 GiB.
     MAX_SEQS=${MAX_SEQS:-4}
-    MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-131072}}
+    # Above 7 drafts the aligned state pages grow and one request at 131072 needs 5.6 GiB
+    # of KV against the 5.19 GiB pin, so the server refused to start ("estimated maximum
+    # model length is 117120", #454). 114688 = 896 x 128 leaves ~2% margin, the same trade
+    # CTX=fast (57344) and CTX=huge (221184) make at DFLASH_TOKENS>7.
+    if [ "$DRAFT_TOKENS" -gt 7 ]; then
+      MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-114688}}
+    else
+      MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-131072}}
+    fi
     KV_MEM=${KV_MEM-5583457484}
   elif [ "$DRAFT_TOKENS" -gt 7 ]; then
     # 4 slots and 56k instead of 8 and 64k: the aligned state pages and the bigger decode
