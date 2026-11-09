@@ -15,13 +15,13 @@ Upstream: none (flashinfer issue #3620 raised the floor to sm80)
 Cut-against: 0.33.0
 Retires-when: FlashInfer supports sm75 prefill within shared-memory limits
 
---- exported from 24a8593 (flashinfer-sm75-optin); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 75d3487791 (flashinfer-sm75-optin); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 88bc850..81bf813 100755
+index 2a2db9c6a1..036db33ba9 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -236,6 +236,7 @@
+@@ -256,6 +256,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -29,7 +29,7 @@ index 88bc850..81bf813 100755
      VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
      VLLM_V1_USE_OUTLINES_CACHE: bool = False
      VLLM_TPU_USING_PATHWAYS: bool = False
-@@ -1669,6 +1670,7 @@
+@@ -1714,6 +1715,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -38,7 +38,7 @@ index 88bc850..81bf813 100755
      # The activation dtype config for humming kernel. Explicit schemas disable
      # fallback unless the config includes "allow_fallback": true.
 diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
-index 455ca06..f269306 100755
+index 455ca0680c..f2693061b6 100755
 --- a/v1/attention/backends/flashinfer.py
 +++ b/v1/attention/backends/flashinfer.py
 @@ -699,9 +699,13 @@

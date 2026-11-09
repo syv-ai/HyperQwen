@@ -9,19 +9,22 @@ The Turing launcher enables this and tees its server log to logs/turing.log.
 
 The output format is modeled on Project Maya (https://github.com/mw00/project-maya, MIT, Peasant Smith and the Project Maya contributors).
 
+Re-cut against 0.33.0: in the output processor, the progress call now follows 0.33's new
+streaming_chunk_boundary assignment, just before step 4.
+
 Kind: feature
 What: VLLM_TERMINAL_PROGRESS=1: per-request reading, prefill, answering and done lines on the server console (ids and counts, never text)
 Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstream has per-request progress logging
 
---- exported from 55a7151 (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ea0c47a5dc (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 2ac576e..8163134 100755
+index 97c2abc4ac..b0a058d612 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -236,6 +236,7 @@
+@@ -256,6 +256,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -29,7 +32,7 @@ index 2ac576e..8163134 100755
      VLLM_GDN_SM75: bool = False
      VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
      VLLM_FLASHINFER_SM75: bool = False
-@@ -1672,6 +1673,7 @@
+@@ -1717,6 +1718,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -37,7 +40,7 @@ index 2ac576e..8163134 100755
      "VLLM_GDN_SM75": lambda: os.environ.get("VLLM_GDN_SM75", "0") == "1",
      "VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS": lambda: os.environ.get("VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS", "0") == "1",
      "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
-@@ -2475,6 +2477,8 @@
+@@ -2522,6 +2524,8 @@
          "VLLM_RINGBUFFER_WARNING_INTERVAL",
          "VLLM_DEBUG_DUMP_PATH",
          "VLLM_PORT",
@@ -47,7 +50,7 @@ index 2ac576e..8163134 100755
          # Runtime memory-plan persistence; does not affect compiled graphs.
          "VLLM_ENABLE_STARTUP_PLAN",
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index e8b4227..daa29f7 100644
+index e8b422779f..daa29f7da2 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
 @@ -1,6 +1,7 @@
@@ -84,7 +87,7 @@ index e8b4227..daa29f7 100644
              new_logprobs = None
              new_sampling_mask = None
 diff --git a/v1/engine/output_processor.py b/v1/engine/output_processor.py
-index bfbad0f..ec19b94 100644
+index bfbad0fbff..1484b6ee2a 100644
 --- a/v1/engine/output_processor.py
 +++ b/v1/engine/output_processor.py
 @@ -2,6 +2,7 @@
@@ -113,19 +116,18 @@ index bfbad0f..ec19b94 100644
                  self.lora_states.request_finished(request_id, req_state.lora_name)
                  request_ids_to_abort.append(request_id)
                  # Produce final abort output.
-@@ -847,6 +852,9 @@
-                 # if required.
-                 req_state.logprobs_processor.update_from_output(engine_core_output)
- 
-+            if terminal_progress.ENABLED and pooling_output is None:
-+                terminal_progress.output(req_state, engine_core_timestamp, finish_reason)
-+
+@@ -850,6 +855,8 @@
              streaming_chunk_boundary = req_state.streaming_input and (
                  finish_reason not in (FinishReason.ABORT, FinishReason.ERROR)
              )
++            if terminal_progress.ENABLED and pooling_output is None:
++                terminal_progress.output(req_state, engine_core_timestamp, finish_reason)
+ 
+             # 4) Create and handle RequestOutput objects.
+             if request_output := req_state.make_request_output(
 diff --git a/v1/metrics/terminal_progress.py b/v1/metrics/terminal_progress.py
 new file mode 100644
-index 0000000..1faf4f5
+index 0000000000..1faf4f572a
 --- /dev/null
 +++ b/v1/metrics/terminal_progress.py
 @@ -0,0 +1,61 @@

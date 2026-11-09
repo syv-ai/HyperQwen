@@ -12,13 +12,13 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstream captures full graphs for FlashInfer speculative attention
 
---- exported from 5e86df6 (flashinfer-sm75-spec-graphs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from d0712292c1 (flashinfer-sm75-spec-graphs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 81bf813..ea94300 100755
+index 036db33ba9..dbc9839807 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -236,6 +236,7 @@
+@@ -256,6 +256,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -26,7 +26,7 @@ index 81bf813..ea94300 100755
      VLLM_FLASHINFER_SM75: bool = False
      VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
      VLLM_V1_USE_OUTLINES_CACHE: bool = False
-@@ -1670,6 +1671,7 @@
+@@ -1715,6 +1716,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -35,7 +35,7 @@ index 81bf813..ea94300 100755
      "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
      # The activation dtype config for humming kernel. Explicit schemas disable
 diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
-index f269306..a40bda3 100755
+index f2693061b6..a40bda32b1 100755
 --- a/v1/attention/backends/flashinfer.py
 +++ b/v1/attention/backends/flashinfer.py
 @@ -886,6 +886,11 @@

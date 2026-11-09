@@ -10,7 +10,9 @@ full reproductions; the list below collects the shorter reports from issues.
   recall, the prompt-shape finding
 - [turing-0.33.md](turing-0.33.md) — native vLLM 0.33.0 on two modified 22 GB
   RTX 2080 Ti cards: one- and two-GPU benchmarks, graph and GDN comparisons,
-  FP8 KV capacity, and functional checks
+  FP8 KV capacity, and functional checks after the upstream and moderator merges
+- [turing-0.33-premerge.md](turing-0.33-premerge.md) — archived initial Turing
+  measurements, version comparisons and source-isolation experiments
 - [../ubuntu-3090.md](../ubuntu-3090.md) — the later campaign on that same box:
   the offload-fix control arm, retention bisection, the MAX_SEQS ladder, and the
   batch arm only a headless box can run
