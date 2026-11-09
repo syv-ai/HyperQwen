@@ -238,6 +238,20 @@ qwen_normalize_extra_args() {
   EXTRA_ARGS="${out[*]}"
 }
 
+qwen_request_metrics_args() {
+  # Batch and SPEC=off still support timing/usage metrics. Spec acceptance
+  # metrics require an actual speculative profile or vLLM refuses to boot.
+  METRICS_ARGS=()
+  if [ "${REQ_METRICS:-0}" = 1 ]; then
+    METRICS_ARGS=(--enable-per-request-metrics --enable-force-include-usage)
+    if [ "$1" != off ]; then
+      local level=summary
+      [ "${REQ_METRICS_DETAILED:-0}" = 1 ] && level=detailed
+      METRICS_ARGS+=(--per-request-spec-decode-metrics "$level")
+    fi
+  fi
+}
+
 qwen_tp_size() {
   local w words prev= tp=1
   read -r -d '' -a words <<< "${EXTRA_ARGS:-}" || :

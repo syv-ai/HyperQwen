@@ -1,6 +1,6 @@
 #!/bin/bash
 # Install the KVarN KV-cache port into this repo's vLLM 0.33.0 venv:
-# copies the new modules into site-packages/vllm and applies the upstream hunks.
+# applies the upstream hunks, then copies the new modules into site-packages/vllm.
 # usage: bash kvarn/install.sh            (idempotent: re-copying files is fine, and
 #        patches/apply.sh --kvarn skips a patch whose every hunk is already in the tree)
 set -e
@@ -9,7 +9,6 @@ REPO="$(dirname "$HERE")"
 PY=${PY:-$REPO/venv/bin/python}
 SP=$("$PY" -c 'import vllm, os; print(os.path.dirname(vllm.__file__))' 2>/dev/null | tail -n1)
 [ -n "$SP" ] && [ -d "$SP" ] || { echo "cannot import vllm with $PY (README: Setup)"; exit 1; }
-cp -r "$HERE/files/vllm/." "$SP/"
 # patches/apply.sh --kvarn applies kvarn-0.33.0, kvarn-v2-runner-0.33.0 (lets SPEC=dflash2 run with
 # CTX=huge: KVarN KV + prefix caching, 240k), kvarn-recycled-pages-0.33.0 (the runner tells KVarN
 # which pages moved to another KV-cache group each step, so a late flush never lands on another
@@ -19,6 +18,9 @@ cp -r "$HERE/files/vllm/." "$SP/"
 # no-op, a venv installed before the fp16 patch existed only gets that patch, and a partly applied
 # patch fails by name.
 bash "$REPO/patches/apply.sh" --kvarn "$SP"
+# The modules go in after the patches: a failed patch leaves the package unchanged, and modules
+# copied first would import without their vllm.envs registration (#437).
+cp -r "$HERE/files/vllm/." "$SP/"
 find "$SP" -type d -name __pycache__ -path "*kvarn*" -prune -exec rm -rf {} + 2>/dev/null || true
 "$PY" - <<'PY'
 from typing import get_args

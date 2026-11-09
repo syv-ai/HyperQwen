@@ -15,8 +15,13 @@ corruption earlier in the file stops the run instead of being silently skipped.
 The stdlib-only recovery helper is `generation_state.py`.
 A nonblocking OS lock on `data/gen.jsonl.lock` excludes a second generator before
 resume repair or model loading, and stays held through all writes. The sidecar
-file remains, but a process exit releases its lock automatically. Do not delete
-the sidecar while a generator is running.
+file remains after the lock is released; its presence does not mean a run is
+active. Normal completion unlocks it. On Linux, if the generator is killed before
+cleanup, forked engine children can retain the inherited lock until their last
+descriptor closes. From the repository root, `fuser -v drafter/data/gen.jsonl.lock`
+shows processes still using the sidecar. Wait for those holders to exit before
+retrying. Do not delete the sidecar while it is in use: a new process could lock
+a different inode and bypass exclusion.
 
 ## What actually mattered (in order)
 

@@ -1,21 +1,13 @@
 #!/bin/bash
-# CPU test for the resident-request note in single-user/start_qwen.sh (SPEC=dflash2). The note
-# used to divide KV_MEM by a flat 104,988,089 B per (k+2): no context term and one page size for
-# every k and KV dtype. It now computes the engine's block and pool page from the model's shape,
-# k and the KV dtype, and charges 6 x (2 + k) state pages per request (align mode, which vLLM
-# 0.31.0 runs by default for this model) plus 2 x ceil(ctx / block) attention pages.
-#
-# Each arm below is a measured boot on the reference 3090 (RTX 3090, vLLM 0.31.0), run here with
-# the KV_MEM, KV dtype and prefix setting it booted with. The checks are the engine's own
-# numbers from those boots:
-#   num_gpu_blocks and the attention block  -> must match exactly;
-#   resident requests at ~1k-token prompts  -> must lie inside the printed range;
-#   resident requests at ~61.5k             -> must equal the MAX_LEN=65536 figure.
-#
-# Copies the checkout to a temp dir, stubs vllm, and dry-runs the launcher with PRINT_ARGV=1 --
-# no GPU, no model, no network.
-#
-#   bash bench/test_resident_print.sh
+# CPU regression for the DFlash2 resident-request note. Pool/block geometry below
+# comes from historical 0.31 boots. Residency now follows current worst-case
+# admission: async depth two reserves 6 * (3+k) recurrent pages and the drafter's
+# sliding-window cap, not the old 6 * (2+k) formula. Historical short-request
+# peaks remain in the table for provenance; they are not current admission bounds.
+# The image test test_kv_cache_seat_budget.py independently compares the launcher
+# against the installed engine's spec classes, including synchronous scheduling.
+# No GPU/model/network: a temporary checkout with stub vllm and PRINT_ARGV=1.
+# Run: bash bench/test_resident_print.sh
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"; REPO="$(dirname "$HERE")"
 FAILS=0
@@ -39,7 +31,7 @@ INT8='--attention-backend TRITON_ATTN --kv-cache-dtype int8_per_token_head'
 # knob resolves to fp8 + FA2 (the #153 row sets FA2_FP8KV=1 itself).
 note() {
   (cd "$T" && env -u PRINT_ARGV -u DFLASH_TOKENS -u KV_MEM -u MAX_SEQS -u MAX_LEN -u EXTRA_ARGS -u PREFIX_CACHE \
-     -u CTX -u DFLASH_MAX_LEN -u FA2_FP8KV \
+     -u CTX -u DFLASH_MAX_LEN -u FA2_FP8KV -u ASYNC_SCHED \
      SPEC=dflash2 PRINT_ARGV=1 VLLM_API_KEY=k HOME="$T" FA2_FP8KV=0 "$@" \
      bash single-user/start_qwen.sh 2>/dev/null </dev/null) | grep -o '\[start_qwen\] note: the pool holds.*' || true
 }
@@ -48,10 +40,8 @@ fields() {
   note "$@" | sed -En 's/.*about ([0-9]+)( to ([0-9]+))? resident requests on ~1k-token prompts and ([0-9]+) at MAX_LEN=[0-9]+ -- ([0-9]+) pages of ([0-9]+) tokens.*/\1:\3:\4:\5:\6/p' \
     | awk -F: '{ if ($2 == "") $2 = $1; print $1 ":" $2 ":" $3 ":" $4 ":" $5 }'
 }
-# inside <lo:hi:...> <observed>: 1 if lo <= observed <= hi.
-inside() { awk -F: -v o="$2" '{ print ($1 <= o && o <= $2) ? 1 : 0 }' <<< "$1"; }
 
-echo "== measured arms: pool and block exact, observed residency inside the printed figures"
+echo "== measured arms: historical pool/block geometry, current admission counts"
 # arm                          KV_MEM      k  dtype  num_gpu_blocks  block  seen ~1k  seen ~32.8k  seen ~61.5k
 # batch 5 Q2-a                 5583457484  7  int8   382             864    7         2            1
 # batch 5 Q2-b                 5583457484  3  int8   404             816    13        3            2
@@ -72,31 +62,25 @@ echo "== measured arms: pool and block exact, observed residency inside the prin
 # / Running: 54.00 at k=7, 30.00 at k=3, 18.0 at k=1), including H2: vLLM 0.31.0 enables prefix
 # caching, and so align mode, by default for this model, with or without PREFIX_CACHE=1.
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "6:7:1:382:864" "$f" "Q2-a int8 k=7: range 6-7, 1 at 64k, pool 382, block 864"
-check 1 "$(inside "$f" 7)" "  ... the observed 7 at ~1k is inside"
+check "5:6:1:382:864" "$f" "Q2-a int8 k=7: range 5-6, 1 at 64k, pool 382, block 864"
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=3 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "11:13:2:404:816" "$f" "Q2-b int8 k=3: range 11-13, 2 at 64k, pool 404, block 816"
-check 1 "$(inside "$f" 13)" "  ... the observed 13 at ~1k is inside"
+check "9:11:1:404:816" "$f" "Q2-b int8 k=3: range 9-11, 1 at 64k, pool 404, block 816"
 f=$(fields KV_MEM=4509715660 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "5:5:1:308:864" "$f" "Q2-c int8 k=7, KV_MEM -1 GiB: 5, 1 at 64k, pool 308"
+check "4:5:1:308:864" "$f" "Q2-c int8 k=7, KV_MEM -1 GiB: range 4-5, 1 at 64k, pool 308"
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1)
-check "6:7:1:380:448" "$f" "Q2-d bf16 k=7 (shipped KV): range 6-7, 1 at 64k, pool 380, block 448"
-check 1 "$(inside "$f" 6)" "  ... the observed 6 at ~1k is inside"
+check "5:6:1:380:448" "$f" "Q2-d bf16 k=7 (shipped KV): range 5-6, 1 at 64k, pool 380, block 448"
 f=$(fields KV_MEM=5315022028 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "6:6:1:364:864" "$f" "batch 4 int8 k=7: 6, pool 364"
+check "5:6:1:364:864" "$f" "batch 4 int8 k=7: range 5-6, pool 364"
 f=$(fields KV_MEM=5315022028 DFLASH_TOKENS=1 MAX_SEQS=24 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "17:21:2:393:800" "$f" "batch 4 Q4 int8 k=1: range 17-21, pool 393, block 800"
-check 1 "$(inside "$f" 21)" "  ... the observed 21 at ~1k is inside"
+check "12:16:1:393:800" "$f" "batch 4 Q4 int8 k=1: range 12-16, pool 393, block 800"
 f=$(fields KV_MEM=5315022028 DFLASH_TOKENS=3 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
 check "385:816" "$(cut -d: -f4,5 <<< "$f")" "batch 4 int8 k=3: pool 385, block 816"
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536)
-check "6:7:1:380:448" "$f" "H2 bf16 k=7 with PREFIX_CACHE unset: the same 54 state pages, range 6-7"
-check 1 "$(inside "$f" 6)" "  ... the observed 6 at ~1k is inside"
+check "5:6:1:380:448" "$f" "H2 bf16 k=7 with PREFIX_CACHE unset: 60 async state pages, range 5-6"
 f=$(fields DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1)
-check "6:7:1:382:864" "$f" "H3 CTX=long (int8, MAX_LEN 131072): range 6-7, pool 382, block 864"
-check 1 "$(inside "$f" 7)" "  ... the observed 7 at ~1k is inside"
+check "5:6:1:382:864" "$f" "H3 CTX=long (int8, MAX_LEN 131072): range 5-6, pool 382, block 864"
 f=$(fields DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1 FA2_FP8KV=1)
-check "6:7:1:387:880" "$f" "#153 CTX=long FA2 arm (fp8, MAX_LEN 131072): range 6-7, pool 387, block 880"
+check "5:6:1:387:880" "$f" "#153 CTX=long FA2 arm (fp8, MAX_LEN 131072): range 5-6, pool 387, block 880"
 
 echo "== prefix caching switched off explicitly is unmeasured"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXTRA_ARGS="--no-enable-prefix-caching")" \
@@ -105,17 +89,17 @@ check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXT
   "--mamba-cache-mode none: no note"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="--mamba-cache-mode=all")" \
   "--mamba-cache-mode=all (not align, never booted): no note"
-check "6:7:1:380:448" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXTRA_ARGS="--mamba-cache-mode=align")" \
+check "5:6:1:380:448" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXTRA_ARGS="--mamba-cache-mode=align")" \
   "--mamba-cache-mode=align still prints"
 
 echo "== MAX_LEN moves the long-context figure, not the ~1k range"
-check "6:7:2:382:864" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" \
+check "5:6:2:382:864" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" \
   "int8 k=7 at MAX_LEN=32768: 2 (Q2-a held 2 at ~32.8k)"
-check "6:7:1:380:448" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1)" \
+check "5:6:1:380:448" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1)" \
   "bf16 k=7 at MAX_LEN=32768: 1 (H1 held 1 at ~32k)"
 
 echo "== silent where it should be"
-check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=7 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" "MAX_SEQS equal to the upper bound: no note"
+check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=6 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" "MAX_SEQS equal to the upper bound: no note"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=4 MAX_LEN=65536 PREFIX_CACHE=1)" "MAX_SEQS=4: no note"
 check "" "$(note KV_MEM=4900000000 DFLASH_TOKENS=3 MAX_SEQS=16 CTX=huge)" "CTX=huge (KVarN): no note"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 EXTRA_ARGS="--kv-cache-dtype fp8_e5m2")" "fp8_e5m2 KV (unmeasured): no note"
@@ -130,6 +114,11 @@ check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXT
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=065536)" "zero-padded MAX_LEN (bash would read octal): no note"
 check "" "$(note DFLASH_TOKENS=7 CTX=long PREFIX_CACHE=1)" "CTX=long at its default 4 seats: no note"
 [ -n "$(note DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1)" ] && check 1 1 "CTX=long at 16 seats prints" || check 1 0 "CTX=long at 16 seats prints"
+
+echo "== scheduling/chunk overrides are not guessed"
+check "" "$(note MAX_SEQS=16 EXTRA_ARGS="--max-num-batched-tokens=4096")" "custom chunk size: no prediction"
+check "" "$(note MAX_SEQS=16 EXTRA_ARGS="--no-async-scheduling")" "EXTRA_ARGS scheduling override: no prediction"
+check "5:7:1:380:448" "$(fields DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 ASYNC_SCHED=0)" "synchronous state reservation"
 
 echo "== the launcher still dry-runs"
 (cd "$T" && env -u PRINT_ARGV SPEC=dflash2 PRINT_ARGV=1 VLLM_API_KEY=k HOME="$T" \
