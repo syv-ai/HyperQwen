@@ -233,3 +233,58 @@ Neither observation establishes that the original 23.4% is a uniform execution
 regression or assigns an exact share of that unsaved run to each change. The
 default 0.33 dependency stack and launcher settings were restored afterward;
 only documentation was changed in the repository.
+
+### Reverting the block-drop method on 0.33: reversible follow-up
+
+The reverse experiment tested whether restoring the old method on 0.33 would
+restore the old performance. The installed `vllm/config/speculative.py` was
+backed up, then this single return expression was changed temporarily:
+
+```diff
+- return self.needs_eagle_block_drop() and not self.disable_eagle_block_drop
++ return self.use_eagle() and not self.disable_eagle_block_drop
+```
+
+Three separate TP1 server boots used the same saved prompts and settings as
+above: a fresh unmodified 0.33 baseline, the one-line change alone, and that
+change with `"disable_lookahead_block_hashes": true` in the speculative config.
+Each prompt ran three times with 512 output tokens. All three boots loaded
+the same backbone, draft-head, and candidate-selector AOT artifacts.
+
+| Prompt | Earlier 0.32 reference | Fresh 0.33 baseline | Old method only | Old method + legacy hashes |
+| --- | ---: | ---: | ---: | ---: |
+| 0 | 90.3 tok/s | 84.2 tok/s | 84.1 tok/s | 121.9 tok/s |
+| 1 | 123.5 tok/s | 101.6 tok/s | 101.5 tok/s | 91.3 tok/s |
+| 2 | 87.7 tok/s | 94.5 tok/s | 94.5 tok/s | 91.8 tok/s |
+
+These are medians of three runs. The old-method-only variant produced exactly
+the same completions and acceptance counts as the fresh 0.33 baseline on every
+prompt. Its reusable boundary remained at 896 tokens. Restoring that expression
+alone therefore **did not recover the old speeds**.
+
+The reason is a second 0.33 control path: changing the method to return true
+also enables `VllmConfig.num_hash_lookahead_tokens`. In `Scheduler.__init__`,
+a nonzero value explicitly sets `self.use_eagle_block_drop = False`. To
+actually recover the legacy 448-token boundary, the diagnostic also had to
+disable lookahead block hashes. The logs and usage counters confirmed 448
+cached tokens in that combined variant, versus 896 in the other two.
+
+The combined variant changed acceptance and produced mixed performance, not a
+general recovery of 0.32 behavior. Prompt 0 improved, while prompts 1 and 2
+slowed relative to the fresh 0.33 baseline. Its cold and cached completions
+differed on prompts 0 and 1; prompt 2's text matched across rounds, but its
+acceptance counts differed. None of the three first-run completions matched
+the saved 0.32 reference. By contrast, the baseline and method-only variants
+were byte-identical across rounds. These observations further limit any claim
+that reverting this one method would undo the full-stack upgrade's effects.
+
+**Rollback was part of the experiment:** the controller used a `finally` block
+to stop the test server, restore the saved source byte-for-byte, clear that
+module's bytecode cache, verify its SHA-256, and restart the default TP2 0.33
+server without either diagnostic override. The restored source SHA-256 is
+`9243ffcbba50e25c8214386710015db99603bdbabdaeca88a1d56748dc63cccc`.
+No source modification from this experiment is retained. Local backups,
+manifest, rollback instructions, per-run results, and logs are in
+`logs/block-drop-revert-test/`; `summary.json` records output comparisons and
+the AOT artifact paths. The report records this diagnostic result, not a
+proposed serving-code fix.

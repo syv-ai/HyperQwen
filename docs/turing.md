@@ -169,7 +169,11 @@ What this shows:
   448 to 896 tokens. Selecting that policy alone on 0.32 reproduced acceptance
   losses and slowdowns of 6.8–25.7% on the fixed prompts. Triton 3.8 also changed
   recurrent GDN arithmetic; reverting the compiler alone did not restore the old
-  results. See the record for controls and limits of attribution.
+  results. A reverse test on 0.33 found that reverting the block-drop method alone
+  left outputs and speed unchanged because lookahead hashes still prevented the
+  drop. Also disabling those hashes restored the old boundary but produced mixed
+  speeds and cold/cached output differences on two prompts. Both diagnostic
+  changes were rolled back. See the record for controls and limits of attribution.
 
 ## Rank balance and draft attention
 
