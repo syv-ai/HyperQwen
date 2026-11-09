@@ -10,21 +10,30 @@ used `Qwen3.8-27B-W4A16-AutoRound`, and DFlash2 runs used
 The local venv used `pyarrow==26.0.1` in place of the repository's
 `pyarrow==20` pin because version 20 has no Python 3.14 wheel. No model or
 benchmark code was changed for this substitution. The measurements are native,
-not Docker measurements. The full JSON output is in local ignored `logs/` files;
-the per-run decode rates below preserve the raw measurements in the repository.
+not Docker measurements. Full-precision benchmark outputs, diagnostic timings
+and counters, synthetic prompts, and fixed-output token IDs are archived in
+[turing-0.33-results.json](data/turing-0.33-results.json). Tables below round
+these values for display. Tensor fixtures, generated GPU code, and launch logs
+remain in local ignored `logs/`; they are not part of the portable data archive.
 
 ## Method
 
 Each configuration was started separately and allowed to finish loading and
 graph capture before requests. `scripts/bench_turing.py` sent one request at a
-time, using greedy decoding, `ignore_eos`, and a deterministic synthetic
-document. Each length had three runs: first cold, next two with the same prompt
-and prefix caching. Cold and cached figures are time to first streamed token;
-decode excludes the first token. Decode rates count `usage.completion_tokens`,
-not stream chunks. A warmup request preceded each configuration's benchmark.
+time, using greedy decoding, `ignore_eos`, and a synthetic document with a fixed
+structure and fresh identifier. Each length had three runs: first cold, next
+two with the same prompt and prefix caching. Cold TTFT is time to the first
+nonempty text/reasoning delta; cached TTFT is the median of the next two runs.
+The client decode-rate estimate is `(usage.completion_tokens - 1)` divided by
+the interval between the first and last such deltas. It uses
+token counts, not chunk counts, but does not timestamp every individual token
+or measure isolated GPU kernel time. A warmup request preceded each configuration's benchmark.
 The prompts differ slightly in length and text between configurations, and
 speculative acceptance depends on generated text. These numbers describe these
 completions, not general throughput or an isolated patch speedup.
+The three repetitions share a prompt and usually the same completion; they
+are not three independent prompt samples. No confidence intervals or
+statistical significance estimates were calculated.
 
 Default launch: `bash start-turing.sh` (TP=2, DFlash2, fp16 KV, native
 FlashInfer graphs, CUDA GDN prefill, `GPU_UTIL=0.90`, `MAX_SEQS=2`). The
@@ -54,6 +63,39 @@ its benchmark omitted `24000` from `--lengths`. TP1 no speculation used
 `CUDA_VISIBLE_DEVICES=0 TP=1 SPEC=off bash start-turing.sh` and all four
 lengths. Both used `--gen 512 --runs 3`. Boot log KV pools: TP2 default
 317,842 tokens; TP1 DFlash2 14,716; TP1 no speculation 64,815.
+The 8,192-token TP1 DFlash2 context limit is the tested configuration, not a
+demonstrated maximum capacity. No 24k TP1 DFlash2 result was measured.
+
+## Standard configuration comparison with 0.32
+
+The 0.32 measurements were collected November 8 and the 0.33 measurements
+November 9 on the same machine, with the Turing patches for each version and
+the launch profiles above. No diagnostic reversion, compiler override, or
+output constraint is included in this table. Changes are
+`100 × (median_033 / median_032 - 1)`, calculated before rounding.
+This compares the full stacks: torch 2.13.0 → 2.14.0, Triton 3.7.1 → 3.8.0,
+and FlashInfer 0.7.0.post1 → 0.7.2.post1 also changed. It does not isolate the
+six Turing patches from the dependency upgrade.
+
+| Configuration | Approximate prompt | 0.32 decode | 0.33 decode | Change |
+| --- | ---: | ---: | ---: | ---: |
+| TP2 DFlash2 | 1k | 163.6 tok/s | 210.1 tok/s | +28.4% |
+| | 4k | 201.1 tok/s | 217.0 tok/s | +7.9% |
+| | 7k | 171.7 tok/s | 177.8 tok/s | +3.6% |
+| | 24k | 187.4 tok/s | 183.4 tok/s | -2.2% |
+| TP1 DFlash2 | 1k | 126.3 tok/s | 96.7 tok/s | -23.5% |
+| | 4k | 128.7 tok/s | 132.0 tok/s | +2.6% |
+| | 7k | 114.3 tok/s | 115.1 tok/s | +0.7% |
+| TP1 no speculation | 1k | 32.7 tok/s | 32.8 tok/s | +0.1% |
+| | 4k | 32.1 tok/s | 32.1 tok/s | +0.1% |
+| | 7k | 31.7 tok/s | 31.7 tok/s | +0.0% |
+| | 24k | 29.7 tok/s | 29.8 tok/s | +0.1% |
+
+These are observed single-request rates on separately generated prompts and
+completions. They combine execution cost with draft acceptance and do not
+isolate a version's kernel efficiency. The unconstrained TP1 1k decrease
+remains the recorded result; the diagnostic controls below do not replace it
+with a faster constrained-output number.
 
 ## 24k prompt, 800 generated tokens
 
@@ -67,10 +109,11 @@ Each row used `venv/bin/python scripts/bench_turing.py --lengths 24000 --gen 800
 | `VLLM_GDN_SM75=0` / `gdn-off` | 24,061 | 15.79 s | 0.33 s | 210.2 / 209.8 / 209.3 | 209.8 |
 
 All four used TP2 DFlash2; other launch options remained at default. The FP8
-KV pool held 536,108 tokens, and the Triton GDN pool held 280,424. Graph-on
-versus graph-off median decode was 1.97×. CUDA GDN shortened cold TTFT by
-1.59 s (10.1%) relative to Triton GDN in this trial. These are comparisons of
-separate server boots and their completions.
+KV pool held 536,108 tokens, and the Triton GDN pool held 280,424. Native spec
+graphs on versus off measured a 1.97× decode-rate ratio. The CUDA GDN run had
+1.59 s (10.1%) shorter cold TTFT than the Triton GDN run. Each configuration
+had one cold request; these separate boots used fresh identifiers and may
+generate different completions. These ratios are not isolated kernel speedups.
 
 ## Functional checks
 
@@ -84,15 +127,17 @@ within the default server boot. This does not test cross-restart repeatability.
 
 ## Controlled investigation of the 1k single-GPU drop
 
-**Current finding:** on the saved fixed prompt, the large rate difference
-mostly follows the generated completion. The [fixed-output control below](#holding-the-completion-fixed)
+**Current finding:** the saved fixed-prompt results support a substantial
+completion-dependent draftability component. The [fixed-output control below](#holding-the-completion-fixed)
 made both versions emit identical token IDs: both ran the saved old completion
 at about 124 tok/s and the saved new completion at about 102 tok/s. The
 source/compiler changes below affect computation boundaries and numeric
-results, but the evidence does not support reporting a uniform 23.4%
-execution-speed regression or attributing it to one cache-policy expression.
+results. The grammar constraint also changes the request path, so this is
+supporting evidence, not a quantitative attribution of the unrestricted gap.
+The evidence does not establish a uniform 23.5% execution-speed regression or
+attribute the original observation to one cache-policy expression.
 
-The original TP1 1k result fell from 126.3 to 96.7 tok/s (23.4%). Those
+The original TP1 1k result fell from 126.3 to 96.7 tok/s (23.5% from unrounded rates). Those
 benchmark runs used different fresh document identifiers and did not save their
 completion text or per-request acceptance counters. Their exact textual
 divergence cannot be reconstructed from the saved JSON.
@@ -113,13 +158,17 @@ are in `logs/fixed-1k-prompts.json`.
 | 1 | 123.55 | 102.09 | -17.4% | 5.05 | 4.17 | 40.55 / 40.69 |
 | 2 | 87.67 | 94.86 | +8.2% | 3.62 | 3.87 | 40.76 / 40.81 |
 
-Tokens per step is `1 + accepted_tokens / num_drafts`; ms per step is
+Here and in the diagnostic tables below, "tokens/step" denotes the
+counter-based mean accepted length, `1 + accepted_tokens / num_drafts`, not
+an exact emitted-token count: the final accepted block can be clipped by
+`max_tokens`. "ms per step" is
 client-observed decode time divided by the number of drafts, so it includes
 request boundary effects and is not a kernel profiler measurement. Each prompt
 had identical acceptance counts across its three rounds within a version.
 Completion text differed between versions for all three prompts. The almost
-unchanged step cost and acceptance changes explain the controlled speed changes;
-this is not evidence of a uniform 23.4% execution slowdown on 0.33.
+unchanged client-side step-time estimate and changed accepted lengths are
+consistent with completion-dependent throughput; this is not a measurement
+of a uniform 23.5% execution slowdown on 0.33.
 
 Additional probes supplied both versions with identical input token IDs at the
 common prefixes before textual divergence, then requested 16 tokens with top-5
@@ -160,8 +209,9 @@ and recurrent state, and can change near-tied token choices.
 
 To isolate this policy, the **same 0.32 venv** was restarted with the existing
 speculative configuration option `"disable_eagle_block_drop": true`. No model
-or kernel source was edited, and both runs loaded the **same backbone, draft
-head, and candidate-selector AOT cache artifacts** according to the boot logs.
+or kernel source was edited, and the boot logs show **the same AOT cache paths**
+for the backbone, draft head, and candidate selector. The compiled binaries
+themselves were not independently checksummed for this comparison.
 The saved fixed prompts and request settings remained identical.
 
 | Prompt | 0.32 default tok/s | 0.32 no block drop tok/s | Change | Tokens/step, default → no drop | ms/step, default → no drop |
@@ -179,8 +229,8 @@ unchanged. It does not reproduce the exact 0.33 completions or rates, because
 the rest of that stack also differs. Raw results are in local
 `logs/fixed-1k-032-no-block-drop.json`.
 
-The nearby lookahead-hash change is **not** the DFlash-specific cause:
-`"disable_lookahead_block_hashes": true` on 0.33 retained the 896-token boundary
+Disabling lookahead hashes alone on unmodified 0.33 did not alter this behavior:
+`"disable_lookahead_block_hashes": true` retained the 896-token boundary
 and the same acceptance counts as default 0.33. DFlash is independently exempt
 from the trailing-block drop. This control is saved in
 `logs/fixed-1k-033-legacy-hashes.json`.
@@ -222,7 +272,7 @@ all inputs or rule out additional differences elsewhere in the model.
 This identifies the Triton 3.7.1 to 3.8.0 upgrade as a concrete source of
 changed recurrent arithmetic, even with unchanged GDN kernel source. It does
 not by itself establish that this is the sole cause of every changed completion
-or quantify its contribution to the original 23.4% observation. Local artifacts
+or quantify its contribution to the original 23.5% observation. Local artifacts
 are `logs/ops-{032,033,213-38,214-37}.pt`, `logs/ops-inputs.pt`, and
 `logs/gdn-{37,38}.{ptx,ttir,ttgir,llir}`.
 
@@ -237,7 +287,7 @@ not a supported dependency pin or a serving-code fix. Results are in
 These controls identify **changed computation boundaries from upstream DFlash
 block-drop policy, plus changed compiler arithmetic**, with speed following
 the resulting completion and acceptance.
-Neither observation establishes that the original 23.4% is a uniform execution
+Neither observation establishes that the original 23.5% is a uniform execution
 regression or assigns an exact share of that unsaved run to each change. The
 default 0.33 dependency stack and launcher settings were restored afterward;
 only documentation was changed in the repository.
@@ -256,8 +306,8 @@ backed up, then this single return expression was changed temporarily:
 Three separate TP1 server boots used the same saved prompts and settings as
 above: a fresh unmodified 0.33 baseline, the one-line change alone, and that
 change with `"disable_lookahead_block_hashes": true` in the speculative config.
-Each prompt ran three times with 512 output tokens. All three boots loaded
-the same backbone, draft-head, and candidate-selector AOT artifacts.
+Each prompt ran three times with 512 output tokens. All three boot logs show
+the same backbone, draft-head, and candidate-selector AOT cache paths.
 
 | Prompt | Earlier 0.32 reference | Fresh 0.33 baseline | Old method only | Old method + legacy hashes |
 | --- | ---: | ---: | ---: | ---: |
@@ -322,7 +372,7 @@ local `logs/context-projection-diagnostic/`.
 
 A separate 0.33 server diagnostic restored the old context-preparation order
 through a temporary import overlay. It kept default 0.33 cache policy,
-dependencies, and the same three AOT artifacts as the fresh baseline; installed
+dependencies, and the same three AOT cache paths as the fresh baseline; installed
 files were not edited. The saved 1k prompts gave:
 
 | Prompt | Fresh 0.33 tok/s | Old context order tok/s | Old context tokens/step |
@@ -390,15 +440,29 @@ result matches the fresh unconstrained 0.33 result of 101.58 tok/s.
 
 Structured decoding can prune grammar-invalid draft tokens before verification,
 so `accepted/drafted` fractions from this control must not be compared directly
-to ordinary requests. The table uses drafting-step counts and identical emitted
-token sequences, and its rates are reported as a diagnostic comparison only.
+to ordinary requests. The constraint can change verification lengths and other
+execution details, so this is not an isolated test of the unrestricted request
+path. The table uses drafting-step counts and identical emitted token
+sequences, and its rates are reported as a diagnostic comparison only.
 It does not establish a universal throughput or recover the original unsaved
-1k completion. It supports explaining this saved prompt's large gap primarily
-through changed text and draft acceptance, rather than a large per-step cost
-regression. The exact share of the original 23.4% observation remains unknowable
-from its JSON alone.
+1k completion. It supports a substantial completion/draftability effect on
+this saved prompt, but does not measure the share of the unrestricted gap
+caused by text alone or rule out request-path-specific regressions. The
+original 23.5% observation cannot be assigned exact causal shares from its
+saved JSON alone.
 
 No serving source was edited for this control. The venv selection and diagnostic
 structured-output setting were restored to the default 0.33 TP2 service.
 Input IDs, frozen completions, generated token IDs, counters, and summaries are
 in local `logs/fixed-output-diagnostic/`.
+
+## Follow-up: unconstrained TP1 short-prompt performance
+
+Improving short-prompt decoding on one GPU is follow-up work; no production
+optimization is included in these findings. The standard 1k measurement remains
+96.7 tok/s. The three saved 1k prompts provide an additional unconstrained 0.33
+baseline of 84.21, 101.58, and 94.47 tok/s from the fresh-baseline boot.
+Future work should use those same saved prompts, record generated token IDs
+and accepted lengths, and report cold and cached TTFT separately. Improvements
+must be demonstrated on unconstrained requests across prompts; the fixed-output
+control is not a production workaround or a recovered headline speed.

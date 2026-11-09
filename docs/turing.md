@@ -1,8 +1,13 @@
-# Turing: two RTX 2080 Ti 22 GB cards
+# Turing: RTX 2080 Ti 22 GB on vLLM 0.33.0
 
-Launch `bash start-turing.sh` for fp16 W4A16 target + DFlash2, TP=2,
+For two cards, launch `bash start-turing.sh` for fp16 W4A16 target + DFlash2, TP=2,
 FlashInfer attention, and a 262136-token maximum request length. In Docker use
 `docker compose --profile turing up -d` ([docker.md](docker.md#rtx-20-series-turing-sm75)).
+
+The speed tables below use the standard 0.33 configuration with this branch's
+Turing patches. No diagnostic code reversion, compiler override, or forced-output
+constraint is included. Version comparisons and diagnostic results are in the
+[reproduction report](reproductions/turing-0.33.md).
 
 ## Turing unlock (faster FP16 tensor cores)
 
@@ -27,7 +32,7 @@ not known. The patches and launcher settings described here do not depend on it.
 ## How the model runs: W4A16 in fp16, DFlash2, batching
 
 Everything below is what the server logs at boot (`logs/turing.log`) on two RTX 2080 Ti with the
-`turing-unlock` module loaded (next section). The cards are the modified 22 GB variety: `nvidia-smi`
+`turing-unlock` module loaded (see above). The cards are the modified 22 GB variety: `nvidia-smi`
 reports 22,528 MiB and a 250 W limit per card, with two NVLink links between them. The 22 GB
 modification and the unlock are independent: the first is about memory capacity, the second about
 tensor-core speed.
@@ -37,7 +42,7 @@ tensor-core speed.
 per-group scales, and an 8-bit `lm_head`. Activations are never quantized. vLLM selects
 `MarlinLinearKernel` for `CompressedTensorsWNA16`, which keeps the weights packed in VRAM,
 unpacks them inside the GEMM and multiplies against fp16 activations on the tensor cores. Turing
-has no usable bf16 (torch emulates it roughly 10x slower), so the launcher forces `--dtype float16`
+has no native bf16 tensor-core support, so the launcher forces `--dtype float16`
 end to end:
 - the checkpoint's bf16 tensors (norms, the conv weights) are converted to fp16 on load, which vLLM
   logs as `Attempted to load weight ... with dtype torch.bfloat16 into parameter with dtype
@@ -62,7 +67,7 @@ with the completion; `SPEC=off` runs plain decoding.
 
 **Measured stack:** vLLM 0.33.0, torch 2.14.0, Triton 3.8.0, FlashInfer
 0.7.2.post1, Python 3.14.8, and the six Turing patches cut against 0.33.0.
-The November 9 runs and raw per-run rates are in
+The November 9 runs and rounded per-run rates are in
 [the reproduction record](reproductions/turing-0.33.md).
 
 | Part | Used for | Notes |
@@ -94,23 +99,28 @@ graphs. Planning still occurs eagerly before replay; this does not claim
 in-place draft metadata updates.
 
 Measured November 9, 2026 on vLLM 0.33.0, single stream, about 24,063 prompt
-tokens and 800 generated tokens. Decode is the median of three runs, excluding
-prefill and the first output token. Cold prefill is the first run; cached prefill
-is the median time to first token of the next two runs. All rows use DFlash2,
+tokens and 800 generated tokens. Decode is the median of three client streaming
+measurements, using `(output_tokens - 1) / (last_chunk_time - first_chunk_time)`.
+Here the chunk timestamps are for nonempty text/reasoning deltas.
+Cold TTFT is the first run's time to first streamed token; cached TTFT is the
+median of the next two runs. All rows use DFlash2,
 TP=2 and the CUDA GDN prefill kernel except the last row:
 
-| Configuration | Decode | Cold prefill | Cold prefill rate | Cached prefill |
+| Configuration | Decode | Cold TTFT | Prompt tokens / cold TTFT | Cached TTFT |
 | --- | ---: | ---: | ---: | ---: |
 | Full graphs, fp16 KV (default) | 205.8 tok/s | 14.20 s | 1,694 tok/s | 0.31 s |
-| Graphs disabled, fp16 KV | 104.6 tok/s | 14.32 s | 1,680 tok/s | 0.33 s |
+| Native spec graphs off, fp16 KV | 104.6 tok/s | 14.32 s | 1,680 tok/s | 0.33 s |
 | Full graphs, FP8 KV | 191.3 tok/s | 14.57 s | 1,652 tok/s | 2.16 s |
 | Full graphs, fp16 KV, Triton GDN prefill | 209.8 tok/s | 15.79 s | 1,524 tok/s | 0.33 s |
 
-Prefill rate is the uncached prompt tokens divided by cold time to first token. Cached prefill only
-computes the tokens after the cached prefix, so a tok/s figure for it would not be comparable.
+Prompt tokens divided by cold TTFT is an effective prefill-rate proxy, including
+the first generation step and request overhead. Cached TTFT includes the
+uncached suffix and first generation step; it is not a pure prefix-cache timing.
 
-Native speculative graphs nearly doubled median decode rate for this prompt
-(205.8 versus 104.6 tok/s). Attention graph replay matched eager output at lengths 8, 31, 32, 33, 1024,
+The default run measured 205.8 versus 104.6 tok/s with native spec graphs off
+(1.97×). These separate runs used fresh prompt identifiers and may generate
+different text, so the ratio does not isolate graph overhead alone. Attention
+graph replay matched eager output at lengths 8, 31, 32, 33, 1024,
 23700, 65, then 8, for causal full attention and noncausal window-2048
 attention on the 0.33 stack. Reproduce with `venv/bin/python scripts/check_sm75_attention_graphs.py`.
 
@@ -126,9 +136,9 @@ reports decode tokens per second after the first token for each of the three run
 `ignore_eos`, 512 generated tokens, prompts built from a repetitive synthetic document, so read decode
 rates as "this kind of text" rather than a universal figure. Measured November 9, 2026
 on vLLM 0.33.0. All three configurations ran on the same unlocked machine (see above),
-one request at a time. The raw rates are in [the reproduction record](reproductions/turing-0.33.md).
+one request at a time. Rounded per-run rates are in [the reproduction record](reproductions/turing-0.33.md).
 
-| Configuration | Prompt | Cold prefill | Cold rate | Cached prefill | Decode (median of 3) |
+| Configuration | Prompt | Cold TTFT | Prompt tokens / cold TTFT | Cached TTFT | Decode (median of 3) |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 2 GPUs, TP=2, DFlash2 | 1,067 | 0.67 s | 1,599 tok/s | 0.17 s | 210.1 tok/s |
 | | 4,068 | 2.34 s | 1,737 tok/s | 0.17 s | 217.0 tok/s |
@@ -144,60 +154,37 @@ one request at a time. The raw rates are in [the reproduction record](reproducti
 
 How each was launched, and what the card holds:
 
-| | Launch | Context | Weights | KV pool |
+| | Launch | Configured context limit | Weights | KV pool |
 | --- | --- | ---: | ---: | ---: |
 | 2 GPUs | `bash start-turing.sh` | 262,136 | split over 2 | 317,842 tokens |
 | 1 GPU, DFlash2 | `CUDA_VISIBLE_DEVICES=0 TP=1 KV_MEM=3000000000 DFLASH_MAX_LEN=8192 bash start-turing.sh` | 8,192 | 15.79 GiB with the drafter | 14,716 tokens |
 | 1 GPU, no speculation | `CUDA_VISIBLE_DEVICES=0 TP=1 SPEC=off bash start-turing.sh` | 32,768 | 14.41 GiB | 64,815 tokens |
 
 What this shows:
+
 - **Speculation is the big single-GPU win:** DFlash2 decoded at 97 to 132 tok/s against 32 tok/s
-  without it (about 2.9x at 1k and 4.1x at 4k), but on one card it only fits an 8,192-token context. The
-  default launcher settings do not fit DFlash2 on one card, so the reduced KV pool and context above are
-  required.
+  without it (about 2.9x at 1k and 4.1x at 4k) in these runs. The single-card
+  DFlash2 profile was tested with an 8,192-token context limit and a reduced KV
+  pool. This is a tested profile, not a measured maximum capacity; larger
+  single-card DFlash2 contexts were not benchmarked here.
 - **Two cards over one, with the same speculation:** 1.5x to 2.2x the decode rate (210 vs 97, 217 vs
   132, 178 vs 115 tok/s at about 1k, 4k and 7k tokens) and about 1.6x to 1.8x the prefill rate, and the
-  context grows from 8,192 to 262,136 tokens.
+  configured context limit grows from 8,192 to 262,136 tokens. The performance
+  measurements above cover prompts up to 24k, not a full-window stress test.
 - **Without speculation one card slows with context:** 32.8 tok/s at 1k tokens, 29.8 at 24k, and a
-  24k-token prompt takes 25.71 s to read.
+  24k-token prompt has a cold TTFT of 25.71 s.
 - Cached time to first token includes the first decode step, so the DFlash2 and no-speculation values
-  do not isolate prefix-cache speed. The 1k DFlash2 completion was slower than on 0.32.0;
-  the subsequent [controlled investigation](reproductions/turing-0.33.md#controlled-investigation-of-the-1k-single-gpu-drop)
-  found nearly unchanged time per speculative step, with speed changes tracking
-  draft acceptance and different completions. Upstream 0.33 exempts DFlash from
-  trailing-cache-block dropping, moving the 1k prompt's prefill checkpoint from
-  448 to 896 tokens. Selecting that policy alone on 0.32 reproduced acceptance
-  losses and slowdowns of 6.8–25.7% on the fixed prompts. Triton 3.8 also changed
-  recurrent GDN arithmetic; reverting the compiler alone did not restore the old
-  results. A reverse test on 0.33 found that reverting the block-drop method alone
-  left outputs and speed unchanged because lookahead hashes still prevented the
-  drop. Also disabling those hashes restored the old boundary but produced mixed
-  speeds and cold/cached output differences on two prompts. Both diagnostic
-  changes were rolled back. A later fixed-output control made both versions
-  emit identical token IDs: each ran the saved old completion at about 124 tok/s
-  and the new completion at about 102 tok/s. This supports changed completion
-  draftability as the main explanation of the saved prompt's large gap, rather
-  than a uniform execution-speed regression. See the record for controls and
-  limits of attribution.
-
-## Rank balance and draft attention
-
-On the earlier 0.32.0 build, with full graphs, both GPUs reported 76–77% utilization. A two-rank torch
-profile recorded 201626 kernels on each rank, totaling 4.00 and 3.98 seconds
-of GPU kernel time. Disabling graphs reproduced an approximately 90%/44%
-utilization split. Host launch/synchronization overhead is the leading
-explanation; the original imbalance is not evidence that only rank 0 runs
-the drafter.
-
-The drafter selects FlashInfer, with noncausal sliding-window attention.
-Its full query graph is captured separately from the target verification graph.
+  do not isolate prefix-cache speed. Different generated text and draft
+  acceptance also affect the one- versus two-card ratios. Improving
+  unconstrained single-GPU short-prompt decoding remains follow-up work; no
+  diagnostic result is substituted for the 96.7 tok/s measurement above.
 
 ## Optional FP8 KV
 
 `KV_DTYPE=fp8 bash start-turing.sh` keeps fp16 queries and full graphs while
 storing attention KV in FP8 E4M3. On 0.33.0, the KV pool rose from 317,842 to
 536,108 tokens (68.7%). The 24k/800-token trial measured 191.3 tok/s median
-decode, 14.57 s cold prefill, and 2.16 s cached time to first token. FP16 KV
+decode, 14.57 s cold TTFT, and 2.16 s cached TTFT. FP16 KV
 stays the default. Quantized KV can change outputs; this trial is not an accuracy eval.
 
 ## Optional CUDA GDN prefill
@@ -208,27 +195,18 @@ stays the default. Quantized KV can change outputs; this trial is not an accurac
 It requires nvcc and a C++ compiler, and compiles once before graph capture.
 The original Triton path remains available with `VLLM_GDN_SM75=0`.
 
-On the earlier 0.32.0 build, at the target TP=2 geometry (8 key heads, 24 value heads, dimension 128),
-a 2048-token microbenchmark measured 11.45 ms for Triton versus 2.73 ms
-for CUDA. The bounded comparison used the first GDN-state Triton autotune
-configuration. Output/state relative L2 errors were 0.00051/0.00037. A separate
-direct recurrence check passed. The integration copies initial state before
-the kernel's in-place update and supports packed variable-length requests.
-
-On 0.33.0, the same 24k/800-token benchmark measured 14.20 s cold prefill
-with CUDA GDN versus 15.79 s with Triton GDN, a 10.1% reduction. Cached time
+The 0.33.0 24k/800-token runs measured 14.20 s cold TTFT
+with CUDA GDN versus 15.79 s with Triton GDN, a 10.1% reduction in this trial. Cached time
 to first token was 0.31 versus 0.33 s. Median decode was 205.8 versus 209.8
-tok/s; this trial does not establish a decode benefit from the prefill kernel.
-On 0.32.0, packed two-request output/state checks passed, including an exact
-check that the input state was not modified.
+tok/s. Each configuration had one cold run with a fresh identifier; this is
+not an isolated kernel benchmark and does not establish a decode benefit.
 
 ## Verified interconnect
 
-A live topology check after optimization showed `NV2` between GPU0 and GPU1,
+A live topology check showed `NV2` between GPU0 and GPU1,
 with two active links per GPU (`nvidia-smi topo -m` and
-`nvidia-smi nvlink --status`). The earlier handoff's PCIe-only description was
-incorrect. The server selects CUSTOM/PYNCCL collectives, and the recorded
-profile includes custom peer all-reduce kernels. The FlashInfer all-reduce
+`nvidia-smi nvlink --status`). The server selects CUSTOM/PYNCCL collectives.
+The FlashInfer all-reduce
 warning only disables that particular implementation for world_size=2.
 
 The guest exposes 22 Xeon E5-2699 v4 CPU cores, one NUMA node, under KVM.
@@ -277,8 +255,8 @@ that turns vLLM's data into the JSON Maya's dashboard reads.
 `python3 scripts/check_greedy_repeatability.py` sends five fixed prompts (short, code,
 reasoning, story, and a long-context question over a ~630-line document) at temperature 0, three rounds
 each, one request at a time, and fails if any prompt's output differs between rounds.
-Round 1 is a cold prefill and later rounds hit the prefix cache, so cold-vs-cached drift
-is covered. `--save a.json` records the outputs and `--compare a.json` checks a later run against them.
+The long-context case exercises cold and cached prefill; short prompts may not
+fill a cache block. `--save a.json` records the outputs and `--compare a.json` checks a later run against them.
 Each completion is 256 tokens (86 for the short prompt).
 
 On November 9, 2026, the 0.33.0 default server returned byte-identical
@@ -286,30 +264,17 @@ completions for all five prompts across three rounds, including cold and cached
 prefill within one boot (`logs/repeat-033-default.json`). Cross-restart
 repeatability has not been checked on 0.33.0.
 
-Earlier 0.32.0 results (November 8, 2026, 2 GPUs, DFlash2, full graphs, fp16 KV, unlocked cards):
+This check establishes repeatability for the tested boot and prompts, not
+accuracy against a bf16/fp32 reference or invariance to rebuilt compiler caches,
+changed settings, or concurrent requests. Cross-restart and fresh-cache checks
+were not repeated for this stack.
 
-| Boot | Result |
-| --- | --- |
-| Reworked patches, first boot | 5 of 5 prompts identical across 3 rounds (cold and cached) |
-| Same patches, three more restarts | 5 of 5 identical to the first boot, every time |
-| Previous patch versions (same values, read with `os.environ` instead of `vllm.envs`), warm compile cache | 5 of 5 identical across rounds; reproduced that version's own earlier run after a restart |
-| Reworked vs previous patch versions | 3 of 5 identical; `code` and `story` differ |
-| Previous patch versions, fresh empty compile cache (`VLLM_CACHE_ROOT` in a temp directory) | 3 of 5 identical to its warm-cache run; `story` and `long-context` differ |
-
-In those 0.32.0 tests, the output was repeatable for a fixed build and compile cache: across rounds, across cached
-and cold prefill, and across restarts. It is not invariant to rebuilding the compile cache. The
-previous patch versions give different text for two prompts when their cache is rebuilt from scratch,
-and registering the env knobs (which changes the cache key and so forces a rebuild) moved two
-different prompts. The first differences appear between character 191 and 664 of completions of
-roughly 1,000 to 1,200 characters, the usual signature of a near-tied token flipping under slightly
-different fp16 arithmetic. This check shows repeatability, not that either variant is closer to a
-bf16 or fp32 reference; that comparison was not made. Concurrent requests are not exercised, and as
-noted above they can change greedy output on any vLLM setup.
-
-To compare two settings (for example `VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS=0` or `VLLM_GDN_SM75=0`
-against the default), run with `--save a.json`, restart with the other setting, then `--compare a.json`.
-Expect the comparison to be affected by the recompile that a changed knob causes, as above, so judge
-small differences against that baseline rather than treating them as a regression on their own.
+To compare settings, run with `--save a.json`, restart with the other setting,
+then use `--compare a.json`. Record the stack, compiler-cache state, generated
+text, and acceptance counters with the timing results; an arithmetic change
+can alter a near-tied greedy choice and the completion's draftability. The
+[reproduction report](reproductions/turing-0.33.md) contains the version and
+diagnostic comparisons.
 
 ## Credits
 
