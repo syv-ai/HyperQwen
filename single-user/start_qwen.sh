@@ -609,13 +609,13 @@ if [ "$SPEC" = "dflash2" ]; then
   #     16 * ceil(state / (16 * attention bytes per token)) (vllm/platforms/interface.py);
   #   - one pool page is 8 layers (the hybrid-kv-groups group size) at that block, in the widest
   #     per-token layout -- the drafter's sliding-window layers on int8 (2,112 B against 2,080);
-  #   - a request holds 6 GDN groups x (2 + k) state pages (align mode), plus 2 full-attention
-  #     groups x ceil(ctx / block) pages of context. vLLM 0.31.0 turns prefix caching on, and
-  #     with it align mode, by default for this model whether or not PREFIX_CACHE=1 adds the flags
-  #     ("Mamba cache mode is set to 'align' ... by default when prefix caching is enabled"), so
-  #     PREFIX_CACHE=0 measured the same 54 pages at k=7 as PREFIX_CACHE=1.
-  # bench/test_resident_print.sh checks this against eight measured boots: block and pool exact,
-  # resident counts inside the ~1k range, exact at 61k, and exact at 32k where it was measured.
+  #   - align mode holds 6 GDN groups x (1 + async depth + k) state pages: the current
+  #     async-mamba-kv-sizing patch reserves three in-flight states at depth two, not
+  #     the two states used by the old 0.31 measurements;
+  #   - add 2 full-attention groups x ceil(ctx / block), plus the drafter's sliding-window
+  #     admission cap: ceil(min(ctx, 2048 - 1 + depth * 2048) / block) + 1.
+  # bench/test_kv_cache_seat_budget.py compares this prediction with the installed engine's
+  # own spec classes. Historical short-request peaks are not worst-case admission bounds.
   # fp8 (the FA2_FP8KV=1 arm) has no seat count yet: its block 880 and pool 387 are the one pair
   # that gives the 140,902-token pool the #153 boot logged.
   # At ~1k the engine charges fewer attention pages than the formula (none on int8), which is
@@ -644,7 +644,11 @@ if [ "$SPEC" = "dflash2" ]; then
   RESIDENT_MODE=$(printf %s "$RESIDENT_ARGS" | sed -En 's/.* --mamba-cache-mode[= ]([^ ]+) .*/\1/p')
   case "$RESIDENT_MODE" in ""|align) ;; *) RESIDENT_OK=0 ;; esac
   case "$RESIDENT_ARGS" in *" --no-enable-prefix-caching "*) RESIDENT_OK=0 ;; esac
-  RESIDENT_PER_GROUP=$(( DRAFT_TOKENS + 2 ))
+  # EXTRA_ARGS may override the two controls used by the in-flight cap below.
+  case "$RESIDENT_ARGS" in *" --max-num-batched-tokens"*|*" --no-async-scheduling"*|*" --async-scheduling"*) RESIDENT_OK=0 ;; esac
+  RESIDENT_DEPTH=2
+  [ "${ASYNC_SCHED:-1}" = 1 ] || RESIDENT_DEPTH=1
+  RESIDENT_PER_GROUP=$(( DRAFT_TOKENS + 1 + RESIDENT_DEPTH ))
   if [ "$RESIDENT_OK" = 1 ]; then
     RESIDENT_STATE_B=$(( 20480 * (3 + DRAFT_TOKENS) + 48 * 128 * 128 * RESIDENT_SSM_B ))
     RESIDENT_BLOCK=$(( 16 * ((RESIDENT_STATE_B + 16 * RESIDENT_TGT - 1) / (16 * RESIDENT_TGT)) ))
@@ -653,8 +657,11 @@ if [ "$SPEC" = "dflash2" ]; then
     RESIDENT_STATE=$(( 6 * RESIDENT_PER_GROUP ))
     # One page of the pool is the engine's null block, hence POOL - 1.
     RESIDENT_HI=$(( (RESIDENT_POOL - 1) / RESIDENT_STATE ))
-    RESIDENT_LO=$(( (RESIDENT_POOL - 1) / (RESIDENT_STATE + 2 * ((1024 + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK)) ))
-    RESIDENT_LEN=$(( (RESIDENT_POOL - 1) / (RESIDENT_STATE + 2 * ((MAX_LEN + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK)) ))
+    RESIDENT_WINDOW=$(( 2048 - 1 + RESIDENT_DEPTH * 2048 ))
+    RESIDENT_SHORT_WINDOW=$(( RESIDENT_WINDOW < 1024 ? RESIDENT_WINDOW : 1024 ))
+    RESIDENT_LONG_WINDOW=$(( RESIDENT_WINDOW < MAX_LEN ? RESIDENT_WINDOW : MAX_LEN ))
+    RESIDENT_LO=$(( (RESIDENT_POOL - 1) / (RESIDENT_STATE + 2 * ((1024 + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK) + (RESIDENT_SHORT_WINDOW + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK + 1) ))
+    RESIDENT_LEN=$(( (RESIDENT_POOL - 1) / (RESIDENT_STATE + 2 * ((MAX_LEN + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK) + (RESIDENT_LONG_WINDOW + RESIDENT_BLOCK - 1) / RESIDENT_BLOCK + 1) ))
     if [ "$MAX_SEQS" -gt "$RESIDENT_HI" ]; then
       if [ "$RESIDENT_LO" -eq "$RESIDENT_HI" ]; then RESIDENT_RANGE="$RESIDENT_HI"; else RESIDENT_RANGE="$RESIDENT_LO to $RESIDENT_HI"; fi
       echo "[start_qwen] note: the pool holds about $RESIDENT_RANGE resident requests on ~1k-token prompts" \
