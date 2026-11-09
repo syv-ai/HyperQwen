@@ -162,8 +162,10 @@ What this shows:
   24k-token prompt takes 25.71 s to read.
 - Cached time to first token includes the first decode step, so the DFlash2 and no-speculation values
   do not isolate prefix-cache speed. The 1k DFlash2 completion was slower than on 0.32.0;
-  different generated text and draft acceptance can change this synthetic benchmark, so that
-  observation does not isolate the cause.
+  the subsequent [controlled investigation](reproductions/turing-0.33.md#controlled-investigation-of-the-1k-single-gpu-drop)
+  found nearly unchanged time per speculative step, with speed changes tracking
+  draft acceptance and different completions. Identical input token IDs also
+  produced different near-tied token rankings across the two stacks.
 
 ## Rank balance and draft attention
 

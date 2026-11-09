@@ -81,3 +81,54 @@ noncausal graph replay against eager attention at lengths 8, 31, 32, 33, 1024,
 `venv/bin/python scripts/check_greedy_repeatability.py --rounds 3 --max-tokens 256 --save logs/repeat-033-default.json`
 passed: five of five prompts gave byte-identical outputs across three rounds
 within the default server boot. This does not test cross-restart repeatability.
+
+## Controlled investigation of the 1k single-GPU drop
+
+The original TP1 1k result fell from 126.3 to 96.7 tok/s (23.4%). Those
+benchmark runs used different fresh document identifiers and did not save their
+completion text or per-request acceptance counters. Their exact textual
+divergence cannot be reconstructed from the saved JSON.
+
+To investigate, both preserved venvs were run with the same current launcher,
+TP1, `KV_MEM=3000000000`, `DFLASH_MAX_LEN=8192`, and default DFlash2 settings.
+Three prompts were built once with `bench_turing.make_prompt`, target length
+1000 and identifiers `fixed-comparison-0000000000000000`,
+`fixed-comparison-0000000000000001`, and `fixed-comparison-0000000000000002`.
+Each was sent unchanged to both versions, three times, with 512 generated
+tokens, temperature 0, and `ignore_eos`. Generated text and Prometheus counter
+deltas were saved in local `logs/fixed-1k-{032,033}.json`; the exact prompts
+are in `logs/fixed-1k-prompts.json`.
+
+| Prompt | 0.32 median tok/s | 0.33 median tok/s | Change | 0.32 tokens/step | 0.33 tokens/step | 0.32 / 0.33 ms per step |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 90.28 | 84.41 | -6.5% | 3.66 | 3.45 | 40.43 / 40.36 |
+| 1 | 123.55 | 102.09 | -17.4% | 5.05 | 4.17 | 40.55 / 40.69 |
+| 2 | 87.67 | 94.86 | +8.2% | 3.62 | 3.87 | 40.76 / 40.81 |
+
+Tokens per step is `1 + accepted_tokens / num_drafts`; ms per step is
+client-observed decode time divided by the number of drafts, so it includes
+request boundary effects and is not a kernel profiler measurement. Each prompt
+had identical acceptance counts across its three rounds within a version.
+Completion text differed between versions for all three prompts. The almost
+unchanged step cost and acceptance changes explain the controlled speed changes;
+this is not evidence of a uniform 23.4% execution slowdown on 0.33.
+
+Additional probes supplied both versions with identical input token IDs at the
+common prefixes before textual divergence, then requested 16 tokens with top-5
+log probabilities. This recomputes the prefix as prefill and therefore does not
+exactly replay its original incremental decode. It nevertheless confirms
+different token scores and choices across stacks:
+
+| Fixed-prefix probe | 0.32 log probabilities | 0.33 log probabilities |
+| --- | --- | --- |
+| Prompt 2, next word | `model`: -1.288966; `patterns`: -1.288966; selected `model` | `patterns`: -1.246017; `model`: -1.308517; selected `patterns` |
+| Prompt 1, punctuation after `essay` | period: -0.701109; comma: -0.716734; selected period | comma and period: -0.709009; selected comma |
+
+These observations support the mechanism: stack-dependent numeric scores change
+near-tied greedy choices, the completion changes, and DFlash2 accepts a different
+number of draft tokens. The document identifier also affects the completion:
+changing only that identifier produced 84–102 tok/s on the same 0.33 server.
+The controlled experiment does not identify which change among vLLM, torch,
+Triton, FlashInfer, or their compiled kernels caused the score differences, nor
+prove the exact cause of the original unsaved completion. Raw score probes are
+in local `logs/divergence-{032,033}.json`.
