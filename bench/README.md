@@ -88,7 +88,7 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_lookup_kernels.py` | kernel test | GPU | 0 or 1 | The LABD kernels against a Python reference. |
 | `test_marlin_int8_asym.py` | kernel test | GPU | 0 or 1 | Marlin W4A8-INT8 with zero points against W4A16. |
 | `test_request_metrics.py` | test | CPU, bash | 0 or 1 | All launchers retain timing/usage metrics without speculation; active MTP/DFlash profiles keep summary/detailed acceptance metrics. |
-| `test_model_verification.py` | test | CPU | 0 or 1 | Model verification and selection. Cuts a heredoc out of `verify.sh`. |
+| `test_model_verification.py` | test | CPU | 0 or 1 | Model verification, selection and redacted effective-model diagnostics. Cuts a heredoc out of `verify.sh`. |
 | `test_alt_wsl_gpu_util.sh` | test | CPU, bash, tar | 0 or 1 | `single-user/alternative.sh` defaults `GPU_UTIL` to 0.95 natively and 0.93 under WSL2 (vLLM sees 22.75 GiB of a 3090 there, #401); an explicit value wins in both. Faked with `WSL_DISTRO_NAME`, stub `vllm`, `PRINT_ARGV=1`. |
 | `test_no_key_bind.sh` | test | CPU, bash, tar | 0 or 1. Skips under `/.dockerenv`. | The `--host` each launcher binds, with and without a key (#204). Cuts a block out of `verify.sh` and evaluates it. |
 | `test_offload_mamba_swa_boundaries.py` | test | image, CPU only | 0 or 1 | Actual native store masks and CPU-manager lookup retain SWA history at Mamba replay boundaries under sparse retention. |
