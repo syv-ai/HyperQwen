@@ -84,6 +84,14 @@ within the default server boot. This does not test cross-restart repeatability.
 
 ## Controlled investigation of the 1k single-GPU drop
 
+**Current finding:** on the saved fixed prompt, the large rate difference
+mostly follows the generated completion. The [fixed-output control below](#holding-the-completion-fixed)
+made both versions emit identical token IDs: both ran the saved old completion
+at about 124 tok/s and the saved new completion at about 102 tok/s. The
+source/compiler changes below affect computation boundaries and numeric
+results, but the evidence does not support reporting a uniform 23.4%
+execution-speed regression or attributing it to one cache-policy expression.
+
 The original TP1 1k result fell from 126.3 to 96.7 tok/s (23.4%). Those
 benchmark runs used different fresh document identifiers and did not save their
 completion text or per-request acceptance counters. Their exact textual
@@ -288,3 +296,109 @@ manifest, rollback instructions, per-run results, and logs are in
 `logs/block-drop-revert-test/`; `summary.json` records output comparisons and
 the AOT artifact paths. The report records this diagnostic result, not a
 proposed serving-code fix.
+
+### Additional source changes: context projection and normalization
+
+Upstream 0.33 also moved part of DFlash context preparation inside the full
+CUDA graph. In 0.32, `DFlashSpeculator.propose()` combines all auxiliary hidden
+states in one projection before replay. In 0.33, `_prepare_graph_replay()` and
+`_store_hidden_states()` stage the graph's first context rows separately, and
+`_prepare_graph_forward()` projects those staged rows during replay. At TP1
+with seven speculative tokens, this separates the first eight rows from the
+rest of a prefill chunk. The drafter's `combine_hidden_states()` implementation
+is unchanged, but the sizes of its Marlin GEMM calls change.
+
+A frozen-input probe used the actual drafter `fc.weight_packed` and
+`fc.weight_scale`, input width 25,600, output width 5,120, and the normal fp32
+Marlin reduction. Splitting a projection into eight rows plus the remainder
+changed 116,237 of 901,120 output values at 176 rows (relative L2 0.001646),
+and 164,376 of 3,194,880 at 624 rows (relative L2 0.001283). Same-shape repeats
+were exact. The full and split outputs each matched exactly across the two
+venvs: this is sensitivity to the changed call shape, rather than evidence
+that the Marlin kernel became slower or universally changed its result.
+Inputs were saved synthetic auxiliary states, not captured request states;
+the weights were the real checkpoint weights. The probe and artifacts are in
+local `logs/context-projection-diagnostic/`.
+
+A separate 0.33 server diagnostic restored the old context-preparation order
+through a temporary import overlay. It kept default 0.33 cache policy,
+dependencies, and the same three AOT artifacts as the fresh baseline; installed
+files were not edited. The saved 1k prompts gave:
+
+| Prompt | Fresh 0.33 tok/s | Old context order tok/s | Old context tokens/step |
+| --- | ---: | ---: | ---: |
+| 0 | 84.21 | 86.28 | 3.514 |
+| 1 | 101.58 | 101.21 | 4.137 |
+| 2 | 94.47 | 93.97 | 3.880 |
+
+All three repeated identically within the diagnostic boot. Prompts 0 and 2
+changed text relative to baseline; prompt 1's text stayed identical. This
+confirms another source change can affect the draft computation, but it did
+**not** recover the large remaining gap for prompt 1. The overlay was removed
+by restarting the default server, and installed source checksums matched
+before and after. Local records are `logs/context-graph-ablation/` and
+`logs/fixed-1k-033-old-context-order.json`.
+
+Several apparent source differences were ruled out or bounded:
+
+- `qwen3_dflash2.py`, including the fp16 residual-scaling implementation, and
+  `dflash2/lookup.py` are identical between the installed builds.
+- Draft seed mixing changed, but Gumbel noise is bypassed at temperature zero;
+  that seed change does not explain these greedy draws. FLy verification was
+  not enabled in the tested configuration.
+- Draft quantization mapping was refactored, but the new specialized mapping
+  concerns ModelOpt configurations. This checkpoint uses compressed-tensors;
+  the fallback retains the prior layer-alias handling. Both venvs have
+  compressed-tensors 0.17.0 and cuBLAS 13.1.1.3 and read the same model files.
+- The new CUDA `fla_rms_norm_gated` wrapper is not selected by this launcher's
+  `custom_ops=["+rms_norm", "+silu_and_mul", "none"]`: gated normalization
+  dispatches to the native implementation. Its actual `forward_static`
+  calculation, both eager and compiled, matched across versions on a frozen
+  8 × 48 × 128 fixture. This bounded result does not rule out all compiler
+  differences elsewhere; the recurrent GDN and RMS probes above did show them.
+
+### Holding the completion fixed
+
+To separate execution cost from the completion's draftability, both preserved
+versions ran the **same input token IDs** for fixed prompt 1 and were constrained
+to reproduce each of its two saved completions. A literal regular expression
+was supplied through `/v1/completions` `structured_outputs`, with
+`--structured-outputs-config '{"enable_in_reasoning":true}'` on the diagnostic
+servers so the constraint also applied to reasoning text. These are diagnostic
+requests, not replacements for the unconstrained benchmark above.
+
+Both boots used TP1, DFlash2, the default fp16 KV and graph settings,
+`KV_MEM=3000000000`, `DFLASH_MAX_LEN=8192`, temperature zero, and the original
+code and dependency stack for that version. The prompt was warmed first.
+Each completion ran three times. `return_token_ids=true` captured the actual
+generated IDs; all six runs for a given completion emitted exactly the same
+513 IDs, including the final stop token. The request limit was 1,024 tokens
+to allow the entire saved 512-token completion and its stop token.
+
+| Fixed completion | 0.32 median decode | 0.33 median decode | 0.32 tokens/step | 0.33 tokens/step |
+| --- | ---: | ---: | ---: | ---: |
+| Saved 0.32 text | 123.93 tok/s | 124.07 tok/s | 5.020 | 5.069 |
+| Saved 0.33 text | 102.40 tok/s | 101.58 tok/s | 4.163 | 4.163 |
+
+The old text took 102 drafting steps on 0.32 and 101 on 0.33; the new text took
+123 on both, with the same counts across each case's three rounds. Changing
+the completion changes the rate substantially **on either software version**.
+With the completion held fixed, the median version difference was within 1%
+in these two cases. The constrained 0.33 result on the old text also closely
+matches the earlier unconstrained 0.32 result of 123.55 tok/s; its new-text
+result matches the fresh unconstrained 0.33 result of 101.58 tok/s.
+
+Structured decoding can prune grammar-invalid draft tokens before verification,
+so `accepted/drafted` fractions from this control must not be compared directly
+to ordinary requests. The table uses drafting-step counts and identical emitted
+token sequences, and its rates are reported as a diagnostic comparison only.
+It does not establish a universal throughput or recover the original unsaved
+1k completion. It supports explaining this saved prompt's large gap primarily
+through changed text and draft acceptance, rather than a large per-step cost
+regression. The exact share of the original 23.4% observation remains unknowable
+from its JSON alone.
+
+No serving source was edited for this control. The venv selection and diagnostic
+structured-output setting were restored to the default 0.33 TP2 service.
+Input IDs, frozen completions, generated token IDs, counters, and summaries are
+in local `logs/fixed-output-diagnostic/`.

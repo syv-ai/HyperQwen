@@ -173,7 +173,12 @@ What this shows:
   left outputs and speed unchanged because lookahead hashes still prevented the
   drop. Also disabling those hashes restored the old boundary but produced mixed
   speeds and cold/cached output differences on two prompts. Both diagnostic
-  changes were rolled back. See the record for controls and limits of attribution.
+  changes were rolled back. A later fixed-output control made both versions
+  emit identical token IDs: each ran the saved old completion at about 124 tok/s
+  and the new completion at about 102 tok/s. This supports changed completion
+  draftability as the main explanation of the saved prompt's large gap, rather
+  than a uniform execution-speed regression. See the record for controls and
+  limits of attribution.
 
 ## Rank balance and draft attention
 
