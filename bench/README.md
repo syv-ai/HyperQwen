@@ -37,6 +37,10 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 |---|---|---|---|---|
 | `act_calib.py` | measurement | GPU, model | 0 | Error that int8 activations add to each linear layer. Picks `INT8_LAYERS`. |
 | `test_draft_vocab_stats.py` | test | image, no GPU | 0 or 1 | Offline draft-vocab script tables, held-out corpus coverage, read-only statistics and ordinary ID-list head construction. |
+| `test_gdn_checkpoint_safety.py` | test | CPU, patched vLLM source | 0 or 1 | Default-off GDN dispatch, retention/allocation guards and final-checkpoint geometry. |
+| `test_gdn_multi_checkpoint.py` | test | image, no GPU | 0 or 1 | Real periodic state allocation, worker metadata, hash publication and deep-divergence cache lookup; metadata-only, no model inference. |
+| `test_gdn_checkpoint_export.py` | test | image; GPU optional | 0 or 1 | Exact convolution histories and bounded multi-export plans; `--device cuda:0` checks actual FLA states and resumed suffixes. |
+| `test_gdn_checkpoint_model.py` | test, run by hand | two GPUs, cached model/drafter | 0 or 1 | Fresh-process enabled/default-off comparison with configurable chunk/material/shared lengths (default 2048/2000/1200); `--require-off-miss` demands a real extra cache hit, identical outputs and actual exports. |
 | `test_dflash_context_capacity.py` | test | image, no GPU | 0 or 1 | DFlash constructor rejects oversized target contexts and reserves its fixed lookahead without rewriting draft configuration. |
 | `test_doctor.py` | test | CPU, bash | 0 or 1 | Doctor health failures, configuration-pipeline failures and redacted output. |
 | `api_smoke.py` | smoke test, run by hand | server | 0 if all 12 features pass, 2 if no request reaches a server, else 1 | Request-level API features: logprobs, n, stop, seeds, structured output, penalties, streaming, thinking. |

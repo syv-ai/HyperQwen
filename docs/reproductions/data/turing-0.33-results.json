@@ -5123,5 +5123,7 @@
       "max_model_len": 262136,
       "smoke_output_tokens": 8
     }
-  }
+  },
+  "measured_patchset_commit": "611eb30",
+  "integration_note": "Measurements predate upstream 9268d8d / PR #434 and the later SM75 periodic-checkpoint backend guard; no post-merge GPU performance is claimed."
 }

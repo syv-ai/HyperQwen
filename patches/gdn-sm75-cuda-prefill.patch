@@ -9,23 +9,25 @@ Use fp16 Q/K/V, 128-dimensional keys/values and fp32 recurrence accumulators.
 Copy initial state before the kernel's in-place update; handle packed variable
 length requests in one CUDA launch. Other geometries fall back to FLA.
 Compile the extension before graph capture. Requires nvcc + a C++ compiler.
+Periodic prefill checkpoints require VLLM_GDN_SM75=0: the newly merged
+checkpoint exporter is validated for Triton/FLA, not this CUDA backend.
 
-Measured 2048-token TP=2 geometry: 11.45 ms Triton vs 2.73 ms CUDA.
+Measured on vLLM 0.32.0, 2048-token TP=2 geometry: 11.45 ms Triton vs 2.73 ms CUDA.
 Output relative L2 error 0.00051; final-state relative L2 error 0.00037.
 
 Kind: local
 What: opt-in recurrent CUDA GDN prefill kernel for sm75 (VLLM_GDN_SM75=1), ported from weicj/vLLM-2080Ti-Definitive (Apache-2.0)
 Upstream: none (weicj/vLLM-2080Ti-Definitive 93c9013)
-Cut-against: 0.33.0
+Cut-against: 0.33.0 after gdn-multi-prefill-checkpoints; refuse that opt-in on the SM75 CUDA backend
 Retires-when: Triton emits tensor-core code on sm75 or FLA ships a faster Turing kernel
 
---- exported from cf817e3 (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 902189d (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index ea94300..2ac576e 100755
+index 6ffec10..fc1dbd6 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -236,6 +236,7 @@
+@@ -237,6 +237,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -33,7 +35,7 @@ index ea94300..2ac576e 100755
      VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
      VLLM_FLASHINFER_SM75: bool = False
      VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
-@@ -1671,6 +1672,7 @@
+@@ -1675,6 +1676,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -42,10 +44,10 @@ index ea94300..2ac576e 100755
      "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
      "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
 diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-index 3eb14c0..fb6d8de 100644
+index 87ce6c0..2d9baf3 100644
 --- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
 +++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-@@ -399,6 +399,14 @@
+@@ -400,6 +400,14 @@
          else:
              self._forward_method = self.forward_native
  
@@ -60,6 +62,22 @@ index 3eb14c0..fb6d8de 100644
      def forward_cuda(
          self,
          q: torch.Tensor,
+@@ -757,6 +765,15 @@
+                 raise RuntimeError(
+                     "GDN prefill checkpoints require mamba_cache_mode=align"
+                 )
++            if (
++                current_platform.is_cuda()
++                and envs.VLLM_GDN_SM75
++                and current_platform.is_device_capability(75)
++            ):
++                raise RuntimeError(
++                    "GDN prefill checkpoints do not support SM75 CUDA prefill. "
++                    "Set VLLM_GDN_SM75=0 to use the Triton/FLA prefill backend."
++                )
+             # Only the tested CUDA Triton/FLA prefill path exports checkpoints.
+             # Unsupported paths must not reserve blocks they cannot write.
+             if (
 diff --git a/model_executor/layers/mamba/ops/sm75_gdn.cu b/model_executor/layers/mamba/ops/sm75_gdn.cu
 new file mode 100644
 index 0000000..b3f9af2

@@ -69,6 +69,9 @@ with the completion; `SPEC=off` runs plain decoding.
 0.7.2.post1, Python 3.14.8, and the six Turing patches cut against 0.33.0.
 The November 9 runs and rounded per-run rates are in
 [the reproduction record](reproductions/turing-0.33.md).
+These measurements predate the later upstream periodic-checkpoint patch
+([gdn-checkpoints.md](gdn-checkpoints.md)); that feature was not enabled in the
+measured build, and the merged patch series has not been rebenchmarked here.
 
 | Part | Used for | Notes |
 | --- | --- | --- |
@@ -194,6 +197,9 @@ stays the default. Quantized KV can change outputs; this trial is not an accurac
 `93c9013e375b1ecbf2da88179d2a31175a0d5c99`. The Turing launcher enables it with `VLLM_GDN_SM75=1`.
 It requires nvcc and a C++ compiler, and compiles once before graph capture.
 The original Triton path remains available with `VLLM_GDN_SM75=0`.
+The optional `VLLM_GDN_PREFILL_CHECKPOINTS=1` feature requires that Triton/FLA
+path. Enabling it with SM75 CUDA prefill raises an error before checkpoint
+allocation; keep it at its default of 0 with the standard Turing profile.
 
 The 0.33.0 24k/800-token runs measured 14.20 s cold TTFT
 with CUDA GDN versus 15.79 s with Triton GDN, a 10.1% reduction in this trial. Cached time

@@ -7,6 +7,16 @@ Turing patches from this branch. `bash verify.sh --install` passed. The server
 used `Qwen3.8-27B-W4A16-AutoRound`, and DFlash2 runs used
 `Qwen3.8-27B-DFlash2-W4A16`. See [Turing setup](../turing.md).
 
+**Patch-set provenance:** the standard 0.33 measurements used the Turing port
+from repository commit `611eb30`; diagnostics used that base with the temporary
+overrides described below. The 0.32 comparisons used the preserved older venv.
+These runs predate upstream
+`9268d8d` (PR #434) added periodic GDN prefill checkpoints. The later merge
+registers that default-off feature and rejects its unsupported combination
+with SM75 CUDA prefill. The merged series has source/CPU integration checks,
+but has not been installed into the measured server or rebenchmarked here.
+These tables are measurements of the recorded build, not post-merge results.
+
 The local venv used `pyarrow==26.0.1` in place of the repository's
 `pyarrow==20` pin because version 20 has no Python 3.14 wheel. No model or
 benchmark code was changed for this substitution. The measurements are native,
