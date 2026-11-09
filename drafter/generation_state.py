@@ -14,7 +14,9 @@ def exclusive_output(path):
     """Hold a nonblocking OS lock across resume, engine construction and all writes.
 
     Keep the sidecar inode: unlinking it could let a new process lock another inode.
-    A process exit releases the lock automatically, so crash recovery needs no deletion.
+    Normal completion explicitly unlocks it. With flock, a forked engine child
+    can retain the inherited lock after an abrupt parent exit, until its last
+    descriptor closes. Crash recovery needs no sidecar deletion.
     """
     with open(f"{path}.lock", "a+b") as lock:
         try:

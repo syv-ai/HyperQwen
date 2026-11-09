@@ -195,6 +195,14 @@ resolve_effective_config() {
   # 3. Redacted effective configuration. Secrets are presence-only: the key
   # value and api_key.txt contents never reach any output.
   local _model=${MODEL:-$REPO/models/Qwen3.8-27B-W4A16-AutoRound}
+  if [ "$mode" = single ]; then
+    # Use the launcher's selector without changing the caller's MODEL. This
+    # resolver also runs standalone and from the read-only doctor.
+    _model=$(
+      source "$REPO/single-user/select_model.sh" || exit 1
+      printf '%s' "$MODEL"
+    ) || _refuse "cannot select the single-user model"
+  fi
   local _port=${PORT:-18020}
   local _key_status="unset"
   [ -n "${VLLM_API_KEY:-}" ] && _key_status="set(${#VLLM_API_KEY} chars)"

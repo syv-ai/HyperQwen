@@ -39,16 +39,16 @@ What: with async scheduling on, FlashInfer's metadata builder takes the blocking
 Upstream: vllm #61612 (open); the regression is from vllm #57214. vllm #61622 (open, for #61621) makes the
   blocking read wait on an event instead of holding the CUDA context lock, but leaves the shortcut as it is, so
   without #61612 it does not fix this
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: the pin that carries #61612, or another change that keeps the barrier under async scheduling
 
---- exported from f1dfe0337 (vllm-pr61612-flashinfer-async-barrier); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5865c86ad4 (vllm-pr61612-flashinfer-async-barrier); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
-index f6c3e262d..462a85215 100755
+index 1a8c6c377a..455ca0680c 100755
 --- a/v1/attention/backends/flashinfer.py
 +++ b/v1/attention/backends/flashinfer.py
-@@ -748,6 +748,7 @@
+@@ -873,6 +873,7 @@
          self.model_config = vllm_config.model_config
          self.attention_config = vllm_config.attention_config
          self._num_speculative_tokens = vllm_config.num_speculative_tokens
@@ -56,7 +56,7 @@ index f6c3e262d..462a85215 100755
          self._workspace_buffer = None
          self._prefill_wrapper: (
              BatchPrefillWithPagedKVCacheWrapper | BatchDCPPrefillWrapper | None
-@@ -1509,9 +1510,14 @@
+@@ -1670,9 +1671,14 @@
          if needs_seq_lens_cpu:
              if (
                  self._num_speculative_tokens == 0
