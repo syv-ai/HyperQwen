@@ -60,7 +60,10 @@ repeats text it has already seen. Drafts are verified by the target, so the outp
 choose (up to the numeric caveats in the repeatability section). Measured mean acceptance length is
 5.3 to 6.0 tokens per step (see the CUDA GDN section). `SPEC=off` runs plain decoding.
 
-**What does the work**, all from the pinned stack (vLLM 0.32.0, torch 2.13, Triton 3.7.1):
+**What did the work in the measured build** (vLLM 0.32.0, torch 2.13, Triton 3.7.1):
+The repository now pins vLLM 0.33.0, and the six Turing patches have been re-exported
+against it. The performance and repeatability numbers below have not been remeasured
+on 0.33.0.
 
 | Part | Used for | Notes |
 | --- | --- | --- |

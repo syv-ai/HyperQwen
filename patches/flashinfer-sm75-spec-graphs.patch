@@ -9,16 +9,16 @@ Only fp16 queries, native fp16/FP8-E4M3 KV, no DCP and no adaptive verification.
 Kind: local
 What: opt-in native FA2 full CUDA graphs for speculative target-verify and noncausal DFlash attention on sm75 (VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS=1)
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream captures full graphs for FlashInfer speculative attention
 
---- exported from c7075e8 (flashinfer-sm75-spec-graphs); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5e86df6 (flashinfer-sm75-spec-graphs); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 1f7cb2b..8f3790c 100644
+index 81bf813..ea94300 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -238,6 +238,7 @@
+@@ -236,6 +236,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -26,7 +26,7 @@ index 1f7cb2b..8f3790c 100644
      VLLM_FLASHINFER_SM75: bool = False
      VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
      VLLM_V1_USE_OUTLINES_CACHE: bool = False
-@@ -1689,6 +1690,7 @@
+@@ -1670,6 +1671,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -35,10 +35,10 @@ index 1f7cb2b..8f3790c 100644
      "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
      # The activation dtype config for humming kernel. Explicit schemas disable
 diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
-index bc28255..c860586 100644
+index f269306..a40bda3 100755
 --- a/v1/attention/backends/flashinfer.py
 +++ b/v1/attention/backends/flashinfer.py
-@@ -761,6 +761,11 @@
+@@ -886,6 +886,11 @@
              None  # Wrapper for non-causal prefill (DFlash)
          )
          self._decode_wrapper = None  # Wrapper for decode (general shape)
@@ -50,7 +50,7 @@ index bc28255..c860586 100644
  
          if envs.VLLM_BATCH_INVARIANT:
              self.decode_fixed_split_size = 2048
-@@ -1036,6 +1041,19 @@
+@@ -1176,6 +1181,19 @@
              return FlashInferBackend.get_dtype_for_flashinfer("fp8_e4m3")
          return self.kv_cache_spec.dtype
  
@@ -70,7 +70,7 @@ index bc28255..c860586 100644
      @override  # type: ignore[misc]
      @classmethod
      def get_cudagraph_support(
-@@ -1044,6 +1062,8 @@
+@@ -1184,6 +1202,8 @@
          kv_cache_spec: KVCacheSpec,
      ) -> AttentionCGSupport:
          """Get the cudagraph support level for FlashInfer attention."""
@@ -79,7 +79,7 @@ index bc28255..c860586 100644
          # XQA lacks LSE for DCP; DCP also cannot graph variable-length trtllm-gen.
          if vllm_config.parallel_config.decode_context_parallel_size > 1:
              return AttentionCGSupport.UNIFORM_SINGLE_TOKEN_DECODE
-@@ -1091,6 +1111,8 @@
+@@ -1237,6 +1257,8 @@
          vllm_config: VllmConfig,
          kv_cache_spec: KVCacheSpec,
      ) -> int | None:
@@ -87,8 +87,8 @@ index bc28255..c860586 100644
 +            return None  # Native FA2 graphs require a fixed uniform query width.
          # The uniform gate already covers DCP, head geometry, the XQA head-dim
          # limit and causality, and yields None for subclasses that force NEVER.
-         if (
-@@ -1239,7 +1261,28 @@
+         # The native fa2 decode wrapper takes only uniform query lengths.
+@@ -1387,7 +1409,28 @@
      def _get_prefill_wrapper(
          self,
          causal: bool = True,
@@ -117,7 +117,7 @@ index bc28255..c860586 100644
          if not causal:
              if self.use_dcp:
                  raise NotImplementedError(
-@@ -1651,7 +1694,18 @@
+@@ -1812,7 +1855,18 @@
                      max_seq_len=max_seq_len,
                  )
              else:

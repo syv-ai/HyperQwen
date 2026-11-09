@@ -16,16 +16,16 @@ Output relative L2 error 0.00051; final-state relative L2 error 0.00037.
 Kind: local
 What: opt-in recurrent CUDA GDN prefill kernel for sm75 (VLLM_GDN_SM75=1), ported from weicj/vLLM-2080Ti-Definitive (Apache-2.0)
 Upstream: none (weicj/vLLM-2080Ti-Definitive 93c9013)
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: Triton emits tensor-core code on sm75 or FLA ships a faster Turing kernel
 
---- exported from 1eb4815 (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from cf817e3 (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 8f3790c..78c1bae 100644
+index ea94300..2ac576e 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -238,6 +238,7 @@
+@@ -236,6 +236,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -33,7 +33,7 @@ index 8f3790c..78c1bae 100644
      VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
      VLLM_FLASHINFER_SM75: bool = False
      VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
-@@ -1690,6 +1691,7 @@
+@@ -1671,6 +1672,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -42,10 +42,10 @@ index 8f3790c..78c1bae 100644
      "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
      "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
 diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-index 976ac2c..16fdcf7 100644
+index 3eb14c0..fb6d8de 100644
 --- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
 +++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-@@ -309,6 +309,14 @@
+@@ -399,6 +399,14 @@
          else:
              self._forward_method = self.forward_native
  
