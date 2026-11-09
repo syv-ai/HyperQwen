@@ -11,19 +11,18 @@ per-token [N, C] slots of the runner's 4D view back into one tile per (block, he
 Kind: feature
 What: KVarN cache dtypes, quant mode, backend registration, page size
 Upstream: none (KVarN is Huawei CSL's, Apache-2.0)
-Cut-against: 0.32.0: KVQuantMode.KVARN moves from 11 to 100, because #57057's ULTRAQUANT_4BIT took 11 (a
-  duplicate IntEnum value is a silent alias); both dtypes kept in every registry
+Cut-against: 0.33.0: beside #59774's OCTAVE_* and #52670's CUSTOM; KVARN stays 100
 Retires-when: upstreamed
 
---- exported from 31d868e58 (kvarn-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 155a2e4417 (kvarn-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/cache.py b/config/cache.py
-index 5eb26726c..43f1c794e 100644
+index 626825dba8..f7760f15eb 100644
 --- a/config/cache.py
 +++ b/config/cache.py
-@@ -51,6 +51,10 @@
-     "turboquant_k3v4_nc",
-     "turboquant_3bit_nc",
+@@ -59,6 +59,10 @@
+     "octave_k3v3",
+     "octave_k3v3_compact",
      "ultraquant_4bit",
 +    "kvarn_k4v2_g128",
 +    "kvarn_k4v4_g128",
@@ -33,10 +32,10 @@ index 5eb26726c..43f1c794e 100644
      "int8_per_token_head",
      "fp8_per_token_head",
 diff --git a/envs.py b/envs.py
-index 30148da33..83b35f4f2 100755
+index 74279b97a0..ccf193bf9e 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -228,6 +228,26 @@
+@@ -226,6 +226,26 @@
      VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
      VLLM_DRAFT_TEMP_SCALE: float = 1.0
      VLLM_MARLIN_REPACK_STAGED: str | None = None
@@ -63,7 +62,7 @@ index 30148da33..83b35f4f2 100755
      # GiB of vision-tower weights to keep in pinned host memory; 0 disables.
      VLLM_VISION_CPU_OFFLOAD_GB: float = 0.0
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
-@@ -1665,6 +1685,28 @@
+@@ -1646,6 +1666,28 @@
      "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
      # Marlin repack staging buffer, opt-in: "1" turns it on (GA100 mining cards); unset or anything else = off
      "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
@@ -93,10 +92,10 @@ index 30148da33..83b35f4f2 100755
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index bec1856d9..e3389d4e1 100644
+index 93958bb127..24bf3c805f 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
-@@ -667,6 +667,26 @@
+@@ -672,6 +672,26 @@
                  page_size_padded=shared_page,
              )
          else:
@@ -124,10 +123,10 @@ index bec1856d9..e3389d4e1 100644
                  block_size=block_size,
                  num_kv_heads=self.num_kv_heads,
 diff --git a/platforms/cuda.py b/platforms/cuda.py
-index 401a98f66..9cc37b42b 100644
+index c765877871..bb933a7ca9 100644
 --- a/platforms/cuda.py
 +++ b/platforms/cuda.py
-@@ -162,6 +162,7 @@
+@@ -164,6 +164,7 @@
                  AttentionBackendEnum.FLASH_ATTN,
                  AttentionBackendEnum.TRITON_ATTN,
                  AttentionBackendEnum.FLEX_ATTENTION,
@@ -135,7 +134,7 @@ index 401a98f66..9cc37b42b 100644
                  AttentionBackendEnum.TURBOQUANT,
              ]
          else:
-@@ -175,6 +176,7 @@
+@@ -177,6 +178,7 @@
                  AttentionBackendEnum.FLASHINFER,
                  AttentionBackendEnum.TRITON_ATTN,
                  AttentionBackendEnum.FLEX_ATTENTION,
@@ -143,7 +142,7 @@ index 401a98f66..9cc37b42b 100644
                  AttentionBackendEnum.TURBOQUANT,
              ]
  
-@@ -363,6 +365,70 @@
+@@ -365,6 +367,70 @@
                  "`wsl --shutdown`."
              )
  
@@ -215,10 +214,10 @@ index 401a98f66..9cc37b42b 100644
      def get_current_memory_usage(
          cls, device: torch.types.Device | None = None
 diff --git a/platforms/interface.py b/platforms/interface.py
-index 3df44a927..c28c8e3a2 100644
+index de899f7a1b..7d10f140e4 100644
 --- a/platforms/interface.py
 +++ b/platforms/interface.py
-@@ -979,6 +979,23 @@
+@@ -983,6 +983,23 @@
                  cache_dtype_str=cache_config.cache_dtype,
                  kv_quant_mode=kv_quant_mode,
              ).page_size_bytes
@@ -243,12 +242,12 @@ index 3df44a927..c28c8e3a2 100644
              cache_config.cache_dtype.startswith("turboquant_")
              or cache_config.cache_dtype == "ultraquant_4bit"
 diff --git a/utils/torch_utils.py b/utils/torch_utils.py
-index 4bf2e3397..7b229679c 100644
+index 7e889e244a..a51f66df95 100644
 --- a/utils/torch_utils.py
 +++ b/utils/torch_utils.py
-@@ -51,6 +51,10 @@
-     "turboquant_k3v4_nc": torch.uint8,
-     "turboquant_3bit_nc": torch.uint8,
+@@ -61,6 +61,10 @@
+     "octave_k3v3": torch.uint8,
+     "octave_k3v3_compact": torch.uint8,
      "ultraquant_4bit": torch.uint8,
 +    "kvarn_k4v2_g128": torch.uint8,
 +    "kvarn_k4v4_g128": torch.uint8,
@@ -258,36 +257,36 @@ index 4bf2e3397..7b229679c 100644
      "nvfp4_4over6": torch.uint8,
  }
 diff --git a/v1/attention/backends/registry.py b/v1/attention/backends/registry.py
-index 207c112a3..c09ed4381 100644
+index 093a536cd4..83bf147498 100644
 --- a/v1/attention/backends/registry.py
 +++ b/v1/attention/backends/registry.py
-@@ -151,6 +151,7 @@
+@@ -159,6 +159,7 @@
      CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
      CPU_MLA = "vllm.v1.attention.backends.mla.cpu_mla.CPUMLABackend"
      AMX_MLA = "vllm.v1.attention.backends.mla.amx_mla.AMXMLABackend"
 +    KVARN = "vllm.v1.attention.backends.kvarn_attn.KVarNAttentionBackend"
      TURBOQUANT = "vllm.v1.attention.backends.turboquant_attn.TurboQuantAttentionBackend"
-     ULTRAQUANT = "vllm.v1.attention.backends.ultraquant_attn.UltraQuantAttentionBackend"
-     # Placeholder for third-party/custom backends - must be registered before use
+     ROCM_OCTAVE = (
+         "vllm.v1.attention.backends.rocm_octave_attn.RocmOctaveAttentionBackend"
 diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
-index 79e88ca91..8f968eefd 100644
+index 7a6650ce50..ebeaa76e82 100644
 --- a/v1/kv_cache_interface.py
 +++ b/v1/kv_cache_interface.py
-@@ -57,6 +57,9 @@
-     TURBOQUANT_3BIT_NC = 9
-     NVFP4_DS_MLA = 10  # opaque-bytes NVFP4 DS-MLA layouts (FlashMLA sparse)
-     ULTRAQUANT_4BIT = 11  # packed FP4 values + UE8M0 group scales
+@@ -68,6 +68,10 @@
+     # rather than reusing an upstream kernel path. See KVCacheDTypeHandler.
+     CUSTOM = 12
+ 
 +    # KVarN is not upstream's: its value sits far from upstream's counter, which reached 11
 +    # with ULTRAQUANT_4BIT (#57057) the release after KVarN took 11 (fork rule, vllm/CLAUDE.md).
 +    KVARN = 100
- 
++
      @property
      def is_per_token_head(self) -> bool:
-@@ -87,6 +90,11 @@
-         """True for the UltraQuant 4-bit KV-cache format."""
-         return self == KVQuantMode.ULTRAQUANT_4BIT
+         """True for any per-token-head quantization mode."""
+@@ -117,6 +121,10 @@
+         """
+         return self == KVQuantMode.CUSTOM
  
-+    @property
 +    def is_kvarn(self) -> bool:
 +        """True for KVarN packed KV-cache quantization."""
 +        return self == KVQuantMode.KVARN
@@ -295,7 +294,7 @@ index 79e88ca91..8f968eefd 100644
  
  def get_kv_quant_mode(kv_cache_dtype: str) -> KVQuantMode:
      """Map a ``kv_cache_dtype`` string to a :class:`KVQuantMode`."""
-@@ -107,6 +115,8 @@
+@@ -144,6 +152,8 @@
          return KVQuantMode[kv_cache_dtype.upper()]
      if kv_cache_dtype == "ultraquant_4bit":
          return KVQuantMode.ULTRAQUANT_4BIT

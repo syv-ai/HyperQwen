@@ -1,5 +1,5 @@
 # Same stack as the README's venv install, frozen: Python 3.12 venv at /app/venv,
-# vLLM 0.32.0 (torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in
+# vLLM 0.33.0 (torch 2.14 / cu130 / Triton 3.7.1), every compatible patch in
 # patches/ applied,
 # the KVarN KV cache installed, the pth-flash-attn op library built (pthfa/, selected by
 # PTH_FA=1, the default on an 8.6 GPU for SPEC=mtp or dflash2 CTX=long), verify.sh --install and the scratch-pool test run at build time.

@@ -45,16 +45,16 @@ Written against vLLM 0.27.1.
 Kind: feature
 What: int8-QK Triton prefill attention for head_dim 256
 Upstream: none
-Cut-against: 0.32.0: the int8 prefill branch re-indented after #61126 removed cascade attention
+Cut-against: 0.33.0
 Retires-when: upstreamed
 
---- exported from 90432420d (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 0452d8fbf5 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 7b6fb0f61..f44c8ed07 100755
+index 17c0be81b6..4f8c4867fc 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1396,6 +1396,50 @@
+@@ -1401,6 +1401,50 @@
                  block_table = block_table[:, :num_pages]
                  num_splits = 1
  
@@ -107,7 +107,7 @@ index 7b6fb0f61..f44c8ed07 100755
              # sequence when max_seqlen_q > 1, leaving most SMs idle.
 diff --git a/v1/attention/backends/prefill_attn_hd256.py b/v1/attention/backends/prefill_attn_hd256.py
 new file mode 100644
-index 000000000..afc8ea9c6
+index 0000000000..afc8ea9c6b
 --- /dev/null
 +++ b/v1/attention/backends/prefill_attn_hd256.py
 @@ -0,0 +1,242 @@
