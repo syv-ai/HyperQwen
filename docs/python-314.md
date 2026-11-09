@@ -64,6 +64,10 @@ sudo apt-get install -y python3.14-dev     # or python3.13-dev, etc.
    And the bench client authenticates with **`OPENAI_API_KEY`**, not `VLLM_API_KEY`; with
    only the latter set it receives silent 401s and reports `0.00` in every field rather
    than failing.
+4. **`pyarrow==20.0.0` (the `docker/requirements.txt` pin) has no cp314 wheel**, so
+   pip tries a source build. Only `bench/quality_battery.py` imports it; on 3.14 install
+   `pyarrow>=22` instead (22.0.0 is the first release with cp314 wheels; 26.0.1 runs
+   `quality_battery.py --gsm-only`, [#436](https://github.com/syv-ai/HyperQwen/issues/436)).
 
 ## Install, start to finish
 

@@ -31,16 +31,16 @@ Written against vLLM 0.27.1.
 Kind: local
 What: wiring for a locally built tunable Marlin extension, off by default
 Upstream: none
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: stays
 
---- exported from b8f17ea08 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e519d8cca3 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/_custom_ops.py b/_custom_ops.py
-index e78620730..b95c3121b 100644
+index effb39f7ac..645e866185 100644
 --- a/_custom_ops.py
 +++ b/_custom_ops.py
-@@ -1201,6 +1201,51 @@
+@@ -1214,6 +1214,51 @@
      return torch.ops._C.marlin_int4_fp8_preprocess(qweight, qzeros_or_none, inplace)
  
  
@@ -92,7 +92,7 @@ index e78620730..b95c3121b 100644
  def marlin_gemm(
      a: torch.Tensor,
      c: torch.Tensor | None,
-@@ -1219,6 +1264,13 @@
+@@ -1232,6 +1277,13 @@
      use_fp32_reduce: bool = False,
      is_zp_float: bool = False,
  ) -> torch.Tensor:

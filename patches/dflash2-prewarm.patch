@@ -1,16 +1,16 @@
 Kind: fix
 What: compile every DFlash2 rung at boot instead of at first request
 Upstream: none yet
-Cut-against: 0.32.0
+Cut-against: 0.33.0: #59166 added an is_padding kernel argument; every warm-up launch passes it
 Retires-when: upstream PR
 
---- exported from a5aa5306e (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from ecbd52daf9 (dflash2-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
-index b09363cc7..d95dcc16e 100644
+index 33fe482b20..41f0b21cfa 100644
 --- a/v1/worker/gpu/spec_decode/dflash/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
-@@ -764,6 +764,9 @@
+@@ -873,6 +873,9 @@
                  tl.store(out_query_slot_mapping_ptr + block, PAD_SLOT_ID, mask=mask)
  
  
@@ -20,13 +20,14 @@ index b09363cc7..d95dcc16e 100644
  def prepare_dflash_inputs(
      input_buffers: InputBuffers,
      query_slot_mapping: torch.Tensor,
-@@ -809,41 +812,62 @@
+@@ -920,42 +923,63 @@
      max_tokens_per_req = max_target_query_len + num_query_per_req
      BLOCK_SIZE = min(256, triton.next_power_of_2(max(1, max_tokens_per_req)))
      num_blocks = triton.cdiv(max_tokens_per_req, BLOCK_SIZE)
 -    _prepare_dflash_inputs_kernel[(num_reqs, num_blocks)](
 -        input_buffers.input_ids,
 -        input_buffers.positions,
+-        input_buffers.is_padding,
 -        input_buffers.query_start_loc,
 -        input_buffers.seq_lens,
 -        query_slot_mapping,
@@ -86,6 +87,7 @@ index b09363cc7..d95dcc16e 100644
 +        _prepare_dflash_inputs_kernel[(num_reqs, _grid1)](
 +            input_buffers.input_ids,
 +            input_buffers.positions,
++            input_buffers.is_padding,
 +            input_buffers.query_start_loc,
 +            input_buffers.seq_lens,
 +            query_slot_mapping,

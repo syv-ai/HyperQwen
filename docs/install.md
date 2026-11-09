@@ -15,8 +15,8 @@ manual venv path is for hacking on the stack, or running it bare-metal.
 > with a full RTX 3090 reproduction of the benchmark tables in
 > [docs/reproductions/native-3090.md](reproductions/native-3090.md).
 
-Volta (V100, sm70) and older cards cannot run this stack at all: the CUDA 13.0 build of torch 2.13
-that vLLM 0.31 pins carries kernels for sm_75 and newer only (`torch.cuda.get_arch_list()`), CUDA 13
+Volta (V100, sm70) and older cards cannot run this stack at all: the CUDA 13.0 build of torch 2.14
+that vLLM 0.33 pins carries kernels for sm_75 and newer only (`torch.cuda.get_arch_list()`), CUDA 13
 dropped Volta, and vLLM's Marlin W4A16 kernel needs compute capability 7.5 or newer
 ([#349](https://github.com/syv-ai/HyperQwen/issues/349)). Turing (sm75) is untested.
 
@@ -28,13 +28,14 @@ things; the container details live in [docker.md](docker.md).
 
 ## Recovering after a failed patch apply
 
-If `patches/apply.sh` or `kvarn/install.sh` fails, stop the install sequence before
-building more plugins or starting a server. The current installer stops at the
-first failed patch, but GNU patch can already have written its matching hunks and
-other files. Earlier patches in the series also remain applied. KVarN currently
-copies its modules before applying their registration patches, so a failed install
-can leave importable modules without their `vllm.envs` entries, as in
-[#437](https://github.com/syv-ai/HyperQwen/issues/437).
+Since [#449](https://github.com/syv-ai/HyperQwen/pull/449), `patches/apply.sh` stages
+every patch in a copy and writes nothing into the venv unless the whole run applies,
+and `kvarn/install.sh` copies its modules only after its patches apply. A failed run
+from this checkout therefore leaves the venv as it was: fix the cause it names and
+rerun. A venv that an earlier checkout's scripts failed on can still be half patched:
+GNU patch wrote the matching hunks of the failing patch, earlier patches stayed
+applied, and KVarN modules could be importable without their `vllm.envs` entries, as in
+[#437](https://github.com/syv-ai/HyperQwen/issues/437). Recover such a venv as below.
 
 Running `python3 -m venv venv` again on that directory does not remove the old
 packages or partial patches. Preserve the failed environment for diagnosis and
@@ -51,12 +52,14 @@ using this checkout's pin in `docker/requirements.txt`, followed by the full pat
 series and any plugins you use. Existing model downloads and preparation do not
 need repeating merely because the venv was replaced. Keep `venv.failed` until the
 new environment passes `bash verify.sh --install` with exit 0, then verify your
-model/server normally. A dependency install or partial apply failure must be
-resolved before continuing; do not loosen `--fuzz 0` or skip failed hunks.
+model/server normally. A dependency install failure must be resolved before
+continuing; do not loosen `--fuzz 0` or skip failed hunks.
 
-[#445](https://github.com/syv-ai/HyperQwen/issues/445) tracks making patch application
-leave the installed tree unchanged on failure. These recovery steps do not
-provide that guarantee themselves.
+**Upgrading from an earlier pin.** When `docker/requirements.txt` moves to a new vLLM
+release, build a new venv instead of upgrading the old one in place. Preserve the
+old directory for rollback as above, then repeat every step below from
+`python3 -m venv venv` on. pip replaces only files the wheel owns, so custom modules
+copied into the old venv can otherwise remain alongside the new pin.
 
 ## Install
 
@@ -65,8 +68,8 @@ git clone https://github.com/syv-ai/HyperQwen ~/qwen-serving
 cd ~/qwen-serving
 
 python3 -m venv venv
-venv/bin/pip install vllm==0.32.0 huggingface_hub hf_transfer ninja \
-  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.7.0.post1 pandas \
+venv/bin/pip install vllm==0.33.0 huggingface_hub hf_transfer ninja \
+  --extra-index-url https://flashinfer.ai/whl/ flashinfer-cubin==0.7.2.post1 pandas \
   nvidia-cuda-nvcc==13.0.88 nvidia-cuda-crt==13.0.88 nvidia-cuda-cccl==13.0.85 nvidia-nvvm==13.0.88
 # The four nvidia-* pins hold the CUDA 13 compiler at the runtime's 13.0 (see "Any
 # FlashInfer JIT needs nvcc ... to EQUAL" below): unpinned, pip now resolves nvcc 13.4
@@ -75,7 +78,7 @@ venv/bin/pip install vllm==0.32.0 huggingface_hub hf_transfer ninja \
 # bench/prefill_ab.sh's decode guard dies with "Please install vllm[bench] for
 # bench support" after the prefill rows have already run.
 # flashinfer-python is NOT listed above on purpose: the vllm wheel pins it exactly
-# (Requires-Dist: flashinfer-python==0.7.0.post1 on 0.32.0 and 0.31.0, ==0.6.18.post1 on
+# (Requires-Dist: flashinfer-python==0.7.2.post1 on 0.33.0, ==0.7.0.post1 on 0.32.0 and 0.31.0, ==0.6.18.post1 on
 # 0.30.0, ==0.6.18 on 0.29.0), so
 # naming it here can only fight that pin. Do not downgrade it to fix a cubin version
 # mismatch: that drags torch back and breaks vLLM's C extension.
@@ -157,11 +160,14 @@ venv/bin/python prepare/fetch_dflash2.py
 venv/bin/python prepare/fetch_thirdparty.py
 venv/bin/python prepare/quant_heads_stream.py models/Qwen3.8-27B-Uncensored-W4A16
 
-# patch vllm (all compatible patches are written against 0.32.0; reapply after upgrades).
+# patch vllm (all compatible patches are written against 0.33.0; reapply after upgrades).
 # patches/apply.sh applies patches/series in order, with --fuzz 0, and stops at the first
-# patch that does not apply, by name. The order matters: a few patches carry hunk context
-# that an earlier patch adds. A new independent patch goes on the last line of
-# patches/series; one that must apply before an existing patch is listed before it.
+# patch that does not apply, by name. It patches a copy of the files first, so a failed run
+# leaves the venv as it was. A rerun on a venv it already patched is a no-op, and a venv that
+# carries a different series (an older checkout or pin) is refused: make a new venv for it.
+# The order matters: a few patches carry hunk context that an earlier patch adds. A new
+# independent patch goes on the last line of patches/series; one that must apply before an
+# existing patch is listed before it.
 # the venv's own vllm directory: python3 -m venv names it after the interpreter (python3.12,
 # python3.14, ...), so ask the interpreter rather than spelling the path (verify.sh and
 # kvarn/install.sh find it the same way; tail -n1 because importing vllm can log to stdout)
