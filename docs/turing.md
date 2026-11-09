@@ -164,8 +164,12 @@ What this shows:
   do not isolate prefix-cache speed. The 1k DFlash2 completion was slower than on 0.32.0;
   the subsequent [controlled investigation](reproductions/turing-0.33.md#controlled-investigation-of-the-1k-single-gpu-drop)
   found nearly unchanged time per speculative step, with speed changes tracking
-  draft acceptance and different completions. Identical input token IDs also
-  produced different near-tied token rankings across the two stacks.
+  draft acceptance and different completions. Upstream 0.33 exempts DFlash from
+  trailing-cache-block dropping, moving the 1k prompt's prefill checkpoint from
+  448 to 896 tokens. Selecting that policy alone on 0.32 reproduced acceptance
+  losses and slowdowns of 6.8–25.7% on the fixed prompts. Triton 3.8 also changed
+  recurrent GDN arithmetic; reverting the compiler alone did not restore the old
+  results. See the record for controls and limits of attribution.
 
 ## Rank balance and draft attention
 

@@ -128,7 +128,108 @@ These observations support the mechanism: stack-dependent numeric scores change
 near-tied greedy choices, the completion changes, and DFlash2 accepts a different
 number of draft tokens. The document identifier also affects the completion:
 changing only that identifier produced 84–102 tok/s on the same 0.33 server.
-The controlled experiment does not identify which change among vLLM, torch,
-Triton, FlashInfer, or their compiled kernels caused the score differences, nor
-prove the exact cause of the original unsaved completion. Raw score probes are
-in local `logs/divergence-{032,033}.json`.
+Those initial tests did not identify the source change. The subsequent
+isolations below identify a changed DFlash cache policy and compiler-dependent
+GDN arithmetic; the original unsaved completion still cannot be reconstructed.
+Raw score probes are in local `logs/divergence-{032,033}.json`.
+
+### Upstream DFlash trailing-block drop changes the prefill checkpoint
+
+In the installed 0.32 source, `SpeculativeConfig.use_eagle_block_drop()` returns
+`use_eagle() and not disable_eagle_block_drop`, including for DFlash. Pristine
+upstream 0.33.0 adds `needs_eagle_block_drop()`, which explicitly exempts
+DFlash/DSpark: their context KV reads target hidden states alone, whereas
+EAGLE-like drafters also read the next token. This change is present in the
+upstream tag's [`vllm/config/speculative.py`](https://github.com/vllm-project/vllm/blob/v0.33.0/vllm/config/speculative.py),
+not introduced by the Turing port.
+
+With 448-token cache blocks and these roughly 1,072-token prompts, dropping the
+trailing block places the reusable Mamba checkpoint at token 448. Exempting
+DFlash moves it to token 896. The scheduler splits prefill at that checkpoint;
+both the cold split and the cached-resend boundary therefore change. That
+changes the shapes and boundaries at which the fp16 model computes its prompt
+and recurrent state, and can change near-tied token choices.
+
+To isolate this policy, the **same 0.32 venv** was restarted with the existing
+speculative configuration option `"disable_eagle_block_drop": true`. No model
+or kernel source was edited, and both runs loaded the **same backbone, draft
+head, and candidate-selector AOT cache artifacts** according to the boot logs.
+The saved fixed prompts and request settings remained identical.
+
+| Prompt | 0.32 default tok/s | 0.32 no block drop tok/s | Change | Tokens/step, default → no drop | ms/step, default → no drop |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 0 | 90.28 | 84.17 | -6.8% | 3.66 → 3.41 | 40.43 → 40.47 |
+| 1 | 123.55 | 91.81 | -25.7% | 5.05 → 3.74 | 40.55 → 40.63 |
+| 2 | 87.67 | 73.01 | -16.7% | 3.62 → 2.99 | 40.76 → 40.69 |
+
+All three completions changed. Each prompt repeated the same acceptance counts
+across its three rounds. The logs confirmed the new 896-token boundary and
+cached TTFT fell from approximately 0.64–0.68 s to 0.24 s. Thus, changing this
+policy alone reproduces changed completions, lower acceptance, and a slowdown
+as large as the originally observed drop, while per-step cost stays nearly
+unchanged. It does not reproduce the exact 0.33 completions or rates, because
+the rest of that stack also differs. Raw results are in local
+`logs/fixed-1k-032-no-block-drop.json`.
+
+The nearby lookahead-hash change is **not** the DFlash-specific cause:
+`"disable_lookahead_block_hashes": true` on 0.33 retained the 896-token boundary
+and the same acceptance counts as default 0.33. DFlash is independently exempt
+from the trailing-block drop. This control is saved in
+`logs/fixed-1k-033-legacy-hashes.json`.
+
+### Isolating compiler-dependent GDN arithmetic
+
+A subsequent operation-level comparison used identical saved fp16 inputs on the
+same GPU. The recurrent GDN kernel function
+`fused_recurrent_gated_delta_rule_fwd_kernel` has an identical Python AST in
+the installed 0.32 and 0.33 sources (SHA-256
+`98de695d7facd9c682687dd1630b9abfe7cac753811755f9c75237fb5810fa88`).
+Its output nevertheless changed between the two stacks. To separate the
+compiler from vLLM and torch, standalone diagnostic processes imported the
+other venv's Triton through an isolated `PYTHONPATH`; no package installation
+or serving source file was changed.
+
+| vLLM / torch | Triton | Recurrent GDN result |
+| --- | --- | --- |
+| 0.32 / 2.13 | 3.7.1 | Reference A |
+| 0.33 / 2.14 | 3.8.0 | Result B |
+| 0.33 / 2.14 | 3.7.1 | Exactly A, including state |
+| 0.32 / 2.13 | 3.8.0 | Exactly B, including state |
+
+The fixture used 8 query tokens, 16 key heads, 48 value heads, head dimension
+128, fp16 initial state, and in-kernel Q/K normalization. Between A and B,
+27 of 49,152 output elements differed (maximum absolute difference
+0.00006103515625), as did 443 of 7,077,888 saved state elements (maximum
+0.00048828125). The saved state includes nine allocated slots. Generated PTX
+also differed: this specialization contained 358 `fma.rn.f32` instructions
+under 3.7.1 versus 260 under 3.8.0, with different separate add/multiply counts.
+These are static instruction counts, not execution-time measurements.
+
+On the other saved fixtures, Marlin W4A16 GEMM (both fp32-reduction settings),
+FlashInfer FA2 attention, gated RMS normalization, and eager RMS normalization
+matched exactly. Compiled RMS normalization also showed small differences
+across compiler stacks. These bounded checks do not establish equivalence for
+all inputs or rule out additional differences elsewhere in the model.
+
+This identifies the Triton 3.7.1 to 3.8.0 upgrade as a concrete source of
+changed recurrent arithmetic, even with unchanged GDN kernel source. It does
+not by itself establish that this is the sole cause of every changed completion
+or quantify its contribution to the original 23.4% observation. Local artifacts
+are `logs/ops-{032,033,213-38,214-37}.pt`, `logs/ops-inputs.pt`, and
+`logs/gdn-{37,38}.{ptx,ttir,ttgir,llir}`.
+
+A full-server diagnostic also ran 0.33/torch 2.14 with Triton 3.7.1 imported
+through the temporary path and a separate temporary vLLM cache. Its medians
+were 82.86, 101.39, and 101.27 tok/s, versus default 0.33's 84.41, 102.09,
+and 94.86. Tokens/step were 3.38, 4.17, and 4.16. Reverting the compiler alone
+therefore did not recover the old 0.32 results. This was a diagnostic override,
+not a supported dependency pin or a serving-code fix. Results are in
+`logs/fixed-1k-033-triton37.json`.
+
+These controls identify **changed computation boundaries from upstream DFlash
+block-drop policy, plus changed compiler arithmetic**, with speed following
+the resulting completion and acceptance.
+Neither observation establishes that the original 23.4% is a uniform execution
+regression or assigns an exact share of that unsaved run to each change. The
+default 0.33 dependency stack and launcher settings were restored afterward;
+only documentation was changed in the repository.
