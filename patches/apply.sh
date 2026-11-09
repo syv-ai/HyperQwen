@@ -66,8 +66,8 @@ set -euo pipefail
 HERE=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 KVARN_DIR=$(cd -- "$HERE/../kvarn" && pwd)
 # The KVarN patches are exported from commits that sit after the whole series, in
-# this order: kvarn-0.32.0 and kvarn-v2-runner carry context that the series adds,
-# kvarn-v2-runner also carries context that kvarn-0.32.0 adds, and kvarn-fp16-dequant's
+# this order: kvarn-0.33.0 and kvarn-v2-runner carry context that the series adds,
+# kvarn-v2-runner also carries context that kvarn-0.33.0 adds, and kvarn-fp16-dequant's
 # envs.py hunk is cut against the tree with the other three in place.
 KVARN=(kvarn-0.33.0.patch kvarn-v2-runner-0.33.0.patch kvarn-recycled-pages-0.33.0.patch
        kvarn-fp16-dequant-0.33.0.patch)
