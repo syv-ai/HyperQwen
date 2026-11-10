@@ -1,6 +1,6 @@
---- a/envs.py
+--- exported from opt-170hx re-cut 0.33.0 (envs-spec-attn-knobs) ---
 +++ b/envs.py
-@@ -191,6 +191,9 @@
+@@ -190,6 +190,9 @@
      VLLM_SPEC_DECODE_ATTN_QMAX: int = 0
      VLLM_EMBED_UVA: bool = False
      VLLM_SPEC_ATTN_BLOCK_M: int = 0
@@ -10,7 +10,7 @@
      # syv patch: split-KV verify debug print (patches/triton-spec-attn-fp8-kv.patch)
      VLLM_SPEC_ATTN_DEBUG: bool = False
      VLLM_RANDOMIZE_DP_DUMMY_INPUTS: bool = False
-@@ -1603,6 +1606,8 @@
+@@ -1570,6 +1573,8 @@
      # Qwen3.5 family: keep the quantized token embedding in pinned host RAM (default off).
      "VLLM_EMBED_UVA": lambda: os.environ.get("VLLM_EMBED_UVA", "0") == "1",
      "VLLM_SPEC_ATTN_BLOCK_M": lambda: int(os.environ.get("VLLM_SPEC_ATTN_BLOCK_M", "0")),

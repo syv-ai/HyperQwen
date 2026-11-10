@@ -69,6 +69,7 @@ def _spec_attn_partial(
     G: tl.constexpr, Hq: tl.constexpr, QMAX: tl.constexpr, D: tl.constexpr, BLOCK_SIZE: tl.constexpr,
     BLOCK_M: tl.constexpr, TILE: tl.constexpr, NSEG: tl.constexpr, QT: tl.constexpr,
     NTILE: tl.constexpr, QUANT: tl.constexpr, FP8: tl.constexpr, Q_FP8: tl.constexpr,
+    CDT: tl.constexpr,
 ):
     pid = tl.program_id(0)
     req = pid // NTILE
@@ -102,7 +103,7 @@ def _spec_attn_partial(
     m_i = tl.full([BLOCK_M], float("-inf"), tl.float32)
     l_i = tl.zeros([BLOCK_M], tl.float32)
     acc = tl.zeros([BLOCK_M, D], tl.float32)
-    qs = (q * scale).to(tl.bfloat16)
+    qs = (q * scale).to(CDT)
     if FP8:
         # fp8 e4m3 data with one f32 scale per layer tensor (vLLM's `fp8` cache): fp8 -> bf16 is exact
         # (3 mantissa bits into 8), and the scalar scales fold in after each dot, the way the int8
@@ -124,16 +125,16 @@ def _spec_attn_partial(
         v = tl.load(v_ptrs, mask=k_ok[:, None], other=0.0)
         if QUANT:
             # int8 data, one f32 scale per (token, head); both constant along D.
-            k = k.to(tl.bfloat16)
-            v = v.to(tl.bfloat16)
+            k = k.to(CDT)
+            v = v.to(CDT)
             k_sc = tl.load(ks_ptr + blk * stride_ksb + slot * stride_kss + kvh * stride_ksh,
                            mask=k_ok, other=0.0)
             v_sc = tl.load(vs_ptr + blk * stride_vsb + slot * stride_vss + kvh * stride_vsh,
                            mask=k_ok, other=0.0)
             s = tl.dot(qs, tl.trans(k)).to(tl.float32) * k_sc[None, :]
         elif FP8:
-            k = k.to(tl.bfloat16)
-            v = v.to(tl.bfloat16)
+            k = k.to(CDT)
+            v = v.to(CDT)
             s = tl.dot(qs, tl.trans(k)).to(tl.float32) * k_dsc
         else:
             s = tl.dot(qs, tl.trans(k)).to(tl.float32)            # [BLOCK_M, TILE]
@@ -145,11 +146,11 @@ def _spec_attn_partial(
         alpha = tl.exp(tl.where(m_i == float("-inf"), float("-inf"), m_i - m_safe))
         l_i = l_i * alpha + tl.sum(p, 1)
         if QUANT:
-            acc = acc * alpha[:, None] + tl.dot((p * v_sc[None, :]).to(tl.bfloat16), v).to(tl.float32)
+            acc = acc * alpha[:, None] + tl.dot((p * v_sc[None, :]).to(CDT), v).to(tl.float32)
         elif FP8:
-            acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v).to(tl.float32) * v_dsc
+            acc = acc * alpha[:, None] + tl.dot(p.to(CDT), v).to(tl.float32) * v_dsc
         else:
-            acc = acc * alpha[:, None] + tl.dot(p.to(tl.bfloat16), v).to(tl.float32)
+            acc = acc * alpha[:, None] + tl.dot(p.to(CDT), v).to(tl.float32)
         m_i = m_new
 
     # store partials at flat index ((req*Hq + head)*QMAX + i)*NSEG + seg
@@ -266,13 +267,19 @@ class SpecDecodeAttention:
         # Turing (sm75) has 64 KB, where a 64-token tile at D=256 needs 98,304 bytes; a tile
         # that does not launch is halved below, and the size that did is remembered.
         block_m, qt, ntile, warps = self._plan(max_query_len, G, D)
-        nseg = self._segments(num_reqs, ntile, Hkv)
         # 170HX (GA100) has 163 KB smem per block, not sm86's 99 KB, so a
         # 64-token tile fits at D=256 for the production 8-query shape. The
         # OutOfResources retry below still halves it on any shape that does not.
         tile = 64 if (block_m <= 32 or D <= 128 or (D == 256 and block_m <= 64)) else 32
         fit = (q.device, block_m, D, key_cache.dtype)
         tile = _TILE_FITS.get(fit, tile)
+        if isinstance(tile, tuple):
+            # A smaller BLOCK_M was needed to launch on this device (see the retry below).
+            block_m, tile = tile
+            qt = max(1, block_m // G)
+            ntile = triton.cdiv(max_query_len, qt)
+            warps = 8 if block_m >= 128 else 4
+        nseg = self._segments(num_reqs, ntile, Hkv)
         if envs.VLLM_SPEC_ATTN_DEBUG:
             self._dbg_calls = getattr(self, "_dbg_calls", 0) + 1
             if self._dbg_calls in (1, 2, 500, 2000):
@@ -285,7 +292,11 @@ class SpecDecodeAttention:
                       f"num_reqs={num_reqs} qlen={max_query_len} plan block_m={block_m} qt={qt} ntile={ntile} warps={warps} tile={tile} nseg={nseg} "
                       f"seqused={seqused_k[:num_reqs].tolist()}", flush=True)
                 self._dbg_t0 = _t0
+        # Dot-operand dtype follows the model: bf16 where it is native, fp16 on Turing (sm75),
+        # whose tensor cores have no bf16 MMA. int8 and fp8 codes convert to either exactly.
+        cdt = tl.float16 if out.dtype == torch.float16 else tl.bfloat16
         grid = (num_reqs * ntile, Hkv, nseg)
+        block_m0 = block_m
         while True:
             try:
                 _spec_attn_partial[grid](
@@ -301,14 +312,27 @@ class SpecDecodeAttention:
                     *(v_scale_cache.stride() if quant else (0, 0, 0)),
                     G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
                     TILE=tile, NSEG=nseg, QT=qt, NTILE=ntile, QUANT=quant, FP8=fp8, Q_FP8=q_fp8,
+                    CDT=cdt,
                     num_warps=warps, num_stages=1,
                 )
                 break
             except OutOfResources:
-                if tile <= 16:
+                if tile > 16:
+                    tile //= 2
+                    continue
+                # The KV tile is at its floor and the launch still does not fit: the rest is
+                # the query tile and the [BLOCK_M, D] fp32 accumulator, which scale with
+                # BLOCK_M (Turing, 64 KB: 64 rows x D=256 needs 80 KB at a 16-token tile).
+                # Halve BLOCK_M (more query tiles per request) and restore the tile.
+                if block_m // 2 < max(16, G):
                     raise
-                tile //= 2
-        _TILE_FITS[fit] = tile
+                block_m //= 2
+                qt = max(1, block_m // G)
+                ntile = triton.cdiv(max_query_len, qt)
+                warps = 8 if block_m >= 128 else 4
+                grid = (num_reqs * ntile, Hkv, nseg)
+                tile = 64 if (block_m <= 32 or D <= 128) else 32
+        _TILE_FITS[fit] = tile if block_m == block_m0 else (block_m, tile)
         _spec_attn_combine[(num_reqs, Hq, max_query_len)](
             self.part_o, self.part_m, self.part_l, out, cu_seqlens_q,
             out.stride(0), out.stride(1),

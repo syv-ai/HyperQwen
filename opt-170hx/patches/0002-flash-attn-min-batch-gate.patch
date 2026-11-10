@@ -1,6 +1,6 @@
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1443,8 +1443,13 @@
+@@ -1448,8 +1448,13 @@
              # syv patch: split-KV Triton attention for speculative-decode
              # batches (1 < queries/request <= 10). FA2 does not split the KV
              # sequence when max_seqlen_q > 1, leaving most SMs idle.

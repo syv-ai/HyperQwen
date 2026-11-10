@@ -1,6 +1,6 @@
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
-@@ -872,6 +872,10 @@
+@@ -882,6 +882,10 @@
                  mm_prefix_range_tensor is not None, attn_metadata.rswa_prefix_lens is not None, output_scale is not None)
          if (
              _spec_attn_enabled()
