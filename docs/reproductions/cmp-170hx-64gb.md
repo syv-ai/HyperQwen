@@ -104,3 +104,15 @@ one-variable A/B on hardware that actually dies.
 Raw logs: 0.27.1 campaigns and the stock controls in this box's
 `~/services/qwen38-cmp/phase0-logs/`; the 0.29.0 protocol and harness output in the
 description of the pull request that added this page (#218).
+
+## Decode tuning on vLLM 0.32.0 (2026-11-07)
+
+The 64 GB card makes 256K context practical, and the extra shared memory per
+block (163 KB vs sm86's 99 KB) allows a larger KV tile in the split-KV verify
+kernel. Four bind-mounted files tune that path without rebuilding the image:
+TILE=64 at D=256, 8 warps at D>128, a batch-size gate for the FA2 fallback,
+and fixed 16 KV segments. See
+[`opt-170hx/README.md`](../../opt-170hx/README.md) for the changes, deployment
+and the full A/B numbers. Headline: same seeds and prefix-warmed prompts show
+~13% lower verify-step time at C4 and C8 on 32K inputs, +17–25% at 128K–256K
+single stream, and no regression on the 256/256 short protocol.

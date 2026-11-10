@@ -1,0 +1,114 @@
+--- a/v1/attention/ops/spec_decode_attn.py
++++ b/v1/attention/ops/spec_decode_attn.py
+@@ -40,6 +40,8 @@
+ Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
+ window / softcap / alibi.
+ """
++import os
++
+ import vllm.envs as envs
+ 
+ import torch
+@@ -48,6 +50,7 @@
+ from triton.runtime.errors import OutOfResources
+ 
+ NUM_SEGMENTS = 16
++TARGET_BLOCKS = 64  # blocks enough to cover the SMs at the shapes we see; more only adds overhead
+ BLOCK_M = 64       # query rows (q_len * G) per program at the default register budget
+ BLOCK_M_BIG = 128  # ... and with 8 warps, which keeps a 16-token block in one tile
+ QMAX_TOKENS = 64   # query tokens per request the caller may ask for
+@@ -210,6 +213,22 @@
+         self.part_m = torch.empty(n, dtype=torch.float32, device=device)
+         self.part_l = torch.empty(n, dtype=torch.float32, device=device)
+ 
++    def _segments(self, num_reqs, ntile, Hkv):
++        """Active KV segments. Chosen from the (captured) batch size only, so it is
++        fixed for the life of a CUDA graph and safe to vary between graphs. More
++        segments than the SMs can hold only add combine work: at batch 8 the table
++        is as fast with 2 segments as with 16."""
++        # Read from the environment directly: the overlay does not ship an
++        # envs.py, so it cannot drift from the image's (KVarN, Turing, next pin).
++        override = int(os.environ.get("VLLM_SPEC_ATTN_NSEG", "0"))
++        if override:
++            n = max(1, min(self.nseg, override))
++        else:
++            n = max(1, min(self.nseg, triton.cdiv(TARGET_BLOCKS, num_reqs * ntile * Hkv)))
++        # The combine kernel's tl.arange(0, NSEG) needs a power of two, and HQ's
++        # capture sizes are not all powers of two (24, 48), so round down.
++        return 1 << (n.bit_length() - 1)
++
+     def _plan(self, q_len, G, D):
+         """(BLOCK_M, tokens per tile, tile count, warps). One tile is preferred: every
+         extra tile re-reads this request's KV segment."""
+@@ -226,7 +245,9 @@
+         block_m = max(block_m, G if G > 1 else 1)
+         block_m = 1 << (block_m - 1).bit_length()
+         qt = max(1, block_m // G)
+-        return block_m, qt, triton.cdiv(q_len, qt), 8 if block_m >= 128 else 4
++        # D=256 makes the [BLOCK_M, D] accumulator too large for 4 warps.
++        warps = 8 if (block_m >= 128 or D > 128) else 4
++        return block_m, qt, triton.cdiv(q_len, qt), warps
+ 
+     def run(self, q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, scale,
+             num_reqs, max_query_len, k_scale_cache=None, v_scale_cache=None,
+@@ -250,7 +271,10 @@
+         # Turing (sm75) has 64 KB, where a 64-token tile at D=256 needs 98,304 bytes; a tile
+         # that does not launch is halved below, and the size that did is remembered.
+         block_m, qt, ntile, warps = self._plan(max_query_len, G, D)
+-        tile = 64 if (block_m <= 32 or D <= 128) else 32
++        # 170HX (GA100) has 163 KB smem per block, not sm86's 99 KB, so a
++        # 64-token tile fits at D=256 for the production 8-query shape. The
++        # OutOfResources retry below still halves it on any shape that does not.
++        tile = 64 if (block_m <= 32 or D <= 128 or (D == 256 and block_m <= 64)) else 32
+         fit = (q.device, block_m, D, key_cache.dtype)
+         tile = _TILE_FITS.get(fit, tile)
+         if isinstance(tile, tuple):
+@@ -259,6 +283,7 @@
+             qt = max(1, block_m // G)
+             ntile = triton.cdiv(max_query_len, qt)
+             warps = 8 if block_m >= 128 else 4
++        nseg = self._segments(num_reqs, ntile, Hkv)
+         if envs.VLLM_SPEC_ATTN_DEBUG:
+             self._dbg_calls = getattr(self, "_dbg_calls", 0) + 1
+             if self._dbg_calls in (1, 2, 500, 2000):
+@@ -268,13 +293,13 @@
+                       f"kc {key_cache.dtype} {tuple(key_cache.shape)} strides {key_cache.stride()} | out {out.dtype} strides {out.stride()} | "
+                       f"quant={quant} fp8={fp8} q_fp8={q_fp8} kd={None if k_descale is None else float(k_descale.reshape(-1)[0])} "
+                       f"vd={None if v_descale is None else float(v_descale.reshape(-1)[0])} qd={None if q_descale is None else float(q_descale.reshape(-1)[0])} | "
+-                      f"num_reqs={num_reqs} qlen={max_query_len} plan block_m={block_m} qt={qt} ntile={ntile} warps={warps} tile={tile} nseg={self.nseg} "
++                      f"num_reqs={num_reqs} qlen={max_query_len} plan block_m={block_m} qt={qt} ntile={ntile} warps={warps} tile={tile} nseg={nseg} "
+                       f"seqused={seqused_k[:num_reqs].tolist()}", flush=True)
+                 self._dbg_t0 = _t0
+         # Dot-operand dtype follows the model: bf16 where it is native, fp16 on Turing (sm75),
+         # whose tensor cores have no bf16 MMA. int8 and fp8 codes convert to either exactly.
+         cdt = tl.float16 if out.dtype == torch.float16 else tl.bfloat16
+-        grid = (num_reqs * ntile, Hkv, self.nseg)
++        grid = (num_reqs * ntile, Hkv, nseg)
+         block_m0 = block_m
+         while True:
+             try:
+@@ -290,7 +315,7 @@
+                     *(k_scale_cache.stride() if quant else (0, 0, 0)),
+                     *(v_scale_cache.stride() if quant else (0, 0, 0)),
+                     G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
+-                    TILE=tile, NSEG=self.nseg, QT=qt, NTILE=ntile, QUANT=quant, FP8=fp8, Q_FP8=q_fp8,
++                    TILE=tile, NSEG=nseg, QT=qt, NTILE=ntile, QUANT=quant, FP8=fp8, Q_FP8=q_fp8,
+                     CDT=cdt,
+                     num_warps=warps, num_stages=1,
+                 )
+@@ -309,13 +334,13 @@
+                 qt = max(1, block_m // G)
+                 ntile = triton.cdiv(max_query_len, qt)
+                 warps = 8 if block_m >= 128 else 4
+-                grid = (num_reqs * ntile, Hkv, self.nseg)
++                grid = (num_reqs * ntile, Hkv, nseg)
+                 tile = 64 if (block_m <= 32 or D <= 128) else 32
+         _TILE_FITS[fit] = tile if block_m == block_m0 else (block_m, tile)
+         _spec_attn_combine[(num_reqs, Hq, max_query_len)](
+             self.part_o, self.part_m, self.part_l, out, cu_seqlens_q,
+             out.stride(0), out.stride(1),
+-            Hq=Hq, QMAX=self.qmax, D=D, NSEG=self.nseg, num_warps=4,
++            Hq=Hq, QMAX=self.qmax, D=D, NSEG=nseg, num_warps=4,
+         )
+         if envs.VLLM_SPEC_ATTN_DEBUG and getattr(self, "_dbg_t0", None) is not None:
+             import time as _t
