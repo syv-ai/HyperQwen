@@ -112,6 +112,16 @@ difference is gotcha 16 below.
 - On WSL2 the batch default may fail vLLM's free-memory gate; put
   `GPU_UTIL=0.93` in `.env` (see the WSL2 notes below, an independent
   containerized reproduction that predates this compose file).
+- **Linux: the GPU needs Docker CE plus the NVIDIA Container Toolkit, not the snap Docker.**
+  A box with no `docker.service` and no `nvidia-ctk` (most likely Ubuntu's `snap install docker`)
+  failed this way in #455, before anything in the image ran:
+  `invoking the NVIDIA Container Runtime Hook directly (e.g. specifying the docker --gpus flag)
+  is not supported`, after `Using requested mode 'cdi'` ([#455](https://github.com/syv-ai/HyperQwen/issues/455)).
+  `snap list docker` tells you which Docker you have. Check GPU access before the first
+  `up`: `sudo docker run --rm --gpus all ubuntu nvidia-smi` must list your cards. With Docker
+  CE and the toolkit installed, `sudo nvidia-ctk runtime configure --runtime=docker &&
+  sudo systemctl restart docker` sets it up. Or skip Docker: [install.md](install.md) is the
+  venv path, and it reads the same `./models`.
 
 ### RTX 20-series (Turing, sm75)
 
