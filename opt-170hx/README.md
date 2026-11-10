@@ -52,15 +52,20 @@ Registers two knobs:
 
 ## Deploy
 
-`docker-compose.yml` on this branch mounts the files:
+The shared `docker-compose.yml` is untouched; the mounts live in an opt-in
+overlay (`docker-compose.170hx.yml`, which also sets `VERIFY=0` for the two
+serving services while the mounts are active):
 
-```yaml
-volumes:
-  - ./opt-170hx/envs.py:/app/venv/lib/python3.12/site-packages/vllm/envs.py:ro
-  - ./opt-170hx/spec_decode_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/ops/spec_decode_attn.py:ro
-  - ./opt-170hx/flash_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/flash_attn.py:ro
-  - ./opt-170hx/triton_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/triton_attn.py:ro
+```bash
+docker compose -f docker-compose.yml -f opt-170hx/docker-compose.170hx.yml --profile single up -d
+# or, for the API backend:
+docker compose -f docker-compose.yml -f opt-170hx/docker-compose.170hx.yml --profile batch up -d
 ```
+
+Compose merges each service's `volumes` list across `-f` files, so the model
+and cache mounts from the shared file stay. Without the `-f` overlay a default
+`docker compose --profile single up -d` runs the stock image untouched — the
+tuning is invisible to every other card.
 
 Relevant `.env` fragment (`170hx.env.example` is a ready-to-merge copy):
 

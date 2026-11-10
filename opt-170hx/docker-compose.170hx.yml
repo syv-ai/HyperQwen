@@ -1,0 +1,33 @@
+# CMP 170HX decode tuning, opt-in overlay for HyperQwen's shared compose file.
+#
+#   docker compose -f docker-compose.yml -f opt-170hx/docker-compose.170hx.yml --profile single up -d
+#   docker compose -f docker-compose.yml -f opt-170hx/docker-compose.170hx.yml --profile batch  up -d
+#
+# The four files are cut against the vLLM 0.33.0 series (see opt-170hx/README.md).
+# They are mounted read-only over the copies inside the image; compose merges a
+# service's `volumes` lists across `-f` files, so the model and cache mounts from
+# the shared file stay. VERIFY=0 is required while the mounts are active:
+# verify.sh matches patch lines and would report these files as modified, and
+# the entrypoint refuses to serve on a failed verify. Any other card must NOT
+# use this overlay: the tuning is GA100-smem-specific, and other cards keep the
+# stock files (the 64-token tile is retried down by the series' OutOfResources
+# handler anyway, but there is no gain to expect there).
+#
+# The shared docker-compose.yml is deliberately untouched; see the review thread
+# of the PR that added this file.
+
+x-170hx-volumes: &v170hx
+  - ./opt-170hx/envs.py:/app/venv/lib/python3.12/site-packages/vllm/envs.py:ro
+  - ./opt-170hx/spec_decode_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/ops/spec_decode_attn.py:ro
+  - ./opt-170hx/flash_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/flash_attn.py:ro
+  - ./opt-170hx/triton_attn.py:/app/venv/lib/python3.12/site-packages/vllm/v1/attention/backends/triton_attn.py:ro
+
+services:
+  single:
+    volumes: *v170hx
+    environment:
+      VERIFY: "0"
+  batch:
+    volumes: *v170hx
+    environment:
+      VERIFY: "0"
