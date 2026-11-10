@@ -14,15 +14,13 @@ still exempt a sliding-window block that does not divide the scheduler block.
 Kind: own
 What: KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards)
 Upstream: none
-Cut-against: 0.32.0: the SlidingWindowManager.cache_blocks override stays after #61126 removed
-  get_num_common_prefix_blocks; the mamba_hybrid.py hunk is retired (#55601 seeds the state index with
-  mamba_block_size, the same fix)
+Cut-against: 0.33.0
 Retires-when: rides with KVarN
 
---- exported from faecbb10d (kvarn-v2-runner-0.32.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 9d1669650e (kvarn-v2-runner-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index e3389d4e1..9ea8e007a 100644
+index 24bf3c805f..74c87b60f0 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
 @@ -104,6 +104,7 @@
@@ -70,7 +68,7 @@ index e3389d4e1..9ea8e007a 100644
      if not candidates:
          return fallback
      smallest = min(candidates)
-@@ -635,6 +656,13 @@
+@@ -640,6 +661,13 @@
              # cannot run the primary block start from their smallest block and
              # ``unify`` scales it up by an integer ratio.
              shared_page = vllm_config.cache_config.skip_page_size_padded
@@ -84,7 +82,7 @@ index e3389d4e1..9ea8e007a 100644
              # The backend owns its packing
              kv_cache_spec = self.attn_backend.customize_spec(
                  SlidingWindowSpec(
-@@ -655,6 +683,7 @@
+@@ -660,6 +688,7 @@
                  page_budget,
                  block_size,
                  kv_cache_spec,
@@ -93,10 +91,10 @@ index e3389d4e1..9ea8e007a 100644
              return SlidingWindowSpec(
                  block_size=sw_block_size,
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index a1651f208..5ef2f149f 100644
+index 3653418613..dd62170de4 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -257,6 +257,15 @@
+@@ -231,6 +231,15 @@
          )
  
          self.sliding_window = sliding_window
@@ -113,10 +111,10 @@ index a1651f208..5ef2f149f 100644
              self.num_heads,
              self.head_dim,
 diff --git a/v1/core/kv_cache_coordinator.py b/v1/core/kv_cache_coordinator.py
-index 7d4f2d5a2..01849864d 100644
+index 4914fa04db..523ee1aca1 100644
 --- a/v1/core/kv_cache_coordinator.py
 +++ b/v1/core/kv_cache_coordinator.py
-@@ -110,7 +110,8 @@
+@@ -111,7 +111,8 @@
          # The scheduling granularity (LCM of all group block sizes), must be a multiple
          # of the hash_block_size and the block size of each group.
          assert scheduler_block_size % hash_block_size == 0 and all(
@@ -127,10 +125,10 @@ index 7d4f2d5a2..01849864d 100644
          )
          self.scheduler_block_size = scheduler_block_size
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index d779d5640..7cf13b31c 100644
+index bbcec2512a..5c8c66f6e1 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -1178,6 +1178,31 @@
+@@ -1191,6 +1191,31 @@
              num_computed_tokens - self.sliding_window + 1 - self.extra_retained_tokens,
          )
  
@@ -163,10 +161,10 @@ index d779d5640..7cf13b31c 100644
  class CircularBufferManager(FullAttentionManager):
      """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 37c0378d6..e766d0341 100644
+index ba704474e2..968a8d594b 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1353,9 +1353,14 @@
+@@ -1387,9 +1387,14 @@
              decode_graph_eligible=decode_graph_eligible,
              max_seq_len_np=max_seq_len_np,
          )
@@ -183,7 +181,7 @@ index 37c0378d6..e766d0341 100644
      def prepare_inputs(
          self,
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index e914af8d5..5609a83e0 100644
+index ce4a9289cc..755063fcc7 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -97,6 +97,9 @@

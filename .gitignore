@@ -19,3 +19,6 @@ bench/results/
 fa2/build-*/
 fa2/third_party/
 fa2/python/**/*.so
+
+# Turing launcher server logs
+/logs/

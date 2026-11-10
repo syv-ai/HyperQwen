@@ -22,23 +22,26 @@ What: registers the V2 runner's top-k/top-p sampler JIT warmups on CUDA too (vll
   #58465's ROCm-only gate): 0 in-request compiles, ~71-78 s of warmup once per cold cache volume,
   ~0.2 s warm
 Upstream: vllm #58092 (merged after 0.30.0)
-Cut-against: 0.32.0: #58092 is in the pin, still gated to ROCm by #58465; the patch removes the gate
-Retires-when: the pin that carries #58092 with CUDA registration (upstream gates it to ROCm; an
-  opt-in is the ask)
+Cut-against: 0.33.0: #59260 registers these on CUDA only with speculative decoding; this keeps every CUDA config,
+  SPEC=off included
+Retires-when: upstream registers the top-k/top-p warmups on every CUDA config (#59260 gates them to speculative
+  decoding)
 
---- exported from 408780872 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 2e1c067973 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 2128b119d..26651deb7 100644
+index 0b9ebd177b..47a4e29560 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -461,15 +461,14 @@
+@@ -469,17 +469,14 @@
              self.vllm_config, self.req_states, self.is_pooling_model, config_processors
          )
          if self.is_last_pp_rank and not self.is_pooling_model:
--            # V2 bypasses TopKTopPSampler, which registers native warmups.
--            # ROCm only: on CUDA these warmups add ~2 min to every engine start.
--            if current_platform.is_rocm():
+-            # Speculative verification uses native top-k/top-p masking even
+-            # when target-only sampling can use FlashInfer's fused sampler.
+-            if current_platform.is_rocm() or (
+-                current_platform.is_cuda() and self.speculative_config is not None
+-            ):
 -                from vllm.v1.sample.ops.topk_topp_sampler import (
 -                    register_top_k_top_p_warmups,
 -                )

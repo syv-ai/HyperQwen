@@ -1,0 +1,194 @@
+Terminal progress: request-level reading, prefill, answering, and done lines.
+
+VLLM_TERMINAL_PROGRESS=1 opts into per-request server console output. Logs
+completed prompt chunks (excluding in-flight async work), per-request prefill
+rate with cached tokens separated, one answering line per second, and finish
+or cancellation summaries. Output contains request IDs and counts, never text.
+No CUDA synchronization and no changes to requests, sampling or API responses.
+The Turing launcher enables this and tees its server log to logs/turing.log.
+
+The output format is modeled on Project Maya (https://github.com/mw00/project-maya, MIT, Peasant Smith and the Project Maya contributors).
+
+Re-cut against 0.33.0: in the output processor, the progress call now follows 0.33's new
+streaming_chunk_boundary assignment, just before step 4.
+
+Kind: feature
+What: VLLM_TERMINAL_PROGRESS=1: per-request reading, prefill, answering and done lines on the server console (ids and counts, never text)
+Upstream: none
+Cut-against: 0.33.0
+Retires-when: upstream has per-request progress logging
+
+--- exported from ea0c47a5dc (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 97c2abc4ac..b0a058d612 100755
+--- a/envs.py
++++ b/envs.py
+@@ -256,6 +256,7 @@
+     VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
+     VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
+     VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
++    VLLM_TERMINAL_PROGRESS: bool = False
+     VLLM_GDN_SM75: bool = False
+     VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
+     VLLM_FLASHINFER_SM75: bool = False
+@@ -1717,6 +1718,7 @@
+     "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
+         os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
+     ),
++    "VLLM_TERMINAL_PROGRESS": lambda: os.environ.get("VLLM_TERMINAL_PROGRESS", "0") == "1",
+     "VLLM_GDN_SM75": lambda: os.environ.get("VLLM_GDN_SM75", "0") == "1",
+     "VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS": lambda: os.environ.get("VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS", "0") == "1",
+     "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
+@@ -2522,6 +2524,8 @@
+         "VLLM_RINGBUFFER_WARNING_INTERVAL",
+         "VLLM_DEBUG_DUMP_PATH",
+         "VLLM_PORT",
++        # Per-request console progress (logging only), patches/terminal-request-progress.patch.
++        "VLLM_TERMINAL_PROGRESS",
+         "VLLM_CACHE_ROOT",
+         # Runtime memory-plan persistence; does not affect compiled graphs.
+         "VLLM_ENABLE_STARTUP_PLAN",
+diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
+index e8b422779f..daa29f7da2 100644
+--- a/v1/core/sched/scheduler.py
++++ b/v1/core/sched/scheduler.py
+@@ -1,6 +1,7 @@
+ # SPDX-License-Identifier: Apache-2.0
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ import itertools
++from vllm.v1.metrics import terminal_progress
+ import time
+ from collections import defaultdict, deque
+ from collections.abc import Iterable
+@@ -1554,6 +1555,10 @@
+                     request.record_event(
+                         EngineCoreEventType.SCHEDULED, scheduled_timestamp
+                     )
++                if terminal_progress.ENABLED:
++                    terminal_progress.reading(
++                        request, num_computed_tokens, start=scheduled_timestamp
++                    )
+                 if request.status == RequestStatus.WAITING:
+                     scheduled_new_reqs.append(request)
+                 elif request.status == RequestStatus.PREEMPTED:
+@@ -2388,6 +2393,13 @@
+             if request.has_encoder_inputs:
+                 self._free_encoder_inputs(request)
+ 
++            if terminal_progress.ENABLED and not request.output_token_ids and not output_is_stale:
++                # Async scheduling includes future chunks in num_computed_tokens.
++                # Subtract in-flight work to display only completed prompt tokens.
++                terminal_progress.reading(
++                    request, request.num_computed_tokens - request.num_in_flight_tokens
++                )
++
+             stopped = False
+             new_logprobs = None
+             new_sampling_mask = None
+diff --git a/v1/engine/output_processor.py b/v1/engine/output_processor.py
+index bfbad0fbff..1484b6ee2a 100644
+--- a/v1/engine/output_processor.py
++++ b/v1/engine/output_processor.py
+@@ -2,6 +2,7 @@
+ # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
+ 
+ import asyncio
++from vllm.v1.metrics import terminal_progress
+ from collections import defaultdict, deque
+ from collections.abc import Iterable
+ from dataclasses import dataclass
+@@ -234,6 +235,8 @@
+         self.spec_decode_metrics: RequestSpecDecodeMetrics | None = None
+ 
+         self.stats = RequestStateStats(arrival_time=arrival_time) if log_stats else None
++        if terminal_progress.ENABLED:
++            self._terminal_arrival = arrival_time
+ 
+         # Routed experts accumulation (prompt + sample chunks)
+         self.routed_experts_chunks: list[np.ndarray] = []
+@@ -637,6 +640,8 @@
+         for request_id in internal_req_ids:
+             req_state = self.request_states.pop(request_id, None)
+             if req_state is not None:
++                if terminal_progress.ENABLED:
++                    terminal_progress.output(req_state, None, cancelled=True)
+                 self.lora_states.request_finished(request_id, req_state.lora_name)
+                 request_ids_to_abort.append(request_id)
+                 # Produce final abort output.
+@@ -850,6 +855,8 @@
+             streaming_chunk_boundary = req_state.streaming_input and (
+                 finish_reason not in (FinishReason.ABORT, FinishReason.ERROR)
+             )
++            if terminal_progress.ENABLED and pooling_output is None:
++                terminal_progress.output(req_state, engine_core_timestamp, finish_reason)
+ 
+             # 4) Create and handle RequestOutput objects.
+             if request_output := req_state.make_request_output(
+diff --git a/v1/metrics/terminal_progress.py b/v1/metrics/terminal_progress.py
+new file mode 100644
+index 0000000000..1faf4f572a
+--- /dev/null
++++ b/v1/metrics/terminal_progress.py
+@@ -0,0 +1,61 @@
++# SPDX-License-Identifier: Apache-2.0
++"""Request-scoped terminal progress; no prompts, generated text, or GPU syncs."""
++import time
++
++from vllm import envs
++
++ENABLED = envs.VLLM_TERMINAL_PROGRESS
++
++
++def reading(request, completed, *, start=None):
++    now = time.monotonic()
++    if start is not None and not hasattr(request, "_terminal_started"):
++        request._terminal_started = start
++        request._terminal_read_last = float("-inf")
++    if not hasattr(request, "_terminal_started"):
++        return
++    if now - request._terminal_read_last < 1.0:
++        return
++    request._terminal_read_last = now
++    print(
++        f"[hyperqwen] reading the prompt: {max(0, min(completed, request.num_prompt_tokens)):,} "
++        f"of {request.num_prompt_tokens:,} tokens, "
++        f"{now - request._terminal_started:.0f} s so far "
++        f"(req {request.request_id})", flush=True,
++    )
++
++
++def output(state, timestamp, finish_reason=None, *, cancelled=False):
++    n = state.detokenizer.num_output_tokens() if state.detokenizer else 0
++    now = time.monotonic()
++    ts = timestamp if timestamp is not None else now
++    stats = state.stats
++    first = getattr(state, "_terminal_first_token", None)
++    if n and first is None:
++        first = stats.first_token_ts if stats and stats.first_token_ts else ts
++        state._terminal_first_token = first
++        state._terminal_answer_last = now
++        duration = max(0.0, first - stats.scheduled_ts) if stats and stats.scheduled_ts else max(0.0, time.time() - (stats.arrival_time if stats else state._terminal_arrival))
++        cached = max(0, state.num_cached_tokens)
++        computed = max(0, state.prompt_len - cached)
++        rate = computed / duration if duration > 0 else 0.0
++        print(
++            f"[hyperqwen] prefill: {computed:,} new tokens in {duration:.2f} s "
++            f"({rate:.1f} tok/s), cached {cached:,} of {state.prompt_len:,} "
++            f"(req {state.external_req_id})", flush=True,
++        )
++    elapsed = max(0.0, time.time() - (stats.arrival_time if stats else state._terminal_arrival))
++    span = max(0.0, ts - first) if first is not None else 0.0
++    rate = max(0, n - 1) / span if span > 0 else 0.0
++    if finish_reason is not None or cancelled:
++        reason = getattr(finish_reason, "name", str(finish_reason)).lower() if not cancelled else "abort"
++        print(
++            f"[hyperqwen] done: {n:,} tokens in {elapsed:.0f} s ({rate:.1f} tok/s) "
++            f"({reason}, cancel={cancelled}) (req {state.external_req_id})", flush=True,
++        )
++    elif n and now - getattr(state, "_terminal_answer_last", 0.0) >= 1.0:
++        state._terminal_answer_last = now
++        print(
++            f"[hyperqwen] answering: {n:,} of max {state.max_tokens_param} tokens, "
++            f"{rate:.1f} tok/s, {elapsed:.0f} s (req {state.external_req_id})", flush=True,
++        )

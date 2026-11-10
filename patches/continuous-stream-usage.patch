@@ -4,16 +4,16 @@ Requests with final-only usage or no usage keep their existing behavior.
 Kind: fix
 What: preserve continuous usage while tool parsing buffers deltas
 Upstream: none yet
-Cut-against: 0.32.0
+Cut-against: 0.33.0
 Retires-when: upstream preserves continuous usage during parser buffering
 
---- exported from 9aaf9df (continuous-stream-usage); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 91db75ffe7 (continuous-stream-usage); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/openai/chat_completion/serving.py b/entrypoints/openai/chat_completion/serving.py
-index 4b43db0..be799c1 100644
+index f1196f764b..24e776e66f 100644
 --- a/entrypoints/openai/chat_completion/serving.py
 +++ b/entrypoints/openai/chat_completion/serving.py
-@@ -745,6 +745,7 @@
+@@ -774,6 +774,7 @@
                              output.finish_reason is None
                              and logprobs is None
                              and (not request.return_token_ids or hide_stream_metadata)

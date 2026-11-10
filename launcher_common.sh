@@ -129,6 +129,14 @@ qwen_exec() {
     printf '%s\n' "$@"
     exit 0
   fi
+  # A checkout without the venv install (or one run from the wrong directory) otherwise
+  # dies on "venv/bin/vllm: No such file or directory", which names neither fix (#455).
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "[start_qwen] $1 not found: this checkout has no venv install." >&2
+    echo "  Either serve from the container (README, Quick start: docker compose --profile single up -d)" >&2
+    echo "  or build the venv first (docs/install.md), then run this launcher from the repo root." >&2
+    exit 1
+  fi
   exec "$@"
 }
 
@@ -136,8 +144,9 @@ QWEN_BOOL_KNOBS="KVARN_DBG_LAYERS KVARN_FAST_FLUSH KVARN_FP16_DEQUANT KVARN_FUSE
   KVARN_FUSED_VERIFY KVARN_POW2_SLOT KVARN_QUANT_SLIDING KVARN_SHARED_VERIFY KVARN_SPEC_DEBUG \
   VLLM_DFLASH2_CHAIN VLLM_DFLASH2_CHAIN_GREEDY_ONLY VLLM_DFLASH2_DRAFT_TOPK_TOPP \
   VLLM_DFLASH2_GRAPH_BOTH VLLM_DFLASH2_LOOKUP VLLM_DFLASH2_LOOKUP_ADAPTIVE VLLM_DRAFT_TOPK_TOPP \
-  VLLM_EMBED_UVA VLLM_INT4_MQ_3D VLLM_INT4_MQ_3D_DEBUG VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS \
-  VLLM_MARLIN_TUNE VLLM_SPEC_ATTN_DEBUG VLLM_SPEC_DECODE_ATTN FA2_FP8KV"
+  VLLM_EMBED_UVA VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS VLLM_FLASHINFER_SM75 VLLM_GDN_SM75 \
+  VLLM_INT4_MQ_3D VLLM_INT4_MQ_3D_DEBUG VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS \
+  VLLM_MARLIN_TUNE VLLM_SPEC_ATTN_DEBUG VLLM_SPEC_DECODE_ATTN VLLM_TERMINAL_PROGRESS FA2_FP8KV"
 
 qwen_check_bool_knobs() {
   local k v bad=0

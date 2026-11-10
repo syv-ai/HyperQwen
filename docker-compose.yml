@@ -2,6 +2,7 @@
 #
 #   docker compose --profile single up -d     # low latency: MTP speculative decoding
 #   docker compose --profile batch  up -d     # throughput
+#   docker compose --profile turing up -d     # RTX 20-series (set GPU_COUNT=2 in .env; docs/turing.md)
 #   docker compose run --rm prepare           # just download + requantize the model
 #   docker compose run --rm single verify     # verify.sh inside the container
 #
@@ -126,6 +127,14 @@ services:
     <<: *serve
     profiles: [batch]
     command: batch
+
+  # RTX 20-series (Turing, sm75), e.g. 2x RTX 2080 Ti 22 GB: fp16 W4A16 + DFlash2, FlashInfer
+  # full graphs, TP picked from the visible cards. Put GPU_COUNT=2 in .env (the default hands
+  # the container one card). Runs start-turing.sh; see docs/turing.md and docs/docker.md.
+  turing:
+    <<: *serve
+    profiles: [turing]
+    command: turing
 
   # Second standalone engine on its own card (TP=1, same launcher, own
   # port). Inert unless --profile solo; needs GPU_COUNT=all in .env so the

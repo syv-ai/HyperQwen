@@ -2,6 +2,7 @@
 # Container entrypoint. First argument selects what to run:
 #   single   single-user/start_qwen.sh  (MTP speculative decoding, low latency)
 #   batch    batch/start_qwen.sh        (throughput)
+#   turing   start-turing.sh            (RTX 20-series / sm75, fp16; see docs/turing.md)
 #   prepare  docker/prepare.sh          (download + requantize the model into /app/models)
 #   verify   verify.sh [args]
 #   <anything else> is exec'd as a command (e.g. bash)
@@ -14,7 +15,7 @@ set -e
 cd /app
 cmd=${1:-single}; shift || true
 case "$cmd" in
-  single|batch)
+  single|batch|turing)
     echo "entrypoint: first-boot stages: [1/3] docker/prepare.sh [2/3] verify.sh --no-server [3/3] start_qwen.sh ($cmd)"
     echo "entrypoint: stage 1 is minutes on first boot (download + requantize), seconds once prepared"
     echo "entrypoint: use log timestamps as the elapsed timer; total first boot can exceed 30 min"
@@ -31,7 +32,11 @@ case "$cmd" in
     if [ "${VERIFY:-1}" != "0" ]; then
       bash verify.sh --no-server || { echo "entrypoint: verify.sh FAILED — fix the above or set VERIFY=0"; exit 1; }
     fi
-    if [ "$cmd" = single ]; then exec bash single-user/start_qwen.sh "$@"; else exec bash batch/start_qwen.sh "$@"; fi ;;
+    case "$cmd" in
+      single) exec bash single-user/start_qwen.sh "$@" ;;
+      turing) exec bash start-turing.sh "$@" ;;
+      *)      exec bash batch/start_qwen.sh "$@" ;;
+    esac ;;
   prepare) exec bash docker/prepare.sh "$@" ;;
   verify)  exec bash verify.sh "$@" ;;
   *)       exec "$cmd" "$@" ;;

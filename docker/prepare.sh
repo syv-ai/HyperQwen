@@ -63,7 +63,17 @@ if "lm_head.weight_packed" not in idx: todo.append("lm_head")
 if not any(k.endswith("embed_tokens.weight_packed") for k in idx): todo.append("embed")
 if "mtp.layers.0.mlp.down_proj.weight_packed" not in idx: todo.append("mtp")
 if "mtp.draft_lm_head.weight_packed" not in idx or not os.path.exists(d + "mtp_draft_vocab_ids.pt"): todo.append("draft")
-if os.environ.get("FAST_VARIANT", "1") != "0" and not os.path.exists(d[:-1] + "-fast/model.safetensors.index.json"):
+def fast_ready(f):
+    """The fast variant is servable: its index exists and every shard it names is intact.
+    fetch_fast_variant.py publishes the index last, but shards 1-6 are hardlinks into the
+    base dir made before that, so a dir that lost one later (or was assembled from an
+    incomplete base) has an index and a hole, and vLLM only finds out at load (#455)."""
+    try:
+        fidx = json.load(open(f + "model.safetensors.index.json"))["weight_map"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+    return all(intact(f + s) for s in {str(v) for v in fidx.values()})
+if os.environ.get("FAST_VARIANT", "1") != "0" and not fast_ready(d[:-1] + "-fast/"):
     todo.append("fast")
 if os.environ.get("DFLASH2", "1") != "0" and not os.path.exists(os.path.dirname(d[:-1]) + "/Qwen3.8-27B-DFlash2-W4A16/model.safetensors"):
     todo.append("dflash2")

@@ -1,0 +1,59 @@
+flashinfer: VLLM_FLASHINFER_SM75=1 opts Turing (sm75) back into the FlashInfer backend.
+
+The floor was raised to sm80 for flashinfer issue #3620 (prefill launches over the 64 KB
+shared-memory limit). It stays sm80 by default; the env var lowers it to sm75 for an
+explicit --attention-backend FLASHINFER. Triton 3.7 emits no tensor-core code on sm75,
+so FlashInfer's CUDA kernels are the tensor-core attention path there.
+
+Verified on 2x RTX 2080 Ti (flashinfer 0.7.0.post1, fp16, TP=2, DFlash2): boots, greedy
+output matches TRITON_ATTN, 24k-token prompt decodes at 91-93 tok/s (74 on Triton) and
+prefills in 16 s cold (80 s on Triton).
+
+Kind: local
+What: VLLM_FLASHINFER_SM75=1 opts sm75 (Turing) back into the FlashInfer backend, the tensor-core attention path there
+Upstream: none (flashinfer issue #3620 raised the floor to sm80)
+Cut-against: 0.33.0
+Retires-when: FlashInfer supports sm75 prefill within shared-memory limits
+
+--- exported from 75d3487791 (flashinfer-sm75-optin); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 2a2db9c6a1..036db33ba9 100755
+--- a/envs.py
++++ b/envs.py
+@@ -256,6 +256,7 @@
+     VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
+     VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
+     VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
++    VLLM_FLASHINFER_SM75: bool = False
+     VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
+     VLLM_V1_USE_OUTLINES_CACHE: bool = False
+     VLLM_TPU_USING_PATHWAYS: bool = False
+@@ -1714,6 +1715,7 @@
+     "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
+         os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
+     ),
++    "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
+     "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
+     # The activation dtype config for humming kernel. Explicit schemas disable
+     # fallback unless the config includes "allow_fallback": true.
+diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
+index 455ca0680c..f2693061b6 100755
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -699,9 +699,13 @@
+         # https://github.com/flashinfer-ai/flashinfer/pull/3621). Temporarily
+         # raise the floor to SM80 so it is not auto-selected on SM75 until
+         # that fix lands; revert to DeviceCapability(7, 5) once it does.
+-        return capability >= DeviceCapability(8, 0) and capability <= DeviceCapability(
+-            12, 1
++        # VLLM_FLASHINFER_SM75=1 opts Turing back in (explicit --attention-backend only).
++        floor = (
++            DeviceCapability(7, 5)
++            if envs.VLLM_FLASHINFER_SM75
++            else DeviceCapability(8, 0)
+         )
++        return capability >= floor and capability <= DeviceCapability(12, 1)
+ 
+     @classmethod
+     def supports_sink(cls) -> bool:

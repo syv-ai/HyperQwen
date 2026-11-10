@@ -62,7 +62,6 @@ pinned-kv-empty-cache.patch
 api-root-health.patch
 qwen3_5-embed-uva.patch
 vllm-pr40371-prompt-progress.patch
-vllm-pr61050-lru-running-prefix.patch
 kv-cache-seat-budget.patch
 gdn-ba-pad-small-m.patch
 vllm-pr61612-flashinfer-async-barrier.patch
@@ -71,3 +70,12 @@ dflash-context-capacity.patch
 async-mamba-kv-sizing.patch
 continuous-stream-usage.patch
 offload-mamba-swa-replay-boundaries.patch
+vllm-pr64137-logits-stats-no-specialize.patch
+gdn-multi-prefill-checkpoints.patch
+vllm-pr66026-gather-draft-sampled-no-specialize.patch
+dflash2-fp16-residual-scale.patch
+spec-attn-fp16.patch
+flashinfer-sm75-optin.patch
+flashinfer-sm75-spec-graphs.patch
+gdn-sm75-cuda-prefill.patch
+terminal-request-progress.patch

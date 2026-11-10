@@ -3,7 +3,7 @@
 > **WSL2 + RTX 3090 checklist** — full path: [quickstart.md](quickstart.md).
 > 1. `cp .env.example .env` and `make keygen` (never commit `.env`).
 > 2. Keep `VLLM_WSL2_ENABLE_PIN_MEMORY=1` or the V2 runner aborts on UVA.
-> 3. First boot takes 2–15 min; follow it with `make logs`.
+> 3. First boot takes 2–15 min after the ~20 GB model download (`prepare-1 Waiting` until it is done; `docker compose logs -f prepare`); follow the server with `make logs`.
 > 4. Boot OOM? Fall back to `GPU_UTIL=0.93` in `.env`.
 > 5. Exit 137 in prepare? Raise WSL memory (`memory=20GB`, `swap=8GB`), then `wsl --shutdown`.
 > 6. Verify with `make doctor`. Stuck? See [gotchas.md](gotchas.md).
@@ -13,8 +13,8 @@ The container image (same stack, frozen) and an independent WSL2 reproduction wi
 
 [← back to the main README](../README.md)
 
-The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.32.0 pinned
-(torch 2.13 / cu130 / Triton 3.7.1), every compatible patch in `patches/` applied
+The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.33.0 pinned
+(torch 2.14 / cu130 / Triton 3.8.0), every compatible patch in `patches/` applied
 (`dflash2-backport.patch` is retired because DFlash2 is native since v0.28.0), and
 `verify.sh --install` run at build time, KVarN preinstalled (its 0.31 port is
 described in [vllm-0.31.md](vllm-0.31.md)), and the pth-flash-attn op library built
@@ -112,6 +112,42 @@ difference is gotcha 16 below.
 - On WSL2 the batch default may fail vLLM's free-memory gate; put
   `GPU_UTIL=0.93` in `.env` (see the WSL2 notes below, an independent
   containerized reproduction that predates this compose file).
+- **Linux: the GPU needs Docker CE plus the NVIDIA Container Toolkit, not the snap Docker.**
+  A box with no `docker.service` and no `nvidia-ctk` (most likely Ubuntu's `snap install docker`)
+  failed this way in #455, before anything in the image ran:
+  `invoking the NVIDIA Container Runtime Hook directly (e.g. specifying the docker --gpus flag)
+  is not supported`, after `Using requested mode 'cdi'` ([#455](https://github.com/syv-ai/HyperQwen/issues/455)).
+  `snap list docker` tells you which Docker you have. Check GPU access before the first
+  `up`: `sudo docker run --rm --gpus all ubuntu nvidia-smi` must list your cards. With Docker
+  CE and the toolkit installed, `sudo nvidia-ctk runtime configure --runtime=docker &&
+  sudo systemctl restart docker` sets it up. Or skip Docker: [install.md](install.md) is the
+  venv path, and it reads the same `./models`.
+
+### RTX 20-series (Turing, sm75)
+
+A `turing` profile runs `start-turing.sh` (fp16 W4A16 + DFlash2, FlashInfer full CUDA graphs,
+CUDA GDN prefill; [turing.md](turing.md) has the measurements). It is for cards without usable
+bf16, such as two RTX 2080 Ti 22 GB.
+
+```bash
+echo 'GPU_COUNT=2' >> .env                 # the default hands the container one card
+docker compose build turing                # the prebuilt :latest image predates these patches
+docker compose --profile turing up -d
+docker compose logs -f turing
+```
+
+- `prepare` downloads the same `Qwen3.8-27B-W4A16-AutoRound` checkpoint and the DFlash2 drafter that
+  `start-turing.sh` expects, so `./models` is shared with the other profiles.
+- The six `*-sm75`, `*-fp16` and `terminal-request-progress` patches are in `patches/series` and are
+  applied at build time like the rest. The sm75 GDN kernel compiles once with the image's `nvcc`
+  before CUDA graph capture; the FlashInfer sm75 kernels JIT on first use into the `/cache` volume.
+- Watch prefill and decode speed from outside the container:
+  `docker compose exec turing venv/bin/python scripts/watch_turing.py` (`--metrics` for the
+  Prometheus view). The dashboard in [turing.md](turing.md) needs a Project Maya checkout, which
+  the image does not carry; it falls back to a plain curses display.
+- `turing-unlock` is a host kernel module and cannot be loaded from inside the container; with it
+  loaded on the host the container's GPUs run unlocked (see [turing.md](turing.md#turing-unlock-faster-fp16-tensor-cores)).
+- As with the other profiles, run one profile at a time per set of GPUs.
 
 ### Plain docker (no compose)
 

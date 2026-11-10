@@ -13,7 +13,9 @@ from types import SimpleNamespace as NS
 from unittest.mock import patch
 
 import torch
+from vllm.v1.core import kv_cache_planning as planning
 from vllm.v1.core import kv_cache_utils as utils
+from vllm.v1.core.kv_cache_config_builder import get_kv_cache_config_builder
 from vllm.v1.core.single_type_kv_cache_manager import MambaManager
 from vllm.v1.kv_cache_interface import (
     FullAttentionSpec,
@@ -35,7 +37,11 @@ def config(depth=2, mode="align", max_len=163840):
     return NS(
         max_concurrent_batches=depth,
         num_prefill_lookahead_tokens=1,
-        model_config=NS(max_model_len=max_len, original_max_model_len=max_len),
+        model_config=NS(
+            max_model_len=max_len,
+            original_max_model_len=max_len,
+            supports_kv_cache_grouping=False,
+        ),
         parallel_config=NS(decode_context_parallel_size=1, tensor_parallel_size=1),
         attention_config=NS(hisparse_config=None),
         cache_config=NS(
@@ -90,18 +96,19 @@ def admit(budget, cfg=None):
     gs = groups()
     # These are the real admission/auto-fit functions used after grouping in
     # get_kv_cache_configs, including its existing null-block byte reservation.
-    usable = budget - utils._pool_bytes_per_block(cfg, gs)
-    utils._check_enough_kv_cache_memory(
+    usable = budget - planning._pool_bytes_per_block(cfg, gs)
+    planning._check_enough_kv_cache_memory(
         usable,
-        lambda: utils._max_memory_usage_bytes_from_groups(cfg, gs),
+        lambda: planning._max_memory_usage_bytes_from_groups(get_kv_cache_config_builder(cfg), cfg, gs),
         cfg.model_config.max_model_len,
-        lambda am: utils._estimate_max_model_len_from_groups(cfg, gs, am),
+        lambda am: planning._estimate_max_model_len_from_groups(get_kv_cache_config_builder(cfg), cfg, gs, am),
     )
 
 
 class Pool:
     num_gpu_blocks = 223
     hash_block_size = 832
+    num_hash_lookahead_tokens = 0  # BlockPool's default on 0.33
 
     def __init__(self):
         self.used = 0
@@ -128,12 +135,13 @@ def replay():
     m.has_prefill_checkpoint_blocks = False
     m.drop_eagle_checkpoint_block = False
     m.block_size = 832
-    m.cache_hit_alignment_tokens = 832  # set by __init__ on 0.32
+    m.cache_hit_alignment_tokens = 832  # set by __init__ on 0.32 and 0.33
     m.block_pool = Pool()
     m._null_block = NS(is_null=True)
     m.req_to_blocks = defaultdict(list)
     m._allocated_block_reqs = set()
     m._checkpoints = {}
+    m._periodic_checkpoints = {}
     m._partial_hit_reqs = {}
     m.last_state_block_idx = {}
     m._num_retired_blocks = {}
@@ -160,7 +168,7 @@ def replay():
 
 def report():
     cfg, gs = config(), groups()
-    needed = utils._max_memory_usage_bytes_from_groups(cfg, gs)
+    needed = planning._max_memory_usage_bytes_from_groups(get_kv_cache_config_builder(cfg), cfg, gs)
     result = dict(
         context=163840,
         kv_bytes=NEW_BUDGET,
@@ -244,14 +252,14 @@ class SizingTests(unittest.TestCase):
     def test_auto_fit_uses_whole_blocks_and_restores_config(self):
         cfg = config(max_len=200000)
         self.assertEqual(
-            utils._estimate_max_model_len_from_groups(
-                cfg, groups(), OLD_BUDGET - BLOCK
+            planning._estimate_max_model_len_from_groups(
+                get_kv_cache_config_builder(cfg), cfg, groups(), OLD_BUDGET - BLOCK
             ),
             163072,
         )
         self.assertEqual(
-            utils._estimate_max_model_len_from_groups(
-                cfg, groups(), NEW_BUDGET - BLOCK
+            planning._estimate_max_model_len_from_groups(
+                get_kv_cache_config_builder(cfg), cfg, groups(), NEW_BUDGET - BLOCK
             ),
             167232,
         )
@@ -264,10 +272,10 @@ class SizingTests(unittest.TestCase):
             for g in gs
             for name, spec in g.kv_cache_spec.kv_cache_specs.items()
         }
-        with patch.object(utils, "get_kv_cache_groups", return_value=gs):
+        with patch.object(planning, "get_kv_cache_groups", return_value=gs):
             with self.assertRaises(ValueError):
-                utils.check_enough_kv_cache_memory(cfg, specs, OLD_BUDGET)
-            utils.check_enough_kv_cache_memory(cfg, specs, NEW_BUDGET)
+                planning.check_enough_kv_cache_memory(cfg, specs, OLD_BUDGET)
+            planning.check_enough_kv_cache_memory(cfg, specs, NEW_BUDGET)
 
     def test_engine_startup_rejects_small_pool_and_small_override(self):
         cfg, gs = config(), groups()
@@ -278,12 +286,12 @@ class SizingTests(unittest.TestCase):
         }
         # Grouping is supplied from the measured layout; admission, pool-byte
         # rounding, override handling, and config construction run installed code.
-        with patch.object(utils, "get_kv_cache_groups", return_value=gs):
+        with patch.object(planning, "get_kv_cache_groups", return_value=gs):
             with self.assertRaises(ValueError):
-                utils.get_kv_cache_configs(cfg, [specs], [OLD_BUDGET])
+                planning.get_kv_cache_configs(cfg, [specs], [OLD_BUDGET], gs)
             cfg.cache_config.num_gpu_blocks_override = 218
             with self.assertRaises(ValueError):
-                utils.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET])
+                planning.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET], gs)
 
     def test_engine_startup_builds_the_223_block_pool(self):
         cfg, gs = config(), groups()
@@ -292,8 +300,8 @@ class SizingTests(unittest.TestCase):
             for g in gs
             for name, spec in g.kv_cache_spec.kv_cache_specs.items()
         }
-        with patch.object(utils, "get_kv_cache_groups", return_value=gs):
-            (built,) = utils.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET])
+        with patch.object(planning, "get_kv_cache_groups", return_value=gs):
+            (built,) = planning.get_kv_cache_configs(cfg, [specs], [NEW_BUDGET], gs)
         self.assertEqual(built.num_blocks, 223)
         self.assertTrue(all(t.size == 223 * BLOCK for t in built.kv_cache_tensors))
         self.assertEqual(utils.get_kv_cache_capacity(cfg, built)[0], 166846)
