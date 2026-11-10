@@ -129,6 +129,14 @@ qwen_exec() {
     printf '%s\n' "$@"
     exit 0
   fi
+  # A checkout without the venv install (or one run from the wrong directory) otherwise
+  # dies on "venv/bin/vllm: No such file or directory", which names neither fix (#455).
+  if ! command -v "$1" >/dev/null 2>&1; then
+    echo "[start_qwen] $1 not found: this checkout has no venv install." >&2
+    echo "  Either serve from the container (README, Quick start: docker compose --profile single up -d)" >&2
+    echo "  or build the venv first (docs/install.md), then run this launcher from the repo root." >&2
+    exit 1
+  fi
   exec "$@"
 }
 
