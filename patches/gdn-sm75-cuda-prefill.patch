@@ -1,0 +1,688 @@
+GDN: opt-in recurrent CUDA prefill on sm75 (VLLM_GDN_SM75=1).
+
+Ported from weicj/vLLM-2080Ti-Definitive, commit
+93c9013e375b1ecbf2da88179d2a31175a0d5c99,
+tools/flashqla_sm75_patches/gdn_forward.cu (Apache-2.0).
+Source: https://github.com/weicj/vLLM-2080Ti-Definitive
+
+Use fp16 Q/K/V, 128-dimensional keys/values and fp32 recurrence accumulators.
+Copy initial state before the kernel's in-place update; handle packed variable
+length requests in one CUDA launch. Other geometries fall back to FLA.
+Compile the extension before graph capture. Requires nvcc + a C++ compiler.
+Periodic prefill checkpoints require VLLM_GDN_SM75=0: the newly merged
+checkpoint exporter is validated for Triton/FLA, not this CUDA backend.
+
+Measured on vLLM 0.32.0, 2048-token TP=2 geometry: 11.45 ms Triton vs 2.73 ms CUDA.
+Output relative L2 error 0.00051; final-state relative L2 error 0.00037.
+
+Kind: local
+What: opt-in recurrent CUDA GDN prefill kernel for sm75 (VLLM_GDN_SM75=1), ported from weicj/vLLM-2080Ti-Definitive (Apache-2.0)
+Upstream: none (weicj/vLLM-2080Ti-Definitive 93c9013)
+Cut-against: 0.33.0 after gdn-multi-prefill-checkpoints; refuse that opt-in on the SM75 CUDA backend
+Retires-when: Triton emits tensor-core code on sm75 or FLA ships a faster Turing kernel
+
+--- exported from 902189d (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/envs.py b/envs.py
+index 6ffec10..fc1dbd6 100755
+--- a/envs.py
++++ b/envs.py
+@@ -237,6 +237,7 @@
+     VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
+     VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
+     VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
++    VLLM_GDN_SM75: bool = False
+     VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
+     VLLM_FLASHINFER_SM75: bool = False
+     VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
+@@ -1675,6 +1676,7 @@
+     "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
+         os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
+     ),
++    "VLLM_GDN_SM75": lambda: os.environ.get("VLLM_GDN_SM75", "0") == "1",
+     "VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS": lambda: os.environ.get("VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS", "0") == "1",
+     "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
+     "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
+diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+index 87ce6c0..2d9baf3 100644
+--- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
++++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
+@@ -400,6 +400,14 @@
+         else:
+             self._forward_method = self.forward_native
+ 
++        if envs.VLLM_GDN_SM75 and current_platform.is_device_capability(75):
++            from vllm.model_executor.layers.mamba.ops.sm75_gdn import (
++                chunk_gated_delta_rule, load_extension,
++            )
++            load_extension()  # Compile before any CUDA graph capture.
++            self._forward_method = chunk_gated_delta_rule
++            logger.info_once("Using opt-in SM75 CUDA recurrent GDN prefill kernel.")
++
+     def forward_cuda(
+         self,
+         q: torch.Tensor,
+@@ -757,6 +765,15 @@
+                 raise RuntimeError(
+                     "GDN prefill checkpoints require mamba_cache_mode=align"
+                 )
++            if (
++                current_platform.is_cuda()
++                and envs.VLLM_GDN_SM75
++                and current_platform.is_device_capability(75)
++            ):
++                raise RuntimeError(
++                    "GDN prefill checkpoints do not support SM75 CUDA prefill. "
++                    "Set VLLM_GDN_SM75=0 to use the Triton/FLA prefill backend."
++                )
+             # Only the tested CUDA Triton/FLA prefill path exports checkpoints.
+             # Unsupported paths must not reserve blocks they cannot write.
+             if (
+diff --git a/model_executor/layers/mamba/ops/sm75_gdn.cu b/model_executor/layers/mamba/ops/sm75_gdn.cu
+new file mode 100644
+index 0000000..b3f9af2
+--- /dev/null
++++ b/model_executor/layers/mamba/ops/sm75_gdn.cu
+@@ -0,0 +1,539 @@
++// SPDX-License-Identifier: Apache-2.0
++// Adapted from github.com/weicj/vLLM-2080Ti-Definitive,
++// commit 93c9013e375b1ecbf2da88179d2a31175a0d5c99,
++// tools/flashqla_sm75_patches/gdn_forward.cu (weicj/Qwen GDN port).
++#include <torch/extension.h>
++
++#include <ATen/cuda/CUDAContext.h>
++#include <cuda_runtime.h>
++
++#include <cstdint>
++#include <stdexcept>
++#include <string>
++#include <vector>
++
++namespace {
++
++void check_cuda(cudaError_t status, const char* context) {
++  if (status != cudaSuccess) {
++    throw std::runtime_error(std::string(context) + ": " +
++                             cudaGetErrorString(status));
++  }
++}
++
++__device__ __forceinline__ float subgroup_sum_lane0(float value,
++                                                    int width) {
++  constexpr unsigned mask = 0xffffffffU;
++  for (int offset = width / 2; offset > 0; offset >>= 1) {
++    value += __shfl_down_sync(mask, value, offset, width);
++  }
++  return value;
++}
++
++__device__ __forceinline__ float subgroup_broadcast_lane0(float value,
++                                                          int width) {
++  return __shfl_sync(0xffffffffU, value, 0, width);
++}
++
++template <typename scalar_t, typename gate_t, typename state_t, int D, int COLS, int WIDTH>
++__global__ void gdn_forward_kernel(const scalar_t* __restrict__ q,
++                                   const scalar_t* __restrict__ k,
++                                   const scalar_t* __restrict__ v,
++                                   const gate_t* __restrict__ gate,
++                                   const gate_t* __restrict__ beta,
++                                   const state_t* __restrict__ initial_state,
++                                   scalar_t* __restrict__ output,
++                                   state_t* __restrict__ final_state,
++                                   int batch,
++                                   int tokens,
++                                   int q_heads,
++                                   int v_heads,
++                                   int64_t q_stride_b,
++                                   int64_t q_stride_t,
++                                   int64_t q_stride_h,
++                                   int64_t q_stride_d,
++                                   int64_t k_stride_b,
++                                   int64_t k_stride_t,
++                                   int64_t k_stride_h,
++                                   int64_t k_stride_d,
++                                   int64_t v_stride_b,
++                                   int64_t v_stride_t,
++                                   int64_t v_stride_h,
++                                   int64_t v_stride_d,
++                                   int64_t gate_stride_b,
++                                   int64_t gate_stride_t,
++                                   int64_t gate_stride_h,
++                                   int64_t beta_stride_b,
++                                   int64_t beta_stride_t,
++                                   int64_t beta_stride_h,
++                                   int64_t state_stride_b,
++                                   int64_t state_stride_h,
++                                   int64_t state_stride_row,
++                                   int64_t state_stride_col,
++                                   float scale,
++                                   const int32_t* cu_seqlens,
++                                   int input_batch) {
++  static_assert(D % (COLS * (32 / WIDTH)) == 0);
++  constexpr int subgroups_per_warp = 32 / WIDTH;
++  constexpr int rows_per_lane = (D + WIDTH - 1) / WIDTH;
++
++  const int hv = blockIdx.x;
++  const int b = blockIdx.y;
++  const int seq_start = cu_seqlens == nullptr ? 0 : cu_seqlens[b];
++  const int seq_end = cu_seqlens == nullptr ? tokens : cu_seqlens[b + 1];
++  const int seq_tokens = seq_end - seq_start;
++  const int subgroup = threadIdx.x / WIDTH;
++  const int lane = threadIdx.x % WIDTH;
++  const int group_base =
++      (blockIdx.z * blockDim.y + threadIdx.y) * subgroups_per_warp + subgroup;
++  const int col_base = group_base * COLS;
++  const int hq = hv / (v_heads / q_heads);
++
++  float state_shard[COLS][rows_per_lane];
++
++#pragma unroll
++  for (int c = 0; c < COLS; ++c) {
++    const int col = col_base + c;
++#pragma unroll
++    for (int r = 0; r < rows_per_lane; ++r) {
++      const int row = r * WIDTH + lane;
++      float value = 0.0F;
++      if (row < D) {
++        const auto state_index =
++            static_cast<int64_t>(b) * state_stride_b +
++            static_cast<int64_t>(hv) * state_stride_h +
++            static_cast<int64_t>(col) * state_stride_row +
++            static_cast<int64_t>(row) * state_stride_col;
++        value = initial_state == nullptr
++                    ? 0.0F
++                    : static_cast<float>(initial_state[state_index]);
++      }
++      state_shard[c][r] = value;
++    }
++  }
++
++  for (int t = 0; t < seq_tokens; ++t) {
++    const auto gate_index =
++        static_cast<int64_t>(input_batch == 1 ? 0 : b) * gate_stride_b +
++        static_cast<int64_t>(seq_start + t) * gate_stride_t +
++        static_cast<int64_t>(hv) * gate_stride_h;
++    const auto beta_index =
++        static_cast<int64_t>(input_batch == 1 ? 0 : b) * beta_stride_b +
++        static_cast<int64_t>(seq_start + t) * beta_stride_t +
++        static_cast<int64_t>(hv) * beta_stride_h;
++    float gate_value = 0.0F;
++    float beta_value = 0.0F;
++    if (threadIdx.x == 0) {
++      gate_value = __expf(static_cast<float>(gate[gate_index]));
++      beta_value = static_cast<float>(beta[beta_index]);
++    }
++    gate_value = __shfl_sync(0xffffffffU, gate_value, 0);
++    beta_value = __shfl_sync(0xffffffffU, beta_value, 0);
++
++    float k_reg[rows_per_lane];
++    float q_reg[rows_per_lane];
++    float kv_partial[COLS];
++#pragma unroll
++    for (int c = 0; c < COLS; ++c) {
++      kv_partial[c] = 0.0F;
++    }
++
++#pragma unroll
++    for (int r = 0; r < rows_per_lane; ++r) {
++      const int row = r * WIDTH + lane;
++      float q_value = 0.0F;
++      float k_value = 0.0F;
++      if (row < D) {
++        const auto qk_index =
++            static_cast<int64_t>(input_batch == 1 ? 0 : b) * q_stride_b +
++            static_cast<int64_t>(seq_start + t) * q_stride_t +
++            static_cast<int64_t>(hq) * q_stride_h +
++            static_cast<int64_t>(row) * q_stride_d;
++        const auto kk_index =
++            static_cast<int64_t>(input_batch == 1 ? 0 : b) * k_stride_b +
++            static_cast<int64_t>(seq_start + t) * k_stride_t +
++            static_cast<int64_t>(hq) * k_stride_h +
++            static_cast<int64_t>(row) * k_stride_d;
++        q_value = static_cast<float>(q[qk_index]);
++        k_value = static_cast<float>(k[kk_index]);
++      }
++      q_reg[r] = q_value;
++      k_reg[r] = k_value;
++#pragma unroll
++      for (int c = 0; c < COLS; ++c) {
++        kv_partial[c] += state_shard[c][r] * k_value;
++      }
++    }
++
++    float delta[COLS];
++#pragma unroll
++    for (int c = 0; c < COLS; ++c) {
++      const float kv_col = subgroup_sum_lane0(kv_partial[c], WIDTH);
++      float delta_value = 0.0F;
++      if (lane == 0) {
++        const auto v_index =
++            static_cast<int64_t>(input_batch == 1 ? 0 : b) * v_stride_b +
++            static_cast<int64_t>(seq_start + t) * v_stride_t +
++            static_cast<int64_t>(hv) * v_stride_h +
++            static_cast<int64_t>(col_base + c) * v_stride_d;
++        delta_value =
++            (static_cast<float>(v[v_index]) - gate_value * kv_col) *
++            beta_value;
++      }
++      delta[c] = subgroup_broadcast_lane0(delta_value, WIDTH);
++    }
++
++    float attn_partial[COLS];
++#pragma unroll
++    for (int c = 0; c < COLS; ++c) {
++      attn_partial[c] = 0.0F;
++    }
++
++#pragma unroll
++    for (int r = 0; r < rows_per_lane; ++r) {
++#pragma unroll
++      for (int c = 0; c < COLS; ++c) {
++        const float new_state =
++            fmaf(k_reg[r], delta[c], gate_value * state_shard[c][r]);
++        state_shard[c][r] = new_state;
++        attn_partial[c] += new_state * q_reg[r];
++      }
++    }
++
++#pragma unroll
++    for (int c = 0; c < COLS; ++c) {
++      attn_partial[c] = subgroup_sum_lane0(attn_partial[c], WIDTH);
++    }
++
++    if (lane == 0) {
++      const auto out_base =
++          (((static_cast<int64_t>(input_batch == 1 ? seq_start : b * tokens) +
++             t) * v_heads + hv) * D);
++#pragma unroll
++      for (int c = 0; c < COLS; ++c) {
++        output[out_base + col_base + c] =
++            static_cast<scalar_t>(attn_partial[c] * scale);
++      }
++    }
++  }
++
++#pragma unroll
++  for (int c = 0; c < COLS; ++c) {
++    const int col = col_base + c;
++#pragma unroll
++    for (int r = 0; r < rows_per_lane; ++r) {
++      const int row = r * WIDTH + lane;
++      if (row < D) {
++        const auto state_index =
++            static_cast<int64_t>(b) * state_stride_b +
++            static_cast<int64_t>(hv) * state_stride_h +
++            static_cast<int64_t>(col) * state_stride_row +
++            static_cast<int64_t>(row) * state_stride_col;
++        final_state[state_index] = static_cast<state_t>(state_shard[c][r]);
++      }
++    }
++  }
++}
++
++template <typename scalar_t, typename gate_t, typename state_t, int D>
++void launch_gdn_forward(const scalar_t* q,
++                        const scalar_t* k,
++                        const scalar_t* v,
++                        const gate_t* gate,
++                        const gate_t* beta,
++                        const state_t* initial_state,
++                        scalar_t* output,
++                        state_t* final_state,
++                        int batch,
++                        int tokens,
++                        int q_heads,
++                        int v_heads,
++                        const torch::Tensor& q_tensor,
++                        const torch::Tensor& k_tensor,
++                        const torch::Tensor& v_tensor,
++                        const torch::Tensor& gate_tensor,
++                        const torch::Tensor& beta_tensor,
++                        const torch::Tensor& final_state_tensor,
++                        float scale,
++                        cudaStream_t stream,
++                        const int32_t* cu_seqlens = nullptr,
++                        int input_batch = -1) {
++  constexpr int cols = D == 128 ? 4 : 1;
++  constexpr int width = D == 128 ? 16 : 32;
++  constexpr int groups_per_warp = 32 / width;
++  constexpr int column_groups_per_block = 8;
++  const dim3 block(32, column_groups_per_block);
++  const int groups = D / cols;
++  const int z = (groups + column_groups_per_block * groups_per_warp - 1) /
++                (column_groups_per_block * groups_per_warp);
++  const dim3 grid(v_heads, batch, z);
++  gdn_forward_kernel<scalar_t, gate_t, state_t, D, cols, width>
++      <<<grid, block, 0, stream>>>(q,
++                                   k,
++                                   v,
++                                   gate,
++                                   beta,
++                                   initial_state,
++                                   output,
++                                   final_state,
++                                   batch,
++                                   tokens,
++                                   q_heads,
++                                   v_heads,
++                                   q_tensor.stride(0),
++                                   q_tensor.stride(1),
++                                   q_tensor.stride(2),
++                                   q_tensor.stride(3),
++                                   k_tensor.stride(0),
++                                   k_tensor.stride(1),
++                                   k_tensor.stride(2),
++                                   k_tensor.stride(3),
++                                   v_tensor.stride(0),
++                                   v_tensor.stride(1),
++                                   v_tensor.stride(2),
++                                   v_tensor.stride(3),
++                                   gate_tensor.stride(0),
++                                   gate_tensor.stride(1),
++                                   gate_tensor.stride(2),
++                                   beta_tensor.stride(0),
++                                   beta_tensor.stride(1),
++                                   beta_tensor.stride(2),
++                                   final_state_tensor.stride(0),
++                                   final_state_tensor.stride(1),
++                                   final_state_tensor.stride(2),
++                                   final_state_tensor.stride(3),
++                                   scale,
++                                   cu_seqlens,
++                                   input_batch < 0 ? batch : input_batch);
++}
++
++void validate_tensor(const torch::Tensor& tensor,
++                     const char* name,
++                     int64_t dims) {
++  TORCH_CHECK(tensor.is_cuda(), name, " must be a CUDA tensor");
++  TORCH_CHECK(tensor.scalar_type() == torch::kFloat32 ||
++                  tensor.scalar_type() == torch::kFloat16,
++              name,
++              " must be float16 or float32");
++  TORCH_CHECK(tensor.dim() == dims, name, " has wrong rank");
++}
++
++}  // namespace
++
++std::vector<torch::Tensor> gdn_forward_impl(
++    torch::Tensor q,
++    torch::Tensor k,
++    torch::Tensor v,
++    torch::Tensor gate,
++    torch::Tensor beta,
++    c10::optional<torch::Tensor> initial_state,
++    double scale,
++    c10::optional<torch::Tensor> cu_seqlens) {
++  validate_tensor(q, "q", 4);
++  validate_tensor(k, "k", 4);
++  validate_tensor(v, "v", 4);
++  validate_tensor(gate, "gate", 3);
++  validate_tensor(beta, "beta", 3);
++  TORCH_CHECK(k.scalar_type() == q.scalar_type() &&
++                  v.scalar_type() == q.scalar_type(),
++              "q, k, and v must have the same dtype");
++  TORCH_CHECK(beta.scalar_type() == gate.scalar_type(),
++              "gate and beta must have the same dtype");
++
++  TORCH_CHECK(q.sizes() == k.sizes(), "q and k must have the same shape");
++  const int input_batch = static_cast<int>(q.size(0));
++  const int tokens = static_cast<int>(q.size(1));
++  const int q_heads = static_cast<int>(q.size(2));
++  const int dim = static_cast<int>(q.size(3));
++  const int v_heads = static_cast<int>(v.size(2));
++  torch::Tensor offsets;
++  const bool ragged = cu_seqlens.has_value() && cu_seqlens.value().defined();
++  if (ragged) {
++    offsets = cu_seqlens.value();
++    TORCH_CHECK(offsets.is_cuda(), "cu_seqlens must be a CUDA tensor");
++    TORCH_CHECK(offsets.scalar_type() == torch::kInt32,
++                "cu_seqlens must be int32");
++    TORCH_CHECK(offsets.dim() == 1 && offsets.size(0) >= 2,
++                "cu_seqlens must have shape [batch + 1]");
++    TORCH_CHECK(input_batch == 1,
++                "packed varlen inputs must have batch dimension 1");
++  }
++  const int batch = ragged ? static_cast<int>(offsets.size(0) - 1)
++                           : input_batch;
++  TORCH_CHECK(v.size(0) == input_batch && v.size(1) == tokens &&
++                  v.size(3) == dim,
++              "v must have shape [B, T, Hv, D] matching q/k");
++  TORCH_CHECK(gate.size(0) == input_batch && gate.size(1) == tokens &&
++                  gate.size(2) == v_heads,
++              "gate must have shape [B, T, Hv]");
++  TORCH_CHECK(beta.sizes() == gate.sizes(),
++              "beta must have the same shape as gate");
++  TORCH_CHECK(v_heads % q_heads == 0, "Hv must be divisible by Hq");
++  TORCH_CHECK(dim == 16 || dim == 32 || dim == 64 || dim == 128,
++              "D must be one of 16, 32, 64, or 128");
++
++  torch::Tensor h0;
++  if (initial_state.has_value() && initial_state.value().defined()) {
++    h0 = initial_state.value();
++    validate_tensor(h0, "initial_state", 4);
++    TORCH_CHECK(h0.size(0) == batch && h0.size(1) == v_heads &&
++                    h0.size(2) == dim && h0.size(3) == dim,
++                "initial_state must have shape [B, Hv, D, D]");
++  }
++
++  auto output = torch::empty({input_batch, tokens, v_heads, dim}, q.options());
++  auto final_state = h0.defined()
++                         ? h0
++                         : torch::empty({batch, v_heads, dim, dim}, q.options());
++
++  const auto stream = at::cuda::getCurrentCUDAStream(q.device().index()).stream();
++  const int32_t* offsets_ptr = ragged ? offsets.data_ptr<int32_t>() : nullptr;
++  AT_DISPATCH_FLOATING_TYPES_AND_HALF(q.scalar_type(), "gdn_forward_data", [&] {
++    using data_t = scalar_t;
++    AT_DISPATCH_FLOATING_TYPES_AND_HALF(gate.scalar_type(), "gdn_forward_gate", [&] {
++      using gate_scalar_t = scalar_t;
++      const auto state_type = h0.defined() ? h0.scalar_type() : q.scalar_type();
++      AT_DISPATCH_FLOATING_TYPES_AND_HALF(state_type, "gdn_forward_state", [&] {
++        using state_scalar_t = scalar_t;
++        const state_scalar_t* initial_ptr =
++            h0.defined() ? h0.data_ptr<state_scalar_t>() : nullptr;
++        switch (dim) {
++          case 16:
++            launch_gdn_forward<data_t, gate_scalar_t, state_scalar_t, 16>(
++                q.data_ptr<data_t>(),
++                k.data_ptr<data_t>(),
++                v.data_ptr<data_t>(),
++                gate.data_ptr<gate_scalar_t>(),
++                beta.data_ptr<gate_scalar_t>(),
++                initial_ptr,
++                output.data_ptr<data_t>(),
++                final_state.data_ptr<state_scalar_t>(),
++                batch,
++                tokens,
++                q_heads,
++                v_heads,
++                q,
++                k,
++                v,
++                gate,
++                beta,
++                final_state,
++                static_cast<float>(scale),
++                stream,
++                offsets_ptr,
++                input_batch);
++            break;
++          case 32:
++            launch_gdn_forward<data_t, gate_scalar_t, state_scalar_t, 32>(
++                q.data_ptr<data_t>(),
++                k.data_ptr<data_t>(),
++                v.data_ptr<data_t>(),
++                gate.data_ptr<gate_scalar_t>(),
++                beta.data_ptr<gate_scalar_t>(),
++                initial_ptr,
++                output.data_ptr<data_t>(),
++                final_state.data_ptr<state_scalar_t>(),
++                batch,
++                tokens,
++                q_heads,
++                v_heads,
++                q,
++                k,
++                v,
++                gate,
++                beta,
++                final_state,
++                static_cast<float>(scale),
++                stream,
++                offsets_ptr,
++                input_batch);
++            break;
++          case 64:
++            launch_gdn_forward<data_t, gate_scalar_t, state_scalar_t, 64>(
++                q.data_ptr<data_t>(),
++                k.data_ptr<data_t>(),
++                v.data_ptr<data_t>(),
++                gate.data_ptr<gate_scalar_t>(),
++                beta.data_ptr<gate_scalar_t>(),
++                initial_ptr,
++                output.data_ptr<data_t>(),
++                final_state.data_ptr<state_scalar_t>(),
++                batch,
++                tokens,
++                q_heads,
++                v_heads,
++                q,
++                k,
++                v,
++                gate,
++                beta,
++                final_state,
++                static_cast<float>(scale),
++                stream,
++                offsets_ptr,
++                input_batch);
++            break;
++          case 128:
++            launch_gdn_forward<data_t, gate_scalar_t, state_scalar_t, 128>(
++                q.data_ptr<data_t>(),
++                k.data_ptr<data_t>(),
++                v.data_ptr<data_t>(),
++                gate.data_ptr<gate_scalar_t>(),
++                beta.data_ptr<gate_scalar_t>(),
++                initial_ptr,
++                output.data_ptr<data_t>(),
++                final_state.data_ptr<state_scalar_t>(),
++                batch,
++                tokens,
++                q_heads,
++                v_heads,
++                q,
++                k,
++                v,
++                gate,
++                beta,
++                final_state,
++                static_cast<float>(scale),
++                stream,
++                offsets_ptr,
++                input_batch);
++            break;
++        }
++      });
++    });
++  });
++  check_cuda(cudaGetLastError(), "gdn_forward launch");
++  return {output, final_state};
++}
++
++std::vector<torch::Tensor> gdn_forward(
++    torch::Tensor q,
++    torch::Tensor k,
++    torch::Tensor v,
++    torch::Tensor gate,
++    torch::Tensor beta,
++    c10::optional<torch::Tensor> initial_state,
++    double scale) {
++  return gdn_forward_impl(
++      q, k, v, gate, beta, initial_state, scale, c10::nullopt);
++}
++
++std::vector<torch::Tensor> gdn_forward_varlen(
++    torch::Tensor q,
++    torch::Tensor k,
++    torch::Tensor v,
++    torch::Tensor gate,
++    torch::Tensor beta,
++    c10::optional<torch::Tensor> initial_state,
++    double scale,
++    torch::Tensor cu_seqlens) {
++  return gdn_forward_impl(
++      q, k, v, gate, beta, initial_state, scale, cu_seqlens);
++}
++
++PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
++  m.def("gdn_forward", &gdn_forward, "SM70/SM75 legacy GDN forward");
++  m.def("gdn_forward_varlen",
++        &gdn_forward_varlen,
++        "SM70/SM75 legacy packed-varlen GDN forward");
++}
+diff --git a/model_executor/layers/mamba/ops/sm75_gdn.py b/model_executor/layers/mamba/ops/sm75_gdn.py
+new file mode 100644
+index 0000000..b6fc04f
+--- /dev/null
++++ b/model_executor/layers/mamba/ops/sm75_gdn.py
+@@ -0,0 +1,57 @@
++# SPDX-License-Identifier: Apache-2.0
++# CUDA recurrent GDN integration for the weicj SM70/SM75 kernel.
++from functools import lru_cache
++from pathlib import Path
++
++import torch
++
++
++@lru_cache(maxsize=1)
++def load_extension():
++    from torch.utils.cpp_extension import load
++    return load(
++        name="vllm_gdn_sm75",
++        sources=[str(Path(__file__).with_suffix(".cu"))],
++        extra_cuda_cflags=["-O3"],
++        extra_cflags=["-O3"],
++    )
++
++
++def chunk_gated_delta_rule(
++    q, k, v, g, beta, initial_state, output_final_state,
++    cu_seqlens=None, chunk_indices=None, chunk_offsets=None,
++    use_qk_l2norm_in_kernel=True, core_attn_out=None,
++    aiter_prefill_metadata=None,
++):
++    from vllm.third_party.flash_linear_attention.ops import (
++        chunk_gated_delta_rule as fallback,
++    )
++    if q.dtype != torch.float16 or q.shape[-1] != 128 or v.shape[-1] != 128:
++        return fallback(
++            q, k, v, g, beta, initial_state=initial_state,
++            output_final_state=output_final_state, cu_seqlens=cu_seqlens,
++            chunk_indices=chunk_indices, chunk_offsets=chunk_offsets,
++            use_qk_l2norm_in_kernel=use_qk_l2norm_in_kernel,
++            core_attn_out=core_attn_out,
++        )
++    if use_qk_l2norm_in_kernel:
++        from vllm.third_party.flash_linear_attention.ops.l2norm import l2norm_fwd
++        q, k = l2norm_fwd(q), l2norm_fwd(k)
++    # The CUDA port updates its initial state in place. Never expose the live
++    # Mamba cache or a caller's float32 state to that write.
++    state = initial_state.to(torch.float32, copy=True).contiguous()
++    args = (
++        q.contiguous(), k.contiguous(), v.contiguous(),
++        g.float().contiguous(), beta.float().contiguous(), state,
++        q.shape[-1] ** -0.5,
++    )
++    ext = load_extension()
++    if cu_seqlens is None:
++        output, final_state = ext.gdn_forward(*args)
++    else:
++        output, final_state = ext.gdn_forward_varlen(
++            *args, cu_seqlens.to(torch.int32).contiguous()
++        )
++    if core_attn_out is not None:
++        core_attn_out.reshape(-1)[:output.numel()].copy_(output.reshape(-1))
++    return output, final_state if output_final_state else None

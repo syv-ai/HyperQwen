@@ -18,9 +18,12 @@ manual venv path is for hacking on the stack, or running it bare-metal.
 Volta (V100, sm70) and older cards cannot run this stack at all: the CUDA 13.0 build of torch 2.14
 that vLLM 0.33 pins carries kernels for sm_75 and newer only (`torch.cuda.get_arch_list()`), CUDA 13
 dropped Volta, and vLLM's Marlin W4A16 kernel needs compute capability 7.5 or newer
-([#349](https://github.com/syv-ai/HyperQwen/issues/349)). Turing (sm75) is untested.
+([#349](https://github.com/syv-ai/HyperQwen/issues/349)). The specialized Turing
+launcher and patches have been tested on modified 22 GB RTX 2080 Ti cards;
+see [turing.md](turing.md) for the setup and measured limits.
 
-You need: a 24 GB Ampere or newer NVIDIA card, a recent driver, Python 3.12,
+For the standard profiles below you need a 24 GB Ampere or newer NVIDIA card,
+a recent driver, Python 3.12,
 ~40 GB disk — and if the host has less than ~16 GB of free RAM, load the
 weights with the streamer instead of the stock loader (gotcha 45: the stock
 loader peaks at whatever RAM exists; the streamer is bounded and faster). Everything below is CPU-safe to run while the GPU does other

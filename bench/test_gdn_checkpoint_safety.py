@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 from types import SimpleNamespace as NS
 import unittest
+from unittest.mock import patch
 
 
 def function(path, name, owner=None):
@@ -86,7 +87,7 @@ class CheckpointSafetyTests(unittest.TestCase):
                 "MambaManager",
             ),
         ]
-        cls.envs = NS(VLLM_GDN_PREFILL_CHECKPOINTS=False)
+        cls.envs = NS(VLLM_GDN_PREFILL_CHECKPOINTS=False, VLLM_GDN_SM75=False)
         cls.scope = dict(
             Base=Base,
             get_mamba_prefill_checkpoint_grid=lambda config: 256,
@@ -125,6 +126,56 @@ class CheckpointSafetyTests(unittest.TestCase):
         self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = False
         spec = Spec()
         self.assertIs(self.layer(spec).get_kv_cache_spec(object()), spec)
+
+    def test_sm75_cuda_default_off_preserves_the_original_spec(self):
+        self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = False
+        spec = Spec()
+        with patch.object(self.envs, "VLLM_GDN_SM75", True):
+            self.assertIs(self.layer(spec).get_kv_cache_spec(object()), spec)
+
+    def test_sm75_cuda_periodic_checkpoints_refuse_before_allocation(self):
+        self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = True
+        platform = NS(is_cuda=lambda: True, is_device_capability=lambda cc: cc == 75)
+        config = NS(cache_config=NS(mamba_cache_mode="align"))
+        with (
+            patch.object(self.envs, "VLLM_GDN_SM75", True),
+            patch.dict(self.scope, current_platform=platform),
+            self.assertRaisesRegex(RuntimeError, "Set VLLM_GDN_SM75=0"),
+        ):
+            self.layer(Spec()).get_kv_cache_spec(config)
+
+    def test_sm75_setting_on_cpu_preserves_the_unsupported_backend_error(self):
+        self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = True
+        config = NS(cache_config=NS(mamba_cache_mode="align"))
+        with (
+            patch.object(self.envs, "VLLM_GDN_SM75", True),
+            patch.dict(self.scope, current_platform=NS(is_cuda=lambda: False)),
+            self.assertRaisesRegex(RuntimeError, "CUDA Triton/FLA"),
+        ):
+            self.layer(Spec()).get_kv_cache_spec(config)
+
+    def test_periodic_checkpoints_allow_sm75_triton_and_non_sm75(self):
+        self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = True
+        config = NS(
+            cache_config=NS(
+                mamba_cache_mode="align", prefix_cache_retention_interval=256
+            ),
+            scheduler_config=NS(max_num_batched_tokens=8192),
+        )
+        for device_is_sm75, cuda_prefill in ((True, False), (False, True)):
+            with (
+                self.subTest(sm75=device_is_sm75, cuda_prefill=cuda_prefill),
+                patch.object(self.envs, "VLLM_GDN_SM75", cuda_prefill),
+                patch.dict(
+                    self.scope,
+                    current_platform=NS(
+                        is_cuda=lambda: True,
+                        is_device_capability=lambda cc: device_is_sm75 and cc == 75,
+                    ),
+                ),
+            ):
+                result = self.layer(Spec()).get_kv_cache_spec(config)
+                self.assertEqual(result.prefill_checkpoint_interval, 256)
 
     def test_default_off_preserves_upstream_flashinfer_checkpoint_allocation(self):
         self.envs.VLLM_GDN_PREFILL_CHECKPOINTS = False

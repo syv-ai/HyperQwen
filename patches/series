@@ -73,3 +73,9 @@ offload-mamba-swa-replay-boundaries.patch
 vllm-pr64137-logits-stats-no-specialize.patch
 gdn-multi-prefill-checkpoints.patch
 vllm-pr66026-gather-draft-sampled-no-specialize.patch
+dflash2-fp16-residual-scale.patch
+spec-attn-fp16.patch
+flashinfer-sm75-optin.patch
+flashinfer-sm75-spec-graphs.patch
+gdn-sm75-cuda-prefill.patch
+terminal-request-progress.patch

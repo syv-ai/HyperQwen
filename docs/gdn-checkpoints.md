@@ -11,6 +11,12 @@ planner, kernel emission and exporter are preserved with the knob off; this
 patch does not extend periodic export to that backend. Other Mamba/KDA backends
 keep their existing behavior.
 
+The Turing launcher's SM75 CUDA prefill kernel is a separate backend. Combining
+`VLLM_GDN_PREFILL_CHECKPOINTS=1` with `VLLM_GDN_SM75=1` on SM75 is rejected
+before checkpoint allocation. Set `VLLM_GDN_SM75=0` to select Triton/FLA when
+testing periodic checkpoints on those cards; this integration does not add
+CUDA-kernel checkpoint support or establish its numerical performance on Turing.
+
 The single-checkpoint version in #425 saved only the final reusable hash
 boundary, which the default-off scheduler already materialized. This version
 also saves earlier periodic boundaries. A later request that diverges inside
