@@ -57,6 +57,9 @@ The model needs one card with 24 GB or more, or two cards together: on 16 GB or 
 
 - **Before exposing it** — compose publishes the port on `127.0.0.1` only (`BIND` in `.env`, default `127.0.0.1`), so another machine cannot reach it until you set a key and `BIND=0.0.0.0`; outside a container, no key means the server binds `127.0.0.1` only:
   `echo "VLLM_API_KEY=$(openssl rand -hex 24)" >> .env && echo BIND=0.0.0.0 >> .env`
+- **Linux** — Docker CE with the NVIDIA Container Toolkit, not the snap Docker;
+  `sudo docker run --rm --gpus all ubuntu nvidia-smi` should list your cards first
+  ([docs/docker.md](docs/docker.md)). No Docker: [docs/install.md](docs/install.md)
 - **Docker Desktop on WSL2** — keep `VLLM_WSL2_ENABLE_PIN_MEMORY=1` in `.env`, or
   the V2 runner aborts with `RuntimeError: UVA is not available`
 - **No compose, or no Docker at all** —
