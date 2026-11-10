@@ -4,11 +4,17 @@
 
 import copy
 import functools
+import os
 from dataclasses import dataclass
 from typing import Any, ClassVar
 
 import numpy as np
 import torch
+
+# 170HX opt: the split-KV verify path's batch gate is read from the environment
+# directly (no envs.py registration, so the overlay cannot drift from the
+# image's envs.py - KVarN, Turing knobs, the next pin).
+_SPEC_ATTN_MIN_BATCH = int(os.environ.get("VLLM_SPEC_ATTN_MIN_BATCH", "4"))
 
 from vllm.model_executor.layers.attention import Attention
 from vllm.model_executor.warmup.jit_warmup import VllmJitKernel, WarmupChoices
@@ -1454,7 +1460,7 @@ class FlashAttentionImpl(AttentionImpl):
             # under FULL cudagraph, so the choice is replay-stable.
             if (
                 _spec_attn_enabled()
-                and (cu_seqlens_q.shape[0] - 1) >= envs.VLLM_SPEC_ATTN_MIN_BATCH
+                and (cu_seqlens_q.shape[0] - 1) >= _SPEC_ATTN_MIN_BATCH
                 and 1 < max_seqlen_q <= _spec_attn_qmax(self.num_heads // self.num_kv_heads)
                 and not is_quantized_kv_cache(self.kv_cache_dtype)
                 and (

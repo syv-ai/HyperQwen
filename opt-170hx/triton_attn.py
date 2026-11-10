@@ -5,6 +5,7 @@
 from dataclasses import dataclass, replace
 from typing import ClassVar
 
+import os
 import torch
 
 import vllm.envs as envs
@@ -17,6 +18,11 @@ from vllm.model_executor.layers.quantization.utils.quant_utils import (
     kFp8StaticTensorSym,
 )
 from vllm.platforms import current_platform
+
+# 170HX opt: the split-KV verify path's batch gate is read from the environment
+# directly (no envs.py registration, so the overlay cannot drift from the
+# image's envs.py - KVarN, Turing knobs, the next pin).
+_SPEC_ATTN_MIN_BATCH = int(os.environ.get("VLLM_SPEC_ATTN_MIN_BATCH", "4"))
 from vllm.platforms.interface import DeviceCapability
 from vllm.utils.math_utils import next_power_of_2
 from vllm.utils.torch_utils import get_dtype_size
@@ -885,7 +891,7 @@ class TritonAttentionImpl(AttentionImpl):
             # 170HX opt: split-KV only once enough requests fill the SMs; 1-2
             # requests stay on unified attention because the extra combine launch
             # loses there. Batch size is a captured constant under FULL cudagraph.
-            and (cu_seqlens_q.shape[0] - 1) >= envs.VLLM_SPEC_ATTN_MIN_BATCH
+            and (cu_seqlens_q.shape[0] - 1) >= _SPEC_ATTN_MIN_BATCH
             and (
                 spec_fp8
                 or (

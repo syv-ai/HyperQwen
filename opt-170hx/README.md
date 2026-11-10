@@ -2,9 +2,12 @@
 
 Bind-mounted vLLM sources plus the matching environment settings for the CMP
 170HX (GA100, sm_80, 64 GiB). No image rebuild and no patch-series edit: the
-four files here are mounted read-only over the copies inside
-`ghcr.io/syv-ai/hyperqwen:latest`, and removing those mounts returns the
-container to the stock image.
+three files here are mounted read-only over the copies inside the vLLM 0.33.0
+image (`ghcr.io/syv-ai/hyperqwen:latest`), and removing those mounts returns
+the container to the stock image. `envs.py` is deliberately NOT overridden —
+the two knobs are read from the environment where they are used, so the
+overlay cannot drift from whatever `envs.py` the image ships (KVarN
+registrations, Turing knobs, the next pin).
 
 Cut against the vLLM 0.33.0 pin and the patch series as of upstream `8416768`
 (re-cut on 2026-11-10 from the 0.32.0 cut; the new `spec-attn-fp16` patch
@@ -21,14 +24,12 @@ math did not change in the re-cut, so the deltas carry over; a re-run on the
 
 ## Changes
 
-### `envs.py`
+### Environment knobs (read via `os.environ`, no `envs.py` override)
 
-Registers two knobs:
-
-| knob | default | meaning |
-| --- | --- | --- |
-| `VLLM_SPEC_ATTN_NSEG` | `0` | `0` = adaptive segments; `>0` = fixed segment count (clamped to 16) |
-| `VLLM_SPEC_ATTN_MIN_BATCH` | `4` | use split-KV verify attention only when `num_reqs >= this` |
+| knob | default | read in | meaning |
+| --- | --- | --- | --- |
+| `VLLM_SPEC_ATTN_NSEG` | `0` | `spec_decode_attn.py` | `0` = adaptive segments; `>0` = fixed segment count (clamped to 16) |
+| `VLLM_SPEC_ATTN_MIN_BATCH` | `4` | `flash_attn.py`, `triton_attn.py` | use split-KV verify attention only when `num_reqs >= this` |
 
 ### `spec_decode_attn.py`
 

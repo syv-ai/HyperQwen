@@ -1,6 +1,15 @@
 --- a/v1/attention/ops/spec_decode_attn.py
 +++ b/v1/attention/ops/spec_decode_attn.py
-@@ -48,6 +48,7 @@
+@@ -40,6 +40,8 @@
+ Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
+ window / softcap / alibi.
+ """
++import os
++
+ import vllm.envs as envs
+ 
+ import torch
+@@ -48,6 +50,7 @@
  from triton.runtime.errors import OutOfResources
  
  NUM_SEGMENTS = 16
@@ -8,7 +17,7 @@
  BLOCK_M = 64       # query rows (q_len * G) per program at the default register budget
  BLOCK_M_BIG = 128  # ... and with 8 warps, which keeps a 16-token block in one tile
  QMAX_TOKENS = 64   # query tokens per request the caller may ask for
-@@ -210,6 +211,20 @@
+@@ -210,6 +213,22 @@
          self.part_m = torch.empty(n, dtype=torch.float32, device=device)
          self.part_l = torch.empty(n, dtype=torch.float32, device=device)
  
@@ -17,7 +26,9 @@
 +        fixed for the life of a CUDA graph and safe to vary between graphs. More
 +        segments than the SMs can hold only add combine work: at batch 8 the table
 +        is as fast with 2 segments as with 16."""
-+        override = envs.VLLM_SPEC_ATTN_NSEG
++        # Read from the environment directly: the overlay does not ship an
++        # envs.py, so it cannot drift from the image's (KVarN, Turing, next pin).
++        override = int(os.environ.get("VLLM_SPEC_ATTN_NSEG", "0"))
 +        if override:
 +            n = max(1, min(self.nseg, override))
 +        else:
@@ -29,7 +40,7 @@
      def _plan(self, q_len, G, D):
          """(BLOCK_M, tokens per tile, tile count, warps). One tile is preferred: every
          extra tile re-reads this request's KV segment."""
-@@ -226,7 +241,9 @@
+@@ -226,7 +245,9 @@
          block_m = max(block_m, G if G > 1 else 1)
          block_m = 1 << (block_m - 1).bit_length()
          qt = max(1, block_m // G)
@@ -40,7 +51,7 @@
  
      def run(self, q, key_cache, value_cache, out, cu_seqlens_q, seqused_k, block_table, scale,
              num_reqs, max_query_len, k_scale_cache=None, v_scale_cache=None,
-@@ -250,7 +267,10 @@
+@@ -250,7 +271,10 @@
          # Turing (sm75) has 64 KB, where a 64-token tile at D=256 needs 98,304 bytes; a tile
          # that does not launch is halved below, and the size that did is remembered.
          block_m, qt, ntile, warps = self._plan(max_query_len, G, D)
@@ -52,7 +63,7 @@
          fit = (q.device, block_m, D, key_cache.dtype)
          tile = _TILE_FITS.get(fit, tile)
          if isinstance(tile, tuple):
-@@ -259,6 +279,7 @@
+@@ -259,6 +283,7 @@
              qt = max(1, block_m // G)
              ntile = triton.cdiv(max_query_len, qt)
              warps = 8 if block_m >= 128 else 4
@@ -60,7 +71,7 @@
          if envs.VLLM_SPEC_ATTN_DEBUG:
              self._dbg_calls = getattr(self, "_dbg_calls", 0) + 1
              if self._dbg_calls in (1, 2, 500, 2000):
-@@ -268,13 +289,13 @@
+@@ -268,13 +293,13 @@
                        f"kc {key_cache.dtype} {tuple(key_cache.shape)} strides {key_cache.stride()} | out {out.dtype} strides {out.stride()} | "
                        f"quant={quant} fp8={fp8} q_fp8={q_fp8} kd={None if k_descale is None else float(k_descale.reshape(-1)[0])} "
                        f"vd={None if v_descale is None else float(v_descale.reshape(-1)[0])} qd={None if q_descale is None else float(q_descale.reshape(-1)[0])} | "
@@ -76,7 +87,7 @@
          block_m0 = block_m
          while True:
              try:
-@@ -290,7 +311,7 @@
+@@ -290,7 +315,7 @@
                      *(k_scale_cache.stride() if quant else (0, 0, 0)),
                      *(v_scale_cache.stride() if quant else (0, 0, 0)),
                      G=G, Hq=Hq, QMAX=self.qmax, D=D, BLOCK_SIZE=key_cache.shape[1], BLOCK_M=block_m,
@@ -85,7 +96,7 @@
                      CDT=cdt,
                      num_warps=warps, num_stages=1,
                  )
-@@ -309,13 +330,13 @@
+@@ -309,13 +334,13 @@
                  qt = max(1, block_m // G)
                  ntile = triton.cdiv(max_query_len, qt)
                  warps = 8 if block_m >= 128 else 4

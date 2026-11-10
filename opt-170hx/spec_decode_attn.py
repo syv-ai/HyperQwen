@@ -40,6 +40,8 @@ of the 3090's ~936.
 Restrictions: q_len <= QMAX_TOKENS per request, D a power of two <= 256, no sliding
 window / softcap / alibi.
 """
+import os
+
 import vllm.envs as envs
 
 import torch
@@ -216,7 +218,9 @@ class SpecDecodeAttention:
         fixed for the life of a CUDA graph and safe to vary between graphs. More
         segments than the SMs can hold only add combine work: at batch 8 the table
         is as fast with 2 segments as with 16."""
-        override = envs.VLLM_SPEC_ATTN_NSEG
+        # Read from the environment directly: the overlay does not ship an
+        # envs.py, so it cannot drift from the image's (KVarN, Turing, next pin).
+        override = int(os.environ.get("VLLM_SPEC_ATTN_NSEG", "0"))
         if override:
             n = max(1, min(self.nseg, override))
         else:
