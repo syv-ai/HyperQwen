@@ -96,7 +96,9 @@ if [ -z "${CUDA_HOME:-}" ]; then
   for CU13 in "$REPO"/venv/lib/python3*/site-packages/nvidia/cu13; do
     if [ -x "$CU13/bin/nvcc" ] && [ "${NVCC_MAJOR:-0}" -lt 13 ]; then
       export CUDA_HOME=$CU13
-      echo "[start_qwen] nvcc on PATH is ${NVCC_MAJOR:-missing}, older than the CUDA 13 FlashInfer JIT needs: CUDA_HOME=$CUDA_HOME (set CUDA_HOME to override)"
+      # A note, not a problem: first-time users read the old wording as an error (#455).
+      if [ -n "${NVCC_MAJOR:-}" ]; then HAVE="CUDA $NVCC_MAJOR"; else HAVE="none"; fi
+      echo "[start_qwen] note: using the venv's CUDA 13 nvcc for FlashInfer's JIT (nvcc on PATH: $HAVE). Nothing to install; CUDA_HOME=$CUDA_HOME (set CUDA_HOME to override)"
     fi
     break
   done
