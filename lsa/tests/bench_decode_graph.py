@@ -9,7 +9,7 @@ bt = torch.randperm(nb, device=dev)[None, : nb - 2].int().contiguous()
 kc = torch.randint(-127, 127, (nb, BS, HKV, D + 4), dtype=torch.int8, device=dev)
 vc = torch.randint(-127, 127, (nb, BS, HKV, D + 4), dtype=torch.int8, device=dev)
 ks = torch.rand(nb, BS, HKV, device=dev) / 100; vs = torch.rand(nb, BS, HKV, device=dev) / 100
-tables = core.LayerTables.allocate(nb * BS, dev)
+tables = core.LayerTables.allocate(nb * BS, dev, BS)
 tables.centroids.copy_(torch.nn.functional.normalize(torch.randn_like(tables.centroids.float()), dim=-1))
 tables.members.copy_(torch.randint(0, 512, tables.members.shape, device=dev, dtype=torch.int16))
 w_q = torch.randn(HKV * (D - ROT), 64, device=dev)

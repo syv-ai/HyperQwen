@@ -32,6 +32,16 @@ SCALE_PER_TOKEN_HEAD = 2
 
 
 @triton.jit
+def _bucket_rows(BT, sbt, req, pos, block_size, live,
+                 CLUSTER: tl.constexpr = 512, BUCKET: tl.constexpr = 8):
+    last = (pos // CLUSTER + 1) * CLUSTER - 1
+    page = tl.load(BT + req * sbt + last // block_size, mask=live, other=0).to(tl.int64)
+    rows_per_page = tl.cdiv(block_size, CLUSTER) * (CLUSTER // BUCKET)
+    group = (last % block_size) // CLUSTER
+    return page * rows_per_page + group * (CLUSTER // BUCKET) + (pos % CLUSTER) // BUCKET
+
+
+@triton.jit
 def _score_kernel(
     QIDX, sq,                 # [N, 64] fp32 index queries (global token rows)
     QSL,                      # [R + 1] int32 query start locations
@@ -58,9 +68,9 @@ def _score_kernel(
     if bb * BB >= tl.max(vis):
         return
     pos = b * 8
-    load_ok = b_ok & (pos < max_positions) & (b < tl.max(vis))
-    blk = tl.load(BT + r * sbt + pos // block_size, mask=load_ok, other=0).to(tl.int64)
-    rows = (blk * block_size + pos % block_size) // 8
+    last = (pos // 512 + 1) * 512 - 1
+    load_ok = b_ok & (last < max_positions) & (b < tl.max(vis))
+    rows = _bucket_rows(BT, sbt, r, pos, block_size, load_ok)
     d = tl.arange(0, DIM)
     cen = tl.load(CEN + rows[:, None] * DIM + d[None, :], mask=load_ok[:, None], other=0.0)
     q = tl.load(QIDX + tok[:, None] * sq + d[None, :], mask=tok_ok[:, None], other=0.0)
@@ -346,8 +356,7 @@ def _expand_chunk(PICK, spick, PSCORE, MEM, BT, sbt, req, tail, n_sink, block_si
     sc = tl.load(PSCORE + t * spick + cols, mask=col_ok, other=float("-inf"))
     live = col_ok & (sc > float("-inf"))
     bpos = b * 8
-    bblk = tl.load(BT + req * sbt + bpos // block_size, mask=live, other=0).to(tl.int64)
-    row = (bblk * block_size + bpos % block_size) // 8
+    row = _bucket_rows(BT, sbt, req, bpos, block_size, live)
     k = tl.arange(0, CAP)
     local = tl.load(MEM + row[:, None] * CAP + k[None, :], mask=live[:, None], other=-1).to(tl.int64)
     p = (bpos // CLUSTER * CLUSTER)[:, None] + local

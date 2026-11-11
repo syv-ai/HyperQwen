@@ -63,7 +63,7 @@ num_blocks = (T + BS - 1) // BS + 9
 perm = torch.randperm(num_blocks)[: (T + BS - 1) // BS]
 block_table = perm.int()[None, :].to(dev)
 idx_keys = clustered_unit_rows(T, 64).to(torch.bfloat16)
-tables = core.LayerTables.allocate(num_blocks * BS, dev)
+tables = core.LayerTables.allocate(num_blocks * BS, dev, BS)
 positions = torch.arange(T)
 slots = (perm[positions // BS] * BS + positions % BS).to(dev)
 core.write_index_keys(tables, idx_keys.to(dev), slots)
@@ -81,7 +81,8 @@ qrows = F.normalize(idx_keys.float()[qpos] + 0.3 * torch.randn(len(qpos), 64), d
 # The strict check: the reference's read over our own bucket tables (bf16 centroids, as upstream serves
 # them, and our GPU Ward partition) - this is the selection and expansion port alone. The read over the
 # reference's own fp32 buckets is reported beside it as key overlap.
-rows = (slots[::8] // 8)[: closed * 64]
+anchors = torch.arange(closed * 64, device=dev) * 8
+rows = core.bucket_rows(block_table, torch.zeros_like(anchors), anchors, BS)
 own_members = tables.members[rows].long().cpu()
 own_members = torch.where(own_members >= 0, own_members + (torch.arange(closed * 64) // 64 * 512)[:, None], -1)
 own_buckets = ref_buckets._replace(bucket_centroids=tables.centroids[rows].float().cpu(),

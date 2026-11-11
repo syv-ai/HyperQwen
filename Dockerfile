@@ -74,7 +74,8 @@ RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_continuous_stream_usage.py; \
     venv/bin/python bench/test_gdn_ba_lora.py; \
-    CUDA_VISIBLE_DEVICES= venv/bin/python lsa/tests/gate_test.py
+    CUDA_VISIBLE_DEVICES= venv/bin/python lsa/tests/gate_test.py; \
+    CUDA_VISIBLE_DEVICES= venv/bin/python lsa/tests/check_cache_ownership.py
 
 # HOME is a volume: torch.compile cache (~/.cache/vllm), Triton (~/.triton),
 # FlashInfer JIT (~/.cache/flashinfer), HF hub cache.
