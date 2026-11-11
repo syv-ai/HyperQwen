@@ -7,8 +7,8 @@ disk); shard 7, model_extra_tensors, config, index and the draft vocab ids are
 downloaded. To rebuild the tensors yourself instead, see drafter/README.md.
 
 Every copy goes through a temp file and a rename (prepare/atomic_publish.py), and the
-index is copied last: docker/prepare.sh's state() treats the fast variant as present once
-its index exists, so a killed run must never leave a partial file behind it (#195).
+index is copied last: docker/prepare.sh's state() checks the index and shard
+completeness, so a killed run must never leave a partial file behind it (#195).
 
   venv/bin/python prepare/fetch_fast_variant.py [base_dir] [dst_dir]
 """
@@ -23,6 +23,22 @@ def copy_atomic(src, dst):
     publish(dst + ".tmp", dst)
 
 
+def link_atomic(src, dst):
+    """Refresh a stale shard link without modifying its old inode or the base."""
+    try:
+        if os.path.samefile(src, dst):
+            return
+    except FileNotFoundError:
+        pass
+    tmp = dst + ".tmp"
+    try:
+        os.unlink(tmp)  # an interrupted earlier publication may have left a link
+    except FileNotFoundError:
+        pass
+    os.link(src, tmp)
+    publish(tmp, dst)
+
+
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)
 S = (sys.argv[1] if len(sys.argv) > 1 else os.path.join(REPO, "models", "Qwen3.8-27B-W4A16-AutoRound")).rstrip("/")
 D = (sys.argv[2] if len(sys.argv) > 2 else S + "-fast").rstrip("/")
@@ -31,8 +47,7 @@ assert os.path.exists(os.path.join(S, "config.json")), f"base model not found at
 os.makedirs(D, exist_ok=True)
 for f in sorted(os.listdir(S)):
     if f.startswith("model-0000") and f.endswith(".safetensors") and f != "model-00007-of-00007.safetensors":
-        if not os.path.exists(os.path.join(D, f)):
-            os.link(os.path.join(S, f), os.path.join(D, f))
+        link_atomic(os.path.join(S, f), os.path.join(D, f))
 for f in ["tokenizer.json", "tokenizer_config.json", "chat_template.jinja", "generation_config.json",
           "processor_config.json", "quantization_config.json"]:
     if os.path.exists(os.path.join(S, f)) and not os.path.exists(os.path.join(D, f)):
