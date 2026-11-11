@@ -61,6 +61,15 @@ class RequestMetricsTests(unittest.TestCase):
                     self.assertEqual(args[index+1],level)
                     self.assertIn("--enable-per-request-metrics",args)
 
+    def test_none_alias_matches_off_with_request_metrics(self):
+        for launcher in [SINGLE, ALTERNATIVE]:
+            for detailed in ["0", "1"]:
+                with self.subTest(launcher=launcher, detailed=detailed):
+                    args = self.launch(launcher, "none", detailed=detailed)
+                    self.assertNotIn("--speculative-config", args)
+                    self.assertNotIn("--per-request-spec-decode-metrics", args)
+                    self.assertEqual(args, self.launch(launcher, "off", detailed=detailed))
+
     def test_disabled_metrics_stay_disabled_even_with_detailed_selected(self):
         for launcher in [SINGLE,ALTERNATIVE,BATCH]:
             with self.subTest(launcher=launcher):
