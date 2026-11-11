@@ -20,7 +20,7 @@ spec.loader.exec_module(turing)
 
 def sse(*chunks, done=True):
     frames = [": keep-alive\n\n"]
-    frames.extend("data:" + json.dumps(chunk) + "\n\n" for chunk in chunks)
+    frames.extend("data: " + json.dumps(chunk) + "\n\n" for chunk in chunks)
     if done:
         frames.append("data: [DONE]\n\n")
     return "".join(frames).encode()
@@ -96,6 +96,13 @@ class StreamProbeTests(unittest.TestCase):
         status, text = self.probe("bench_multi_probe.py", [sse(TEXT, TEXT, USAGE), sse(TEXT, done=False)])
         self.assertEqual(status, 1, text)
         self.assertEqual(json.loads(text)["ok"], 1)
+
+    def test_sse_optional_space_is_supported(self):
+        payload = sse(TEXT, TEXT, USAGE).replace(b"data: ", b"data:")
+        for name in ("bench_stream_probe.py", "bench_multi_probe.py"):
+            with self.subTest(name=name):
+                status, text = self.probe(name, payload)
+                self.assertEqual(status, 0, text)
 
     def test_wall_clock_step_cannot_make_timings_negative(self):
         payload = sse(TEXT, TEXT, USAGE)
