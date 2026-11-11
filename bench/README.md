@@ -102,6 +102,8 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_prepare_state.py` | test | CPU | 0 or 1 | `state()` in `docker/prepare.sh` on torn files (#195). Cuts a heredoc out of `docker/prepare.sh`. |
 | `test_port_paths.py` | test | CPU, bash, git | 0 or 1 | Export, port drift and triage against a real checkout with spaces in its path. |
 | `test_quant_schema.py` | test | torch and the prepare stack | 0 or 1 | What `prepare/quant_schema.py` writes for every in-place quant script: the packed tensors and their scale dtype, the killed-run check, the index entries, the config group. |
+| `../scripts/check_greedy_repeatability.py` | check | running server | 0 identical; 1 differences; 2 invalid input | Repeated greedy text and complete saved-baseline comparison. |
+| `test_greedy_repeatability.py` | test | CPU | 0 or 1 | Invalid/partial baselines fail before networking; full baselines and repeatability differences retain their exit status. |
 | `test_quality_battery.py` | test | CPU | 0 or 1 | Quality CLI help/validation without optional dependencies, GSM8K sample accounting and empty-data refusal. |
 | `test_quant_scale_views.py` | test | image (CPU), GPU optional | 0 or 1 | Scale views preserve shared hybrid pages and existing scales for INT4/INT8/FP8, HND/NHD and storage offsets; PTH_FA inheritance; `--device cuda:0` also checks the actual INT8 writer. |
 | `test_replay_offload.py` | test | CPU | 0 or 1 | Replay verdicts on CPU stubs: eviction, TTFT and byte deltas, fresh/legacy counters, exact metric families and interrupted requests. |
@@ -154,3 +156,4 @@ This uses Qwen's parser and the chat streaming generator with synthetic engine
 outputs. It checks continuous counts during a buffered array argument, hidden
 reasoning, final-only usage and no-usage streams. No model or GPU is needed.
 The Docker build runs the same regression after applying the patches.
+

@@ -39,6 +39,8 @@ jobs:
         run: python bench/test_long_corpus.py
       - name: Check quality-battery arguments and actual GSM8K sample counts
         run: python bench/test_quality_battery.py
+      - name: Check greedy comparison baselines
+        run: python bench/test_greedy_repeatability.py
       - name: Check the bench harness (resolve_api_key.sh's key, the URL, streams and /metrics) without a GPU
         run: python bench/test_harness.py
       - name: Check Vision smoke verification against HTTP stubs without a GPU

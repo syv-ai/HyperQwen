@@ -10,7 +10,7 @@ difference between them also catches cached-vs-cold drift. With --save FILE the 
 batch composition can change greedy output on any vLLM setup.
 
     python3 scripts/check_greedy_repeatability.py [--rounds 3] [--max-tokens 256] [--save out.json | --compare out.json]
-Env: HYPERQWEN_URL (default http://127.0.0.1:18020), VLLM_API_KEY. Exit 0: identical; 1: a difference.
+Env: HYPERQWEN_URL (default http://127.0.0.1:18020), VLLM_API_KEY. Exit 0: identical; 1: a difference; 2: invalid arguments or baseline.
 """
 from __future__ import annotations
 
@@ -65,8 +65,25 @@ def main() -> int:
     ap.add_argument("--save")
     ap.add_argument("--compare")
     a = ap.parse_args()
+    if a.rounds < 1:
+        ap.error("--rounds must be positive")
+    if a.max_tokens < 1:
+        ap.error("--max-tokens must be positive")
     if a.rounds < 2 and not a.compare:
         ap.error("--rounds must be at least 2 (or use --compare)")
+
+    base = {}
+    if a.compare:
+        try:
+            with open(a.compare, encoding="utf-8") as saved:
+                base = json.load(saved)
+            if not isinstance(base, dict) or any(
+                not isinstance(base.get(name), dict) or not isinstance(base[name].get("text"), str)
+                for name in PROMPTS
+            ):
+                raise ValueError("expected a text record for every benchmark prompt")
+        except (OSError, ValueError) as exc:
+            ap.error(f"invalid --compare baseline: {exc}")
 
     req = urllib.request.Request(URL + "/v1/models", headers={"Authorization": "Bearer " + KEY} if KEY else {})
     model = json.load(urllib.request.urlopen(req, timeout=10))["data"][0]["id"]
@@ -78,7 +95,6 @@ def main() -> int:
             runs[name].append(ask(model, prompt, a.max_tokens))
         print(f"  round {rnd + 1}/{a.rounds} done", flush=True)
 
-    base = json.load(open(a.compare)) if a.compare else {}
     bad = 0
     for name, rs in runs.items():
         texts = [r["text"] for r in rs]
@@ -88,7 +104,7 @@ def main() -> int:
             bad += 1
             k = next(i for i, t in enumerate(texts) if t != texts[0])
             line += f"\n     round 1 vs round {k + 1}: {diff(texts[0], texts[k])}"
-        if a.compare and name in base:
+        if a.compare:
             if base[name]["text"] == texts[0]:
                 line += "  (matches saved run)"
             else:
