@@ -29,10 +29,6 @@ def _f(s: str) -> float:
     return float(s.replace(",", ""))
 
 
-def _rid(s: str) -> str:            # "chatcmpl-abc-def" and "chatcmpl-abc" are the same request
-    return "-".join(s.split("-")[:2])
-
-
 class Source:
     def __init__(self, url: str, key: str, log_path: str):
         self.url, self.key, self.log_path = url.rstrip("/"), key, log_path
@@ -109,22 +105,22 @@ class Source:
         now = stamp if self.first_log else time.time()
         if m := RE_READ.search(line):
             read, total, secs, rid = m.groups()
-            c = self.cur.setdefault(_rid(rid), {"t0": now, "id": _rid(rid)})
+            c = self.cur.setdefault(rid, {"t0": now, "id": rid})
             c.update(state="reading", prompt_read=_f(read), prompt_total=_f(total), updated=now)
             c.setdefault("read0", _f(read))
         elif m := RE_PREFILL.search(line):
             new, secs, rate, cached, total, rid = m.groups()
-            c = self.cur.setdefault(_rid(rid), {"t0": now, "id": _rid(rid)})
+            c = self.cur.setdefault(rid, {"t0": now, "id": rid})
             c.update(prefill_tok_s=_f(rate), prompt_tokens=_f(total), reused=_f(cached), prompt_ms=_f(secs) * 1000,
                      state="answering", generated=0.0, updated=now)
         elif m := RE_ANSWER.search(line):
             gen, mx, rate, secs, rid = m.groups()
-            c = self.cur.setdefault(_rid(rid), {"t0": now, "id": _rid(rid)})
+            c = self.cur.setdefault(rid, {"t0": now, "id": rid})
             c.update(state="answering", generated=_f(gen), max_tokens=_f(mx), tok_s=_f(rate), elapsed_s=_f(secs),
                      updated=now)
         elif m := RE_DONE.search(line):
             toks, secs, rate, reason, cancel, rid = m.groups()
-            c = self.cur.pop(_rid(rid), {})
+            c = self.cur.pop(rid, {})
             total = c.get("prompt_tokens") or c.get("prompt_total") or 0
             reused = c.get("reused") or 0
             self.reqs.appendleft({

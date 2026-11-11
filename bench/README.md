@@ -42,6 +42,7 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_gdn_checkpoint_export.py` | test | image; GPU optional | 0 or 1 | Exact convolution histories and bounded multi-export plans; `--device cuda:0` checks actual FLA states and resumed suffixes. |
 | `test_gdn_checkpoint_model.py` | test, run by hand | two GPUs, cached model/drafter | 0 or 1 | Fresh-process enabled/default-off comparison with configurable chunk/material/shared lengths (default 2048/2000/1200); `--require-off-miss` demands a real extra cache hit, identical outputs and actual exports. |
 | `test_dflash_context_capacity.py` | test | image, no GPU | 0 or 1 | DFlash constructor rejects oversized target contexts and reserves its fixed lookahead without rewriting draft configuration. |
+| `test_turing_request_ids.py` | test | CPU | 0 or 1 | External request IDs, including hyphenated caller IDs, stay distinct and join all progress phases with randomization enabled or disabled. |
 | `test_doctor.py` | test | CPU, bash | 0 or 1 | Doctor health failures, configuration-pipeline failures and redacted output. |
 | `api_smoke.py` | smoke test, run by hand | server | 0 if all 12 features pass, 2 if no request reaches a server, else 1 | Request-level API features: logprobs, n, stop, seeds, structured output, penalties, streaming, thinking. |
 | `bugb_sweep.py` | reproducer | server, model | 0, or 1 if a length is broken | The prompt lengths you give, against the broken-length defect (gotcha 37). |
