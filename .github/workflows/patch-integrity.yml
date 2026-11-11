@@ -25,6 +25,8 @@ jobs:
         run: python bench/test_doctor.py
       - name: Check state detection crash resilience without a GPU
         run: python bench/test_prepare_state.py
+      - name: Check fast-shard link repair and interrupted publication without a GPU
+        run: python bench/test_fetch_fast_variant.py
       - name: Check explicit chat-template targets and side-effect-free help
         run: python bench/test_chat_hardening.py
       - name: Check the MQ-3D split-KV capacity property holds without a GPU
