@@ -253,7 +253,7 @@ qwen_request_metrics_args() {
   METRICS_ARGS=()
   if [ "${REQ_METRICS:-0}" = 1 ]; then
     METRICS_ARGS=(--enable-per-request-metrics --enable-force-include-usage)
-    if [ "$1" != off ]; then
+    if [ "$1" != off ] && [ "$1" != none ]; then
       local level=summary
       [ "${REQ_METRICS_DETAILED:-0}" = 1 ] && level=detailed
       METRICS_ARGS+=(--per-request-spec-decode-metrics "$level")
