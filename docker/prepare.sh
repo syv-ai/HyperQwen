@@ -72,6 +72,10 @@ def fast_ready(f):
         fidx = json.load(open(f + "model.safetensors.index.json"))["weight_map"]
     except (OSError, ValueError, KeyError, TypeError):
         return False
+    # Valid JSON need not contain a usable weight map. An empty map must not
+    # pass all([]), and a scalar/list must request repair rather than crash.
+    if not isinstance(fidx, dict) or not fidx:
+        return False
     return all(intact(f + s) for s in {str(v) for v in fidx.values()})
 if os.environ.get("FAST_VARIANT", "1") != "0" and not fast_ready(d[:-1] + "-fast/"):
     todo.append("fast")

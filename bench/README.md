@@ -99,7 +99,7 @@ none, and the `.sh` scripts ask `/v1/models`. The `.sh` measurements take `PORT`
 | `test_pin_bump.py` | test | CPU, git | 0 or 1 | Missing-pattern/co-pin rejection without partial edits; every target updated on valid bumps, future repo pins, Python-only FlashInfer pin and dry runs. |
 | `test_prefill_attn_bigpool.py` | kernel test | GPU | 0 or 1 | int32 overflow in the int8 prefill kernel on a large pool (#86). |
 | `test_prepare_crash.py` | test | torch and the prepare stack | 0 or 1 | Crash injection for the model preparation scripts (#195). Cuts a heredoc out of `docker/prepare.sh`. |
-| `test_prepare_state.py` | test | CPU | 0 or 1 | `state()` in `docker/prepare.sh` on torn files (#195). Cuts a heredoc out of `docker/prepare.sh`. |
+| `test_prepare_state.py` | test | CPU | 0 or 1 | `state()` on torn base/fast files and malformed fast index maps; offline recovery through the real fast fetcher. Cuts a heredoc out of `docker/prepare.sh`. |
 | `test_port_paths.py` | test | CPU, bash, git | 0 or 1 | Export, port drift and triage against a real checkout with spaces in its path. |
 | `test_quant_schema.py` | test | torch and the prepare stack | 0 or 1 | What `prepare/quant_schema.py` writes for every in-place quant script: the packed tensors and their scale dtype, the killed-run check, the index entries, the config group. |
 | `test_quality_battery.py` | test | CPU | 0 or 1 | Quality CLI help/validation without optional dependencies, GSM8K sample accounting and empty-data refusal. |
