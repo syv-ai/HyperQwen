@@ -23,6 +23,8 @@ jobs:
         run: python bench/test_request_metrics.py
       - name: Check doctor health and failed configuration diagnostics
         run: python bench/test_doctor.py
+      - name: Check terminal and dashboard request identities
+        run: python bench/test_turing_request_ids.py
       - name: Check state detection crash resilience without a GPU
         run: python bench/test_prepare_state.py
       - name: Check explicit chat-template targets and side-effect-free help

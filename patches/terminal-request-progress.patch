@@ -18,13 +18,13 @@ Upstream: none
 Cut-against: 0.33.0
 Retires-when: upstream has per-request progress logging
 
---- exported from ea0c47a5dc (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 9513c33 (terminal-request-progress); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 97c2abc4ac..b0a058d612 100755
+index fc1dbd6..f23ca8c 100755
 --- a/envs.py
 +++ b/envs.py
-@@ -256,6 +256,7 @@
+@@ -237,6 +237,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -32,7 +32,7 @@ index 97c2abc4ac..b0a058d612 100755
      VLLM_GDN_SM75: bool = False
      VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
      VLLM_FLASHINFER_SM75: bool = False
-@@ -1717,6 +1718,7 @@
+@@ -1676,6 +1677,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -40,7 +40,7 @@ index 97c2abc4ac..b0a058d612 100755
      "VLLM_GDN_SM75": lambda: os.environ.get("VLLM_GDN_SM75", "0") == "1",
      "VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS": lambda: os.environ.get("VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS", "0") == "1",
      "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
-@@ -2522,6 +2524,8 @@
+@@ -2479,6 +2481,8 @@
          "VLLM_RINGBUFFER_WARNING_INTERVAL",
          "VLLM_DEBUG_DUMP_PATH",
          "VLLM_PORT",
@@ -50,7 +50,7 @@ index 97c2abc4ac..b0a058d612 100755
          # Runtime memory-plan persistence; does not affect compiled graphs.
          "VLLM_ENABLE_STARTUP_PLAN",
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index e8b422779f..daa29f7da2 100644
+index e8b4227..daa29f7 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
 @@ -1,6 +1,7 @@
@@ -87,7 +87,7 @@ index e8b422779f..daa29f7da2 100644
              new_logprobs = None
              new_sampling_mask = None
 diff --git a/v1/engine/output_processor.py b/v1/engine/output_processor.py
-index bfbad0fbff..1484b6ee2a 100644
+index bfbad0f..1484b6e 100644
 --- a/v1/engine/output_processor.py
 +++ b/v1/engine/output_processor.py
 @@ -2,6 +2,7 @@
@@ -127,10 +127,10 @@ index bfbad0fbff..1484b6ee2a 100644
              if request_output := req_state.make_request_output(
 diff --git a/v1/metrics/terminal_progress.py b/v1/metrics/terminal_progress.py
 new file mode 100644
-index 0000000000..1faf4f572a
+index 0000000..28172f5
 --- /dev/null
 +++ b/v1/metrics/terminal_progress.py
-@@ -0,0 +1,61 @@
+@@ -0,0 +1,66 @@
 +# SPDX-License-Identifier: Apache-2.0
 +"""Request-scoped terminal progress; no prompts, generated text, or GPU syncs."""
 +import time
@@ -150,11 +150,16 @@ index 0000000000..1faf4f572a
 +    if now - request._terminal_read_last < 1.0:
 +        return
 +    request._terminal_read_last = now
++    # InputProcessor.assign_request_id appends exactly one random suffix.
++    # OutputProcessor logs external_req_id; keep all phases on that same ID.
++    request_id = request.request_id
++    if not envs.VLLM_DISABLE_REQUEST_ID_RANDOMIZATION:
++        request_id = request_id.rsplit("-", 1)[0]
 +    print(
 +        f"[hyperqwen] reading the prompt: {max(0, min(completed, request.num_prompt_tokens)):,} "
 +        f"of {request.num_prompt_tokens:,} tokens, "
 +        f"{now - request._terminal_started:.0f} s so far "
-+        f"(req {request.request_id})", flush=True,
++        f"(req {request_id})", flush=True,
 +    )
 +
 +
