@@ -156,4 +156,3 @@ This uses Qwen's parser and the chat streaming generator with synthetic engine
 outputs. It checks continuous counts during a buffered array argument, hidden
 reasoning, final-only usage and no-usage streams. No model or GPU is needed.
 The Docker build runs the same regression after applying the patches.
-
