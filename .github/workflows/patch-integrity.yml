@@ -41,6 +41,8 @@ jobs:
         run: python bench/test_quality_battery.py
       - name: Check the bench harness (resolve_api_key.sh's key, the URL, streams and /metrics) without a GPU
         run: python bench/test_harness.py
+      - name: Check benchmark stream completion and monotonic timing
+        run: python bench/test_stream_probes.py
       - name: Check Vision smoke verification against HTTP stubs without a GPU
         run: python bench/test_vision_smoke.py
       - name: Check conc_ladder --salt repeats its prompts and reports a prefix-cache hit without a GPU

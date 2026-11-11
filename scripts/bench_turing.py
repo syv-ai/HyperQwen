@@ -63,12 +63,19 @@ def stream_once(model: str, prompt: str, gen: int) -> dict:
     t0 = time.perf_counter()
     first = last = None
     usage = {}
+    done = False
     with post("/v1/chat/completions", body) as r:
         for raw in r:
             line = raw.decode().strip()
-            if not line.startswith("data:") or line == "data: [DONE]":
+            if not line.startswith("data:"):
                 continue
-            chunk = json.loads(line[5:])
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                done = True
+                break
+            chunk = json.loads(payload)
+            if "error" in chunk:
+                raise RuntimeError(f"stream error: {chunk['error']}")
             if chunk.get("usage"):
                 usage = chunk["usage"]
             for ch in chunk.get("choices", []):
@@ -77,7 +84,13 @@ def stream_once(model: str, prompt: str, gen: int) -> dict:
                     now = time.perf_counter()
                     first = first or now
                     last = now
-    out = usage.get("completion_tokens", 0)
+    if not done:
+        raise RuntimeError("incomplete stream: missing [DONE]")
+    if first is None or type(usage.get("completion_tokens")) is not int or usage["completion_tokens"] < 1:
+        raise RuntimeError("stream has no generated text or valid completion usage")
+    if type(usage.get("prompt_tokens")) is not int or usage["prompt_tokens"] < 1:
+        raise RuntimeError("stream has no valid prompt usage")
+    out = usage["completion_tokens"]
     cached = (usage.get("prompt_tokens_details") or {}).get("cached_tokens", 0) or 0
     ttft = (first - t0) if first else None
     decode = (out - 1) / (last - first) if first and last and last > first and out > 1 else None
@@ -92,6 +105,8 @@ def main() -> None:
     ap.add_argument("--runs", type=int, default=3, help="requests per length; the first is cold, the rest cached")
     ap.add_argument("--json")
     a = ap.parse_args()
+    if min(*a.lengths, a.gen, a.runs) < 1:
+        ap.error("lengths, --gen and --runs must be positive")
     req = urllib.request.Request(URL + "/v1/models", headers=HEAD)
     info = json.load(urllib.request.urlopen(req, timeout=10))["data"][0]
     model = info["id"]
