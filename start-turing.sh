@@ -27,9 +27,19 @@ set -u
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # This checkpoint has 24 attention heads / 4 KV heads, so TP must be 1, 2 or 4.
-NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
 if [ -z "${TP:-}" ]; then
-  case "$NGPU" in 0|1) TP=1 ;; *) TP=2 ;; esac
+  # Match the devices the engine sees, including CUDA_VISIBLE_DEVICES masks.
+  # nvidia-smi -L counts physical GPUs even when CUDA hides some of them.
+  if ! NGPU=$("$REPO/venv/bin/python" -c 'import torch; print(torch.cuda.device_count())'); then
+    echo "Cannot detect visible CUDA devices; check the prepared venv or set TP explicitly." >&2
+    exit 1
+  fi
+  case "$NGPU" in
+    0) echo "No visible CUDA devices; check CUDA_VISIBLE_DEVICES." >&2; exit 1 ;;
+    1) TP=1 ;;
+    [2-9]|[1-9][0-9]*) TP=2 ;;
+    *) echo "Invalid visible CUDA device count: $NGPU" >&2; exit 1 ;;
+  esac
 fi
 case "$TP" in 1|2|4) ;; *) echo "TP=$TP: this checkpoint only supports 1, 2 or 4 (24 heads / 4 KV heads)" >&2; exit 1 ;; esac
 # 262136, not 262144: DFlash2 needs 8 lookahead positions inside the model's 262144.
