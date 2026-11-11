@@ -45,6 +45,7 @@ class Source:
         self.disk_prev = None
         self.reqs: deque = deque(maxlen=30)
         self.cur: dict = {}                                 # request id -> its live facts
+        self.log_identity = None
         self.log_pos = None
         self.pending = ""
         self.first_log = True
@@ -80,12 +81,15 @@ class Source:
     # ----------------------------------------------------------------- log
     def read_log(self) -> None:
         try:
-            size = os.path.getsize(self.log_path)
             with open(self.log_path, "rb") as f:
+                info = os.fstat(f.fileno())
+                size = info.st_size
+                identity = (info.st_dev, info.st_ino)
                 if self.log_pos is None:
                     f.seek(max(0, size - 200_000))
-                    stamp = os.path.getmtime(self.log_path)
-                elif size < self.log_pos:
+                    stamp = info.st_mtime
+                elif identity != self.log_identity or size < self.log_pos:
+                    self.pending = ""
                     f.seek(0)
                     stamp = time.time()
                 else:
@@ -93,6 +97,7 @@ class Source:
                     stamp = time.time()
                 data = f.read()
                 self.log_pos = f.tell()
+                self.log_identity = identity
         except OSError:
             return
         text = self.pending + data.decode(errors="replace")
