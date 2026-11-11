@@ -30,7 +30,7 @@ ks = torch.rand(nblocks, BS, HKV, device=dev) / 100
 vs = torch.rand(nblocks, BS, HKV, device=dev) / 100
 w_q = torch.randn(HKV * (D - ROT), 64, device=dev)
 w_k = torch.randn(HKV * (D - ROT), 64, device=dev)
-tables = core.LayerTables.allocate(nblocks * BS, dev)
+tables = core.LayerTables.allocate(nblocks * BS, dev, BS)
 design = core.Design()
 nb_max = 150000 // 8 + 1
 

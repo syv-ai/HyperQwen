@@ -43,9 +43,11 @@ pools of 4, buckets of 8 capped at 16, index dim 64) and its map,
 every dense read are that backend's own code. Three things are added:
 
 - **Index keys** are written beside the KV cache in `do_kv_cache_update`, into a table paged by the same slot ids.
-  Bucket rows live in the slots of their block's positions too (bucket *j* of the block at *b* is row
-  `slot(b + 8j) / 8`), so the allocator, prefix caching and preemption carry the index with the KV pages and need no
-  new bookkeeping.
+  All 64 bucket rows of a cluster belong to the KV page containing its final key. A shared prefix page can
+  therefore carry only buckets whose entire cluster is shared. Anchoring rows at their first keys would let
+  re-clustering a divergent suffix overwrite another request's buckets when a 512-key cluster crosses a KV
+  page boundary (for example, with 816-token pages). The allocator, prefix caching and preemption carry the
+  side tables with their owning pages without a separate lifetime manager.
 - **Clustering when a block is final.** A prefill chunk buckets the blocks it closes in its own forward, before its
   queries select. A block closed by decode tokens, which may be rejected drafts, is bucketed by the next step's
   metadata builder, once they are accepted. Until then the query's dense tail reaches down to the last bucketed
@@ -64,6 +66,7 @@ The MTP drafter's attention layer is not in the map and keeps the dense read.
 |---|---|---|
 | `tests/check_core.py` (GPU) | Ward partitions bit-identical to `lsa.core.ward` (CPU); selection identical to `lsa.core.reference.read` over our tables for every query; top-p kernel equal to a stable sort; sparse read within 1.2e-3 of `lsa.core.attention.topk_attention` on bf16 and int8 caches, split-KV or not; at a budget covering the context, equal to dense causal attention | `LSA_REF=<upstream checkout>/src python lsa/tests/check_core.py` |
 | `tests/gate_test.py` (CPU) | the plugin is inert without `LSA=1` and owns `CUSTOM` with it; defaults are the paper's | Docker build |
+| `tests/check_cache_ownership.py` (CPU; `--device cuda` optional) | forks sharing a prefix page cannot modify each other's private-cluster buckets; complete shared clusters keep their rows; page bounds/accounting and sparse-read output isolation | Docker build (CPU); GPU by hand |
 | `tests/ruler_mk.py` | RULER-style multi-key needle retrieval against a running server | below |
 | `tests/bench_read.py`, `bench_decode_graph.py` | one layer's cost, prefill and graph-replayed decode | |
 
@@ -78,8 +81,11 @@ The MTP drafter's attention layer is not in the map and keeps the dense read.
 | `LSA_BASE` | pthfa if installed | `triton` forces vLLM's Triton backend underneath |
 | `LSA_DECODE_SPLITS`, `LSA_PREFILL_CHUNK` | 16, 256 | launch shape of the read |
 
-The index tables take ~7% of the KV pool on top of it (2.4 KB a token over 16 layers against 33 KB of int8 KV), so an
-unset `GPU_UTIL` drops by 0.02 with `LSA=1`.
+Index keys take 128 bytes per token per layer. Bucket storage is page-rounded: each page reserves
+`64 * ceil(block_size / 512)` rows of 160 bytes, plus small sink rows. At 816-token pages that is about
+153 bytes per token per layer (2.4 KB over 16 layers against 33 KB of int8 KV), still roughly 7% of the KV pool.
+Smaller pages can have substantially more padding; the boot log accounts for the actual page geometry.
+An unset `GPU_UTIL` drops by 0.02 with `LSA=1`.
 
 ## Results
 
@@ -110,5 +116,6 @@ contexts past what 24 GB holds, which is where the paper measures it (1M-10M on 
 ## Limits
 
 - Qwen3.8-27B only: the map is per checkpoint. Another model needs its own distilled map (upstream's `lsa distill`).
-- `SPEC=mtp CTX=long` only, single GPU (no TP or DCP split of the KV heads), int8_per_token_head or bf16 KV.
+- `SPEC=mtp CTX=long` only, single GPU (no TP or DCP split of the KV heads), int8_per_token_head or bf16 KV,
+  layer-compact NHD (`LBNHC`) cache layout. Other layouts are refused during layout negotiation.
 - The flat design only; the tree design (D-LSA Tree) and N-LSA are not ported.

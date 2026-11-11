@@ -10,9 +10,9 @@ What a layer keeps, all paged by the KV cache's own slot ids, so the allocator, 
 preemption need no new bookkeeping:
 
 - index keys, one per slot: normalize(k[:, :, rot:] flattened @ W_K)          [slots + 1, 64] bf16
-- bucket rows, one per 8 slots: cluster block [b, b + 512) keeps its 64 buckets in the rows of
-  slots slot(b), slot(b + 8), ..., slot(b + 504), divided by 8 -- the centroid and the
-  block-local positions of the bucket's keys                                     [slots / 8 + 1, ...]
+- bucket rows, owned by the KV page containing a cluster block's final key. A page reserves
+  64 rows per cluster that can end in it. A shared prefix page must never hold buckets that
+  depend on a different request's private suffix -- the centroid and block-local members.
 
 The extra row of each table is a sink for writes that must go nowhere (padding, masked blocks), so
 nothing here needs a host sync to decide whether to write.
@@ -59,13 +59,14 @@ class LayerTables:
     """One layer's index, paged by KV slot. The last row of each tensor is the write sink."""
 
     index_keys: torch.Tensor   # [slots + 1, 64] bf16
-    centroids: torch.Tensor    # [slots / 8 + 1, 64] bf16
-    members: torch.Tensor      # [slots / 8 + 1, 16] int16, block-local positions, -1 padded
+    centroids: torch.Tensor    # [pages * bucket_rows_per_page(block_size) + 1, 64] bf16
+    members: torch.Tensor      # [same rows, 16] int16, block-local positions, -1 padded
 
     @classmethod
-    def allocate(cls, num_slots: int, device: torch.device) -> "LayerTables":
-        assert num_slots % BUCKET_SIZE == 0
-        rows = num_slots // BUCKET_SIZE
+    def allocate(cls, num_slots: int, device: torch.device, block_size: int) -> "LayerTables":
+        assert block_size > 0 and block_size % BUCKET_SIZE == 0
+        assert num_slots % block_size == 0
+        rows = num_slots // block_size * bucket_rows_per_page(block_size)
         return cls(
             torch.zeros(num_slots + 1, INDEX_DIM, dtype=torch.bfloat16, device=device),
             torch.zeros(rows + 1, INDEX_DIM, dtype=torch.bfloat16, device=device),
@@ -73,8 +74,8 @@ class LayerTables:
         )
 
     @staticmethod
-    def bytes_per_slot() -> float:
-        return INDEX_DIM * 2 + (INDEX_DIM * 2 + BUCKET_CAP * 2) / BUCKET_SIZE
+    def bytes_per_slot(block_size: int) -> float:
+        return INDEX_DIM * 2 + (INDEX_DIM * 2 + BUCKET_CAP * 2) * bucket_rows_per_page(block_size) / block_size
 
     @property
     def key_sink(self) -> int:
@@ -213,6 +214,26 @@ def slots_of(block_table: torch.Tensor, requests: torch.Tensor, positions: torch
     return blocks * block_size + positions % block_size
 
 
+def bucket_rows_per_page(block_size: int) -> int:
+    return (block_size + CLUSTER_BLOCK - 1) // CLUSTER_BLOCK * BUCKETS_PER_BLOCK
+
+
+def bucket_rows(block_table: torch.Tensor, requests: torch.Tensor, bucket_positions: torch.Tensor,
+                block_size: int, valid: torch.Tensor | None = None) -> torch.Tensor:
+    """Address buckets through their cluster's last key, never a partial shared prefix.
+
+    `valid` masks padding buckets before indexing the block table: their otherwise
+    arbitrary positions may name a cluster beyond the request's cache capacity.
+    """
+    last = (bucket_positions // CLUSTER_BLOCK + 1) * CLUSTER_BLOCK - 1
+    if valid is not None:
+        last = torch.where(valid, last, 0)
+    pages = block_table[requests, last // block_size].long()
+    cluster_in_page = last.remainder(block_size) // CLUSTER_BLOCK
+    bucket_in_cluster = bucket_positions.remainder(CLUSTER_BLOCK) // BUCKET_SIZE
+    return pages * bucket_rows_per_page(block_size) + cluster_in_page * BUCKETS_PER_BLOCK + bucket_in_cluster
+
+
 def cluster_blocks(tables: LayerTables, block_table: torch.Tensor, requests: torch.Tensor,
                    starts: torch.Tensor, valid: torch.Tensor, block_size: int) -> None:
     """Bucket the cluster blocks [starts, starts + 512) of `requests` and write their rows.
@@ -228,7 +249,8 @@ def cluster_blocks(tables: LayerTables, block_table: torch.Tensor, requests: tor
     keys = tables.index_keys[slots].float()
     keys = torch.where(valid[:, None, None], keys, F.normalize(torch.ones_like(keys), dim=-1))
     centroids, members = bucket_tables(keys)
-    rows = slots[:, ::BUCKET_SIZE] // BUCKET_SIZE                                   # [G, 64]
+    rows = bucket_rows(block_table, requests[:, None], starts[:, None] + offsets[None, ::BUCKET_SIZE],
+                       block_size, valid[:, None])                                  # [G, 64]
     rows = torch.where(valid[:, None], rows, tables.row_sink).flatten()
     tables.centroids.index_copy_(0, rows, centroids.reshape(-1, INDEX_DIM).to(torch.bfloat16))
     tables.members.index_copy_(0, rows, members.reshape(-1, BUCKET_CAP).to(torch.int16))
@@ -256,7 +278,8 @@ def expand(tables: LayerTables, block_table: torch.Tensor, token_requests: torch
     top_p = min(design.top_p, nb)
     best_scores, picked = torch.topk(scores, top_p, dim=1, sorted=True)            # [n, p]
     bucket_positions = picked * BUCKET_SIZE
-    rows = slots_of(block_table, token_requests[:, None], bucket_positions, block_size) // BUCKET_SIZE
+    rows = bucket_rows(block_table, token_requests[:, None], bucket_positions, block_size,
+                       torch.isfinite(best_scores))
     local = tables.members[rows].long()                                              # [n, p, 16]
     base = (bucket_positions // CLUSTER_BLOCK) * CLUSTER_BLOCK
     positions = base[:, :, None] + local

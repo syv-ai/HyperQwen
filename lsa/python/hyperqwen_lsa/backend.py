@@ -17,7 +17,7 @@ final: a prefill chunk buckets the blocks it closes in its own forward, before i
 a block closed by decode tokens, which may be rejected drafts, is bucketed by the next step's
 builder, once they have been accepted. Until then the query's dense tail reaches down to the last
 bucketed boundary, so nothing is missed in the meantime -- the read is a superset of the paper's.
-Bucket rows live in KV slots, so prefix caching and preemption carry them with the KV pages; the
+Bucket rows belong to the page containing a cluster's final key, so prefix caching and preemption carry them with the KV pages; the
 prefill rule also re-buckets the block a prefix hit ends in, which covers a block whose decode
 closure never reached a next step.
 
@@ -42,7 +42,7 @@ from vllm.v1.attention.backends.triton_attn import (
     TritonAttentionMetadata,
     TritonAttentionMetadataBuilder,
 )
-from vllm.v1.kv_cache_interface import KVQuantMode
+from vllm.v1.kv_cache_interface import KVCacheLayout, KVQuantMode
 
 from hyperqwen_lsa import core, read, settings
 
@@ -249,7 +249,8 @@ class LsaAttentionImpl(BaseImpl):
             return None
         if kv_cache.numel() == 0:
             return None
-        key = (kv_cache.untyped_storage().data_ptr(), kv_cache.shape[0] * kv_cache.shape[2])
+        block_size = kv_cache.shape[2]
+        key = (kv_cache.untyped_storage().data_ptr(), kv_cache.shape[0] * block_size, block_size)
         if self._lsa_ready and self._lsa_cache_key == key:
             return self._lsa_tables
         name = layer.layer_name
@@ -277,7 +278,7 @@ class LsaAttentionImpl(BaseImpl):
         num_slots = key[1]
         Registry.tables.pop(name, None)
         self._lsa_tables = None
-        tables = core.LayerTables.allocate(num_slots, kv_cache.device)
+        tables = core.LayerTables.allocate(num_slots, kv_cache.device, block_size)
         Registry.tables[name] = tables
         self._lsa_tables, self._lsa_cache_key, self._lsa_ready = tables, key, True
         Registry.slots[name] = num_slots
@@ -288,7 +289,7 @@ class LsaAttentionImpl(BaseImpl):
                 "tokens; index tables %.1f MiB a layer (%d slots)", BASE_NAME, settings.map_path(),
                 self.lsa_design.top_k, self.lsa_design.top_p, self.lsa_design.window,
                 self.lsa_design.sink, self.lsa_dense_below,
-                num_slots * core.LayerTables.bytes_per_slot() / 2**20, num_slots)
+                num_slots * core.LayerTables.bytes_per_slot(block_size) / 2**20, num_slots)
         return tables
 
     def fused_rope_kvcache_supported(self):
@@ -340,6 +341,11 @@ class LsaAttentionImpl(BaseImpl):
 
 
 class LsaAttentionBackend(BaseBackend):
+    @classmethod
+    def supported_kv_cache_layouts(cls):
+        # The sparse reader flattens physical (block, token) into one slot axis.
+        return (KVCacheLayout.LBNHC,)
+
     @staticmethod
     def get_name() -> str:
         return "CUSTOM"
