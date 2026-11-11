@@ -15,6 +15,10 @@ OUT = int(sys.argv[2]) if len(sys.argv) > 2 else 128
 CONC = int(sys.argv[3]) if len(sys.argv) > 3 else 4
 SEEDBASE = int(sys.argv[4]) if len(sys.argv) > 4 else 1000
 
+if min(IN, OUT, CONC) < 1:
+    print("input/output counts and concurrency must be positive", file=sys.stderr)
+    sys.exit(2)
+
 prompts = []
 for i in range(CONC):
     rng = random.Random(SEEDBASE + i)
@@ -41,32 +45,40 @@ def run_one(i):
         f"http://127.0.0.1:{PORT}/v1/completions", data=body, headers=headers)
 
     barrier.wait()
-    t0 = time.time()
+    t0 = time.perf_counter()
     first = None
     chunks = []
     usage = None
+    done = False
     err = None
     try:
         with urllib.request.urlopen(req, timeout=3600) as r:
             for raw in r:
                 line = raw.decode().strip()
-                if not line.startswith("data: "):
+                if not line.startswith("data:"):
                     continue
-                payload = line[6:]
+                payload = line[5:].strip()
                 if payload == "[DONE]":
+                    done = True
                     break
                 d = json.loads(payload)
-                now = time.time()
+                if "error" in d:
+                    raise RuntimeError(f"stream error: {d['error']}")
+                now = time.perf_counter()
                 if d.get("usage"):
                     usage = d["usage"]
                 ch = d.get("choices") or []
-                if ch:
+                if ch and ch[0].get("text"):
                     if first is None:
                         first = now
                     chunks.append(now)
+        if not done:
+            raise RuntimeError("incomplete stream: missing [DONE]")
+        if not chunks or not usage or type(usage.get("completion_tokens")) is not int or usage["completion_tokens"] < 1:
+            raise RuntimeError("stream has no generated text or valid completion usage")
     except Exception as e:  # report, do not hang the whole run
         err = repr(e)
-    t1 = time.time()
+    t1 = time.perf_counter()
     gaps = [(chunks[j] - chunks[j - 1]) * 1000 for j in range(1, len(chunks))]
     results[i] = {
         "idx": i,
@@ -121,3 +133,6 @@ out = {
     "errs": [r["err"] for r in results if r and r["err"]],
 }
 print(json.dumps(out, ensure_ascii=False))
+
+if len(ok) != CONC:
+    sys.exit(1)
