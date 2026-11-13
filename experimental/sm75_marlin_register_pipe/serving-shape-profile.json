@@ -1,0 +1,232 @@
+{
+  "pcie": {
+    "scope": "saved serving trace; shape assignment from model architecture and checked 279-call order; no measured hardware stalls",
+    "rows": [
+      {
+        "role": "gate_up",
+        "K": 5120,
+        "N": 17408,
+        "bits": 4,
+        "calls_per_step": 69.0,
+        "mean_us": 89.86689275362319,
+        "ms_per_step": 6.200815599999999,
+        "nominal_bytes_per_call": 46317568,
+        "effective_GB_s": 515.40190809738
+      },
+      {
+        "role": "mlp_down",
+        "K": 8704,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 69.0,
+        "mean_us": 49.59228164251208,
+        "ms_per_step": 3.4218674333333334,
+        "nominal_bytes_per_call": 23199744,
+        "effective_GB_s": 467.8095709980894
+      },
+      {
+        "role": "target_qkv_gdn",
+        "K": 5120,
+        "N": 8192,
+        "bits": 4,
+        "calls_per_step": 48.0,
+        "mean_us": 47.00323263888889,
+        "ms_per_step": 2.256155166666667,
+        "nominal_bytes_per_call": 21839872,
+        "effective_GB_s": 464.64616950474226
+      },
+      {
+        "role": "target_out",
+        "K": 3072,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 64.0,
+        "mean_us": 25.3603875,
+        "ms_per_step": 1.6230648,
+        "nominal_bytes_per_call": 8241152,
+        "effective_GB_s": 324.96159611125813
+      },
+      {
+        "role": "target_head",
+        "K": 5120,
+        "N": 124160,
+        "bits": 8,
+        "calls_per_step": 1.0,
+        "mean_us": 1134.7768666666666,
+        "ms_per_step": 1.1347768666666667,
+        "nominal_bytes_per_call": 647700480,
+        "effective_GB_s": 570.7734260591495
+      },
+      {
+        "role": "draft_head",
+        "K": 5120,
+        "N": 124160,
+        "bits": 8,
+        "calls_per_step": 1.0,
+        "mean_us": 1132.1774333333333,
+        "ms_per_step": 1.1321774333333332,
+        "nominal_bytes_per_call": 647700480,
+        "effective_GB_s": 572.0838986280213
+      },
+      {
+        "role": "target_qkv_full",
+        "K": 5120,
+        "N": 7168,
+        "bits": 4,
+        "calls_per_step": 16.0,
+        "mean_us": 42.48104791666667,
+        "ms_per_step": 0.6796967666666666,
+        "nominal_bytes_per_call": 19120128,
+        "effective_GB_s": 450.08607220582627
+      },
+      {
+        "role": "draft_fc",
+        "K": 25600,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 1.0,
+        "mean_us": 132.39883333333333,
+        "ms_per_step": 0.13239883333333333,
+        "nominal_bytes_per_call": 68075520,
+        "effective_GB_s": 514.1700896155933
+      },
+      {
+        "role": "draft_qkv",
+        "K": 5120,
+        "N": 3072,
+        "bits": 4,
+        "calls_per_step": 5.0,
+        "mean_us": 21.410780000000003,
+        "ms_per_step": 0.10705390000000001,
+        "nominal_bytes_per_call": 8241152,
+        "effective_GB_s": 384.90666850997485
+      },
+      {
+        "role": "draft_out",
+        "K": 2048,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 5.0,
+        "mean_us": 16.925613333333335,
+        "ms_per_step": 0.08462806666666667,
+        "nominal_bytes_per_call": 5521408,
+        "effective_GB_s": 326.216125304371
+      }
+    ]
+  },
+  "nvlink": {
+    "scope": "saved serving trace; shape assignment from model architecture and checked 279-call order; no measured hardware stalls",
+    "rows": [
+      {
+        "role": "gate_up",
+        "K": 5120,
+        "N": 17408,
+        "bits": 4,
+        "calls_per_step": 69.0,
+        "mean_us": 92.99330289855072,
+        "ms_per_step": 6.4165379,
+        "nominal_bytes_per_call": 46317568,
+        "effective_GB_s": 498.07423283512435
+      },
+      {
+        "role": "mlp_down",
+        "K": 8704,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 69.0,
+        "mean_us": 54.478744444444445,
+        "ms_per_step": 3.759033366666667,
+        "nominal_bytes_per_call": 23199744,
+        "effective_GB_s": 425.8494617778555
+      },
+      {
+        "role": "target_qkv_gdn",
+        "K": 5120,
+        "N": 8192,
+        "bits": 4,
+        "calls_per_step": 48.0,
+        "mean_us": 52.16155208333333,
+        "ms_per_step": 2.5037545,
+        "nominal_bytes_per_call": 21839872,
+        "effective_GB_s": 418.6967436304158
+      },
+      {
+        "role": "target_out",
+        "K": 3072,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 64.0,
+        "mean_us": 27.403684375,
+        "ms_per_step": 1.7538358,
+        "nominal_bytes_per_call": 8241152,
+        "effective_GB_s": 300.7315325642229
+      },
+      {
+        "role": "target_head",
+        "K": 5120,
+        "N": 124160,
+        "bits": 8,
+        "calls_per_step": 1.0,
+        "mean_us": 1230.0965666666666,
+        "ms_per_step": 1.2300965666666666,
+        "nominal_bytes_per_call": 647700480,
+        "effective_GB_s": 526.5444173664739
+      },
+      {
+        "role": "draft_head",
+        "K": 5120,
+        "N": 124160,
+        "bits": 8,
+        "calls_per_step": 1.0,
+        "mean_us": 1218.3578333333332,
+        "ms_per_step": 1.2183578333333334,
+        "nominal_bytes_per_call": 647700480,
+        "effective_GB_s": 531.6176104256181
+      },
+      {
+        "role": "target_qkv_full",
+        "K": 5120,
+        "N": 7168,
+        "bits": 4,
+        "calls_per_step": 16.0,
+        "mean_us": 47.28868958333334,
+        "ms_per_step": 0.7566190333333334,
+        "nominal_bytes_per_call": 19120128,
+        "effective_GB_s": 404.3277191326273
+      },
+      {
+        "role": "draft_fc",
+        "K": 25600,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 1.0,
+        "mean_us": 143.8742,
+        "ms_per_step": 0.14387419999999998,
+        "nominal_bytes_per_call": 68075520,
+        "effective_GB_s": 473.16002452142214
+      },
+      {
+        "role": "draft_qkv",
+        "K": 5120,
+        "N": 3072,
+        "bits": 4,
+        "calls_per_step": 5.0,
+        "mean_us": 22.948753333333332,
+        "ms_per_step": 0.11474376666666666,
+        "nominal_bytes_per_call": 8241152,
+        "effective_GB_s": 359.11109768344716
+      },
+      {
+        "role": "draft_out",
+        "K": 2048,
+        "N": 5120,
+        "bits": 4,
+        "calls_per_step": 5.0,
+        "mean_us": 18.421326666666666,
+        "ms_per_step": 0.09210663333333334,
+        "nominal_bytes_per_call": 5521408,
+        "effective_GB_s": 299.7291183154018
+      }
+    ]
+  }
+}

@@ -1,0 +1,181 @@
+{
+  "scope": "local idle standalone kernels, randomized 15 measurement rounds; not engine throughput",
+  "public_requests_overlapped": false,
+  "cases": [
+    {
+      "M": 8,
+      "K": 5120,
+      "N": 17408,
+      "bits": 4,
+      "policy_comparison": [
+        {
+          "policy": "default",
+          "stages": 2,
+          "occupancy": 2,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.08423324674367905,
+          "paired_median_gain_percent": 0.0
+        },
+        {
+          "policy": "cg",
+          "stages": 2,
+          "occupancy": 2,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.08418300002813339,
+          "paired_median_gain_percent": 0.054635422709070625
+        },
+        {
+          "policy": "cs",
+          "stages": 2,
+          "occupancy": 2,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.08234850317239761,
+          "paired_median_gain_percent": 2.2956364365945614
+        }
+      ]
+    },
+    {
+      "M": 8,
+      "K": 8704,
+      "N": 5120,
+      "bits": 4,
+      "policy_comparison": [
+        {
+          "policy": "default",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.04872800037264824,
+          "paired_median_gain_percent": 0.0
+        },
+        {
+          "policy": "cg",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.048687249422073364,
+          "paired_median_gain_percent": 0.16148424955657603
+        },
+        {
+          "policy": "cs",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.04700449854135513,
+          "paired_median_gain_percent": 3.6520289476332124
+        }
+      ]
+    },
+    {
+      "M": 8,
+      "K": 5120,
+      "N": 8192,
+      "bits": 4,
+      "policy_comparison": [
+        {
+          "policy": "default",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.046112000942230225,
+          "paired_median_gain_percent": 0.0
+        },
+        {
+          "policy": "cg",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.04617375135421753,
+          "paired_median_gain_percent": -0.11047162021196044
+        },
+        {
+          "policy": "cs",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.04419349879026413,
+          "paired_median_gain_percent": 4.482948023457367
+        }
+      ]
+    },
+    {
+      "M": 8,
+      "K": 3072,
+      "N": 5120,
+      "bits": 4,
+      "policy_comparison": [
+        {
+          "policy": "default",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.02131200022995472,
+          "paired_median_gain_percent": 0.0
+        },
+        {
+          "policy": "cg",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.02128775045275688,
+          "paired_median_gain_percent": 0.08714601537742617
+        },
+        {
+          "policy": "cs",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.020817749202251434,
+          "paired_median_gain_percent": 2.3467711378092337
+        }
+      ]
+    },
+    {
+      "M": 8,
+      "K": 5120,
+      "N": 7168,
+      "bits": 4,
+      "policy_comparison": [
+        {
+          "policy": "default",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.04094424843788147,
+          "paired_median_gain_percent": 0.0
+        },
+        {
+          "policy": "cg",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.04081900045275688,
+          "paired_median_gain_percent": 0.3237789618513176
+        },
+        {
+          "policy": "cs",
+          "stages": 2,
+          "occupancy": 1,
+          "exact_bits": true,
+          "max_abs_error": 0.0,
+          "median_ms": 0.03951974958181381,
+          "paired_median_gain_percent": 3.5644540402379743
+        }
+      ]
+    }
+  ]
+}

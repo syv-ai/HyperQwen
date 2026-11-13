@@ -1,0 +1,1100 @@
+{
+  "date": "2026-11-12",
+  "scope": "offline single-device kernels; nominal bandwidth and separate read-loop calibration; no hardware stall counters",
+  "hosts": {
+    "pcie": {
+      "calibration": [
+        {
+          "bytes": 67108864,
+          "median_ms": 0.1193159967660904,
+          "read_loop_GB_s": 562.4464935038144
+        },
+        {
+          "bytes": 536870912,
+          "median_ms": 0.922111988067627,
+          "read_loop_GB_s": 582.2187748855363
+        }
+      ],
+      "rows": [
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 17408,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 84.38224717974663,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -2.404323862393032,
+              "nominal_weight_scale_GB_s": 544.6301981281034
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 82.37174898386002,
+              "paired_gain_vs_plain_percent": 2.4635557645187434,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 557.923324039227
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 82.52999931573868,
+              "paired_gain_vs_plain_percent": 2.218949582616414,
+              "paired_gain_vs_cs_percent": -0.1440131607830908,
+              "nominal_weight_scale_GB_s": 556.8535124322467
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 82.26975053548813,
+              "paired_gain_vs_plain_percent": 2.5611490860943165,
+              "paired_gain_vs_cs_percent": 0.10442703822161059,
+              "nominal_weight_scale_GB_s": 558.6150401680846
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 82.48800039291382,
+              "paired_gain_vs_plain_percent": 2.209722928079816,
+              "paired_gain_vs_cs_percent": -0.1404588115839267,
+              "nominal_weight_scale_GB_s": 557.1370354608326
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 8704,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 49.199750646948814,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -3.578991779192553,
+              "nominal_weight_scale_GB_s": 467.0462695002509
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 47.34399914741516,
+              "paired_gain_vs_plain_percent": 3.711838204329654,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 485.3531685916854
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 47.5274994969368,
+              "paired_gain_vs_plain_percent": 3.484526042833813,
+              "paired_gain_vs_cs_percent": -0.3204620468153341,
+              "nominal_weight_scale_GB_s": 483.4792539733969
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 47.228749841451645,
+              "paired_gain_vs_plain_percent": 4.0126177390839235,
+              "paired_gain_vs_cs_percent": 0.14431515927150196,
+              "nominal_weight_scale_GB_s": 486.53754497291857
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 44.92124915122986,
+              "paired_gain_vs_plain_percent": 9.499680172004032,
+              "paired_gain_vs_cs_percent": 5.4960354111294185,
+              "nominal_weight_scale_GB_s": 511.5298535586447
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 8192,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 45.911749824881554,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -4.648293703118589,
+              "nominal_weight_scale_GB_s": 471.0532724736068
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 43.74600015580654,
+              "paired_gain_vs_plain_percent": 4.874908854866455,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 494.3738838516279
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 43.79124939441681,
+              "paired_gain_vs_plain_percent": 4.725125640053818,
+              "paired_gain_vs_cs_percent": -0.1419169745925597,
+              "nominal_weight_scale_GB_s": 493.86305024577194
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 43.93799975514412,
+              "paired_gain_vs_plain_percent": 4.4213006325250825,
+              "paired_gain_vs_cs_percent": -0.19240265829529868,
+              "nominal_weight_scale_GB_s": 492.21357641497997
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 42.44299978017807,
+              "paired_gain_vs_plain_percent": 8.2571578953336,
+              "paired_gain_vs_cs_percent": 3.1632793510841806,
+              "nominal_weight_scale_GB_s": 509.55116537498577
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 3072,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 4,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 21.330250427126884,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -5.835946143859222,
+              "nominal_weight_scale_GB_s": 380.2149453288159
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 20.096000283956528,
+              "paired_gain_vs_plain_percent": 6.197637435890413,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 403.56687327849085
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 20.128000527620316,
+              "paired_gain_vs_plain_percent": 5.992338091460791,
+              "paired_gain_vs_cs_percent": -0.21147679747616777,
+              "nominal_weight_scale_GB_s": 402.9252676574147
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 20.064249634742737,
+              "paired_gain_vs_plain_percent": 6.389589844285948,
+              "paired_gain_vs_cs_percent": 0.17867877036228386,
+              "nominal_weight_scale_GB_s": 404.2054972221236
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 18.94600037485361,
+              "paired_gain_vs_plain_percent": 12.552134592706054,
+              "paired_gain_vs_cs_percent": 6.11988706679405,
+              "nominal_weight_scale_GB_s": 428.06290718563673
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 7168,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 41.37350060045719,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -3.803714048166146,
+              "nominal_weight_scale_GB_s": 457.3826175054399
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 39.76975008845329,
+              "paired_gain_vs_plain_percent": 3.9541177411042794,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 475.8269779898425
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 40.01924954354763,
+              "paired_gain_vs_plain_percent": 3.3781523347997333,
+              "paired_gain_vs_cs_percent": -0.42328018204275675,
+              "nominal_weight_scale_GB_s": 472.860441308577
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 39.83900137245655,
+              "paired_gain_vs_plain_percent": 3.8414241116509373,
+              "paired_gain_vs_cs_percent": 0.02506644908453759,
+              "nominal_weight_scale_GB_s": 474.9998581310609
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 38.27174939215183,
+              "paired_gain_vs_plain_percent": 8.046337876197207,
+              "paired_gain_vs_cs_percent": 3.9512149620595016,
+              "nominal_weight_scale_GB_s": 494.45139823894584
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 25600,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 131.78600370883942,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -3.4407277360700594,
+              "nominal_weight_scale_GB_s": 512.8313940630318
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 127.24824994802475,
+              "paired_gain_vs_plain_percent": 3.563332381481499,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 531.1192886943833
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 127.39650160074234,
+              "paired_gain_vs_plain_percent": 3.393045872638578,
+              "paired_gain_vs_cs_percent": -0.18647219005409887,
+              "nominal_weight_scale_GB_s": 530.5012237447986
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 127.01999396085739,
+              "paired_gain_vs_plain_percent": 3.691372298754636,
+              "paired_gain_vs_cs_percent": 0.08521274529244005,
+              "nominal_weight_scale_GB_s": 532.0737144801531
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 123.40174987912178,
+              "paired_gain_vs_plain_percent": 6.798427188408185,
+              "paired_gain_vs_cs_percent": 3.1690477280265528,
+              "nominal_weight_scale_GB_s": 547.6745675503137
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 3072,
+          "bits": 4,
+          "rotating_weight_copies": 4,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 20.92800009995699,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -4.797810516660639,
+              "nominal_weight_scale_GB_s": 387.522933928917
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 19.917000085115433,
+              "paired_gain_vs_plain_percent": 5.039601685372618,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 407.1938527560134
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 19.95099987834692,
+              "paired_gain_vs_plain_percent": 4.816201278176302,
+              "paired_gain_vs_cs_percent": -0.3322076393296569,
+              "nominal_weight_scale_GB_s": 406.49992729446984
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 19.92025040090084,
+              "paired_gain_vs_plain_percent": 5.034464788472071,
+              "paired_gain_vs_cs_percent": -0.09544715584980934,
+              "nominal_weight_scale_GB_s": 407.1274123960431
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 18.978250212967396,
+              "paired_gain_vs_plain_percent": 10.176200970862247,
+              "paired_gain_vs_cs_percent": 4.8689211767248946,
+              "nominal_weight_scale_GB_s": 427.33549768769365
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 2048,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 4,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 14.97500017285347,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -1.9724132028978159,
+              "nominal_weight_scale_GB_s": 361.0497454151118
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 14.663999900221825,
+              "paired_gain_vs_plain_percent": 2.0121004717929214,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 368.70704015199914
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 14.671249780803919,
+              "paired_gain_vs_plain_percent": 2.1068031434299916,
+              "paired_gain_vs_cs_percent": 0.06476884759911705,
+              "nominal_weight_scale_GB_s": 368.5248414947057
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 14.622250106185675,
+              "paired_gain_vs_plain_percent": 2.3133972655776547,
+              "paired_gain_vs_cs_percent": 0.3713407382421763,
+              "nominal_weight_scale_GB_s": 369.75978120582045
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 14.04249994084239,
+              "paired_gain_vs_plain_percent": 6.768603269761964,
+              "paired_gain_vs_cs_percent": 4.564707130272794,
+              "nominal_weight_scale_GB_s": 385.02546005178465
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 124160,
+          "bits": 8,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1129.8742294311523,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": 1.551987583853176,
+              "nominal_weight_scale_GB_s": 571.419351979601
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1147.4092602729797,
+              "paired_gain_vs_plain_percent": -1.5282688439206993,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 562.6867608218517
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1147.00049161911,
+              "paired_gain_vs_plain_percent": -1.492381109341956,
+              "paired_gain_vs_cs_percent": 0.025084364783289903,
+              "nominal_weight_scale_GB_s": 562.8872914331741
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1146.5242505073547,
+              "paired_gain_vs_plain_percent": -1.4487369529154914,
+              "paired_gain_vs_cs_percent": 0.08245616871237482,
+              "nominal_weight_scale_GB_s": 563.1211025098665
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1144.1349983215332,
+              "paired_gain_vs_plain_percent": -1.239489352362011,
+              "paired_gain_vs_cs_percent": 0.2910610572021799,
+              "nominal_weight_scale_GB_s": 564.297046193984
+            }
+          ]
+        }
+      ]
+    },
+    "nvlink": {
+      "calibration": [
+        {
+          "bytes": 67108864,
+          "median_ms": 0.1273919939994812,
+          "read_loop_GB_s": 526.7902785183918
+        },
+        {
+          "bytes": 536870912,
+          "median_ms": 0.9872159957885742,
+          "read_loop_GB_s": 543.8231494326175
+        }
+      ],
+      "rows": [
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 17408,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 91.09099954366684,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -2.650000884229903,
+              "nominal_weight_scale_GB_s": 504.51878045282905
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 88.71999755501747,
+              "paired_gain_vs_plain_percent": 2.7221386373526224,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 518.0018177018192
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 88.82099762558937,
+              "paired_gain_vs_plain_percent": 2.587107583428294,
+              "paired_gain_vs_cs_percent": -0.1346372269803331,
+              "nominal_weight_scale_GB_s": 517.4127878379035
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 88.6009968817234,
+              "paired_gain_vs_plain_percent": 2.9070867654076293,
+              "paired_gain_vs_cs_percent": 0.19798203450959173,
+              "nominal_weight_scale_GB_s": 518.6975498859204
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 88.6472500860691,
+              "paired_gain_vs_plain_percent": 2.8325946222495735,
+              "paired_gain_vs_cs_percent": 0.12290483087988857,
+              "nominal_weight_scale_GB_s": 518.4269106529471
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 8704,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 54.530251771211624,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -3.1687912258191284,
+              "nominal_weight_scale_GB_s": 421.3910490714287
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 52.83850058913231,
+              "paired_gain_vs_plain_percent": 3.2724896532962178,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 434.8828930381528
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 53.02400141954422,
+              "paired_gain_vs_plain_percent": 2.835298091812166,
+              "paired_gain_vs_cs_percent": -0.33114755926913486,
+              "nominal_weight_scale_GB_s": 433.3614850789116
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 52.85324901342392,
+              "paired_gain_vs_plain_percent": 3.2312614183464428,
+              "paired_gain_vs_cs_percent": 0.0428544720172952,
+              "nominal_weight_scale_GB_s": 434.76154122831304
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 49.516500905156136,
+              "paired_gain_vs_plain_percent": 10.081304217491972,
+              "paired_gain_vs_cs_percent": 6.705261288391906,
+              "nominal_weight_scale_GB_s": 464.05863863468693
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 8192,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 51.055749878287315,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -4.156346487890322,
+              "nominal_weight_scale_GB_s": 423.59342584442874
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 48.86200092732906,
+              "paired_gain_vs_plain_percent": 4.33660668671243,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 442.61142788984404
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 49.04250055551529,
+              "paired_gain_vs_plain_percent": 4.094737375200664,
+              "paired_gain_vs_cs_percent": -0.16719070370982414,
+              "nominal_weight_scale_GB_s": 440.9824082179238
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 48.82875084877014,
+              "paired_gain_vs_plain_percent": 4.406294053968662,
+              "paired_gain_vs_cs_percent": 0.24217511564258443,
+              "nominal_weight_scale_GB_s": 442.91282541676406
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 46.18750140070915,
+              "paired_gain_vs_plain_percent": 10.638917951262517,
+              "paired_gain_vs_cs_percent": 5.7299249839037225,
+              "nominal_weight_scale_GB_s": 468.24096008943116
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 3072,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 4,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 23.4570000320673,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -5.336741619737934,
+              "nominal_weight_scale_GB_s": 345.74242183198936
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 22.207999601960182,
+              "paired_gain_vs_plain_percent": 5.637609161382762,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 365.1873264300746
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 22.275999188423157,
+              "paired_gain_vs_plain_percent": 5.396261590564222,
+              "paired_gain_vs_cs_percent": -0.27908693365574777,
+              "nominal_weight_scale_GB_s": 364.0725577066285
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 22.164500318467617,
+              "paired_gain_vs_plain_percent": 5.786065686093522,
+              "paired_gain_vs_cs_percent": 0.16820670808862515,
+              "nominal_weight_scale_GB_s": 365.9040304753735
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 20.628999918699265,
+              "paired_gain_vs_plain_percent": 13.723707902941118,
+              "paired_gain_vs_cs_percent": 7.480462534824827,
+              "nominal_weight_scale_GB_s": 393.13975626363623
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 7168,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 46.23999819159508,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -3.939491174856463,
+              "nominal_weight_scale_GB_s": 409.2456907457163
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 44.30625028908253,
+              "paired_gain_vs_plain_percent": 4.101053046290781,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 427.1072337769674
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 44.5957500487566,
+              "paired_gain_vs_plain_percent": 3.537590458810791,
+              "paired_gain_vs_cs_percent": -0.5878937826593988,
+              "nominal_weight_scale_GB_s": 424.33460541219483
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 44.37825083732605,
+              "paired_gain_vs_plain_percent": 4.077326047814111,
+              "paired_gain_vs_cs_percent": 0.1364182235562561,
+              "nominal_weight_scale_GB_s": 426.41428273877887
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 42.12475009262562,
+              "paired_gain_vs_plain_percent": 9.89739973633138,
+              "paired_gain_vs_cs_percent": 5.263842823522891,
+              "nominal_weight_scale_GB_s": 449.22569174630576
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 25600,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 146.98024839162827,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -3.0002914722503773,
+              "nominal_weight_scale_GB_s": 459.81688519074146
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 142.58825033903122,
+              "paired_gain_vs_plain_percent": 3.0930938166963684,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 473.98014800873096
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 143.0472508072853,
+              "paired_gain_vs_plain_percent": 2.736844841897279,
+              "paired_gain_vs_cs_percent": -0.2733162039552206,
+              "nominal_weight_scale_GB_s": 472.45927215371546
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 142.66924560070038,
+              "paired_gain_vs_plain_percent": 3.0290990268461826,
+              "paired_gain_vs_cs_percent": -0.09097648820006188,
+              "nominal_weight_scale_GB_s": 473.7110630636728
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 133.27399641275406,
+              "paired_gain_vs_plain_percent": 10.319829315428532,
+              "paired_gain_vs_cs_percent": 7.027240761541531,
+              "nominal_weight_scale_GB_s": 507.1056756690185
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 3072,
+          "bits": 4,
+          "rotating_weight_copies": 4,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 23.023500107228756,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -4.281622748174552,
+              "nominal_weight_scale_GB_s": 352.25226235057346
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 22.031249478459358,
+              "paired_gain_vs_plain_percent": 4.473146506382674,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 368.1171150973293
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 22.10925053805113,
+              "paired_gain_vs_plain_percent": 4.16772354809376,
+              "paired_gain_vs_cs_percent": -0.21802491592461948,
+              "nominal_weight_scale_GB_s": 366.8184041807363
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 22.055000066757202,
+              "paired_gain_vs_plain_percent": 4.401799582339205,
+              "paired_gain_vs_cs_percent": -0.03634805668724095,
+              "nominal_weight_scale_GB_s": 367.7206971413283
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 20.761500112712383,
+              "paired_gain_vs_plain_percent": 10.877360125032286,
+              "paired_gain_vs_cs_percent": 6.07143940376893,
+              "nominal_weight_scale_GB_s": 390.63073265279866
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 2048,
+          "N": 5120,
+          "bits": 4,
+          "rotating_weight_copies": 4,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 16.636249609291553,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": -2.5068143609900173,
+              "nominal_weight_scale_GB_s": 324.99632591352076
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 16.222749836742878,
+              "paired_gain_vs_plain_percent": 2.571278789589193,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 333.28011924059444
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 16.222000122070312,
+              "paired_gain_vs_plain_percent": 2.542892285268261,
+              "paired_gain_vs_cs_percent": -0.050763022319039175,
+              "nominal_weight_scale_GB_s": 333.2955220881834
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 16.17599930614233,
+              "paired_gain_vs_plain_percent": 2.8241446021409766,
+              "paired_gain_vs_cs_percent": 0.2727173916723058,
+              "nominal_weight_scale_GB_s": 334.2433377792596
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 15.43049979954958,
+              "paired_gain_vs_plain_percent": 7.917785734618999,
+              "paired_gain_vs_cs_percent": 5.104253925062874,
+              "nominal_weight_scale_GB_s": 350.39176113775807
+            }
+          ]
+        },
+        {
+          "M": 8,
+          "K": 5120,
+          "N": 124160,
+          "bits": 8,
+          "rotating_weight_copies": 1,
+          "variants": [
+            {
+              "variant": "plain",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1214.1069769859314,
+              "paired_gain_vs_plain_percent": 0.0,
+              "paired_gain_vs_cs_percent": 1.3931802345393596,
+              "nominal_weight_scale_GB_s": 531.7752160545251
+            },
+            {
+              "variant": "cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1230.9482097625732,
+              "paired_gain_vs_plain_percent": -1.3740349557490872,
+              "paired_gain_vs_cs_percent": 0.0,
+              "nominal_weight_scale_GB_s": 524.4997270230648
+            },
+            {
+              "variant": "group2_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1230.4919958114624,
+              "paired_gain_vs_plain_percent": -1.3064091394345057,
+              "paired_gain_vs_cs_percent": 0.07315316588453191,
+              "nominal_weight_scale_GB_s": 524.6941891517388
+            },
+            {
+              "variant": "group4_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1229.42453622818,
+              "paired_gain_vs_plain_percent": -1.2447449193749793,
+              "paired_gain_vs_cs_percent": 0.13236319375224959,
+              "nominal_weight_scale_GB_s": 525.1497598874759
+            },
+            {
+              "variant": "regpipe_cs",
+              "exact_fp16_bits": true,
+              "nonfinite": 0,
+              "max_abs_error": 0.0,
+              "median_us": 1226.0159850120544,
+              "paired_gain_vs_plain_percent": -0.9656888513102257,
+              "paired_gain_vs_cs_percent": 0.4227018289111206,
+              "nominal_weight_scale_GB_s": 526.609773357606
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

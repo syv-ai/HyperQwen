@@ -1,0 +1,124 @@
+{
+  "date": "2026-11-10",
+  "vllm": "0.33.0",
+  "flashinfer": "0.7.2.post1",
+  "hardware": "2x modified 22GB RTX 2080 Ti per host, TP2",
+  "tests": {
+    "attention_cases": 352,
+    "attention_equality": "exact FP16 values vs CPU-planned native CG-mode attention",
+    "metadata_cases": 240,
+    "metadata_max_length": 262136,
+    "page_sizes": [
+      16,
+      32,
+      64,
+      128,
+      512
+    ],
+    "concurrent_requests": 2,
+    "prefix_cache_hits_verified": true
+  },
+  "nvlink_host_planner": {
+    "context-4102-tokens": {
+      "baseline_tok_s": 132.65228990372538,
+      "gpu_planner_tok_s": 134.27736241821546,
+      "paired_gain_percent": 1.2307056753892616,
+      "same_outputs": true,
+      "same_counters": true,
+      "baseline_step_ms": 27.83643208026287,
+      "gpu_step_ms": 27.497944955986434
+    },
+    "context-24098-tokens": {
+      "baseline_tok_s": 149.93054180528662,
+      "gpu_planner_tok_s": 151.7813835736247,
+      "paired_gain_percent": 1.226814816251805,
+      "same_outputs": true,
+      "same_counters": true,
+      "baseline_step_ms": 29.344264676489633,
+      "gpu_step_ms": 28.988585574433706
+    },
+    "context-71-tokens": {
+      "baseline_tok_s": 110.70876526007358,
+      "gpu_planner_tok_s": 112.21160552742516,
+      "paired_gain_percent": 1.3539435837002973,
+      "same_outputs": true,
+      "same_counters": true,
+      "baseline_step_ms": 27.34834764968589,
+      "gpu_step_ms": 26.982799237049566
+    },
+    "context-8072-tokens": {
+      "baseline_tok_s": 118.26884165017788,
+      "gpu_planner_tok_s": 119.77381530991006,
+      "paired_gain_percent": 1.268198165696795,
+      "same_outputs": true,
+      "same_counters": true,
+      "baseline_step_ms": 28.204471141263472,
+      "gpu_step_ms": 27.851143326734455
+    }
+  },
+  "nvlink_host_planner_plus_native_marlin": {
+    "context-4102-tokens": {
+      "baseline_tok_s": 132.65228990372538,
+      "combined_tok_s": 137.02038269187122,
+      "gain_percent": 3.3012437945868944,
+      "outputs_match": true,
+      "counters_match": true
+    },
+    "context-24098-tokens": {
+      "baseline_tok_s": 149.93054180528662,
+      "combined_tok_s": 154.86041904972294,
+      "gain_percent": 3.275017871524429,
+      "outputs_match": true,
+      "counters_match": true
+    },
+    "context-71-tokens": {
+      "baseline_tok_s": 110.70876526007358,
+      "combined_tok_s": 114.34847550091882,
+      "gain_percent": 3.282780614613423,
+      "outputs_match": true,
+      "counters_match": true
+    },
+    "context-8072-tokens": {
+      "baseline_tok_s": 118.26884165017788,
+      "combined_tok_s": 122.15732475708923,
+      "gain_percent": 3.2837602476500547,
+      "outputs_match": true,
+      "counters_match": true
+    }
+  },
+  "scheduler_header_sha256": "b1fb27078084262158ed070e220ad317467306d1f0b32e0d9624bf85e6ef97ce",
+  "pcie_host_single_seed_serving_check": {
+    "context-71-tokens": {
+      "baseline_tok_s": 99.33360734446099,
+      "gpu_planner_tok_s": 100.85051959552628,
+      "restored_tok_s": 98.79352963709135,
+      "bracketed_gain_percent": 1.8042210921738189,
+      "outputs_match": true,
+      "counters_match": true
+    },
+    "context-8072-tokens": {
+      "baseline_tok_s": 102.13575071879926,
+      "gpu_planner_tok_s": 103.71971071248595,
+      "restored_tok_s": 101.82213081947266,
+      "bracketed_gain_percent": 1.707109869324075,
+      "outputs_match": true,
+      "counters_match": true
+    },
+    "context-4102-tokens": {
+      "baseline_tok_s": 125.2157992638894,
+      "gpu_planner_tok_s": 126.96567530624714,
+      "restored_tok_s": 125.17562041688535,
+      "bracketed_gain_percent": 1.4137601861275328,
+      "outputs_match": true,
+      "counters_match": true
+    },
+    "context-24098-tokens": {
+      "baseline_tok_s": 186.22917138374063,
+      "gpu_planner_tok_s": 189.86895387926094,
+      "restored_tok_s": 186.76980310481434,
+      "bracketed_gain_percent": 1.806796428689461,
+      "outputs_match": true,
+      "counters_match": true
+    }
+  }
+}
