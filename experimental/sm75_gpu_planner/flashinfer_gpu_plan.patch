@@ -1,0 +1,144 @@
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -1713,11 +1713,34 @@
+         # and can be expensive to retrieve in async mode.
+         # When all attention (both prefill and decode) uses TRTLLM,
+         # seq_lens_cpu is not needed since TRTLLM paths use GPU tensors
+         # (block_tables, seq_lens) directly.
++        gpu_plan_mode = (
++            self._native_spec_graphs
++            and self.enable_cuda_graph
++            and not self.use_dcp
++            and not self.has_sinks
++            and self.kv_cache_dtype == torch.float16
++            and self._num_speculative_tokens == 7
++            and self.prefill_fixed_split_size in (None, -1)
++            and not self.disable_split_kv
++            and num_decodes == 0
++            and num_prefills == num_reqs
++            and num_reqs in (1, 2)
++            and num_prefill_tokens == 8 * num_reqs
++            and num_prefill_tokens <= self._decode_cudagraph_max_bs
++            and common_attn_metadata.max_query_len == 8
++            and common_attn_metadata.seq_lens_cpu_upper_bound is not None
++            and (self.num_qo_heads, self.num_kv_heads, self.head_dim)
++            in ((12, 2, 256), (16, 4, 128))
++        )
+         needs_seq_lens_cpu = self.use_dcp or not all_uses_trtllm
+         if needs_seq_lens_cpu:
+-            if (
++            if gpu_plan_mode:
++                # Bounds are used only for legacy host-side shape plumbing.
++                # The exact lengths and all FA2 scheduling arrays stay on GPU.
++                seq_lens_cpu = common_attn_metadata.seq_lens_cpu_upper_bound
++            elif (
+                 self._num_speculative_tokens == 0
+                 and not self._async_scheduling
+                 and common_attn_metadata.seq_lens_cpu_upper_bound is not None
+             ):
+@@ -1775,15 +1798,25 @@
+         needs_paged_kv_indices = needs_native_paged_prefill or needs_native_paged_decode
+         if needs_paged_kv_indices:
+             assert num_blocks_np is not None
+             assert seq_lens_np is not None
+-            paged_kv_indices = self._compute_flashinfer_kv_metadata(
+-                num_blocks_np,
+-                seq_lens_np,
+-                block_table_tensor,
+-                num_reqs,
+-                page_size,
+-            )
++            if gpu_plan_mode:
++                np.cumsum(
++                    num_blocks_np,
++                    dtype=np.int32,
++                    out=self.paged_kv_indptr.np[1 : num_reqs + 1],
++                )
++                last = seq_lens_np % page_size
++                self.paged_kv_last_page_len.np[:num_reqs] = np.where(
++                    (last == 0) & (seq_lens_np != 0), page_size, last
++                )
++                paged_kv_indices = self.paged_kv_indices[
++                    : self.paged_kv_indptr.np[num_reqs]
++                ]
++            else:
++                paged_kv_indices = self._compute_flashinfer_kv_metadata(
++                    num_blocks_np, seq_lens_np, block_table_tensor, num_reqs, page_size
++                )
+         else:
+             paged_kv_indices = None
+ 
+         # Step 3: Handle prefill and decode pathways case by case
+@@ -1930,27 +1963,53 @@
+                     # FP8 output buffer allocated in forward().
+                     o_dtype = (
+                         FP8_DTYPE if self.nvfp4_trtllm else self.model_config.dtype
+                     )
+-                    prefill_wrapper.plan(
+-                        qo_indptr=qo_indptr_prefill_cpu,
+-                        paged_kv_indptr=paged_kv_indptr_prefill_cpu,
+-                        paged_kv_indices=paged_kv_indices,
+-                        paged_kv_last_page_len=paged_kv_last_page_len_prefill_cpu,
+-                        seq_lens=kv_lens_prefill_cpu,
+-                        num_qo_heads=self.num_qo_heads,
+-                        num_kv_heads=self.num_kv_heads,
+-                        head_dim_qk=self.head_dim,
+-                        page_size=self.page_size,
+-                        causal=attn_metadata.causal,
+-                        sm_scale=self.sm_scale,
+-                        window_left=self.window_left,
+-                        logits_soft_cap=self.logits_soft_cap,
+-                        q_data_type=self.q_data_type_prefill,
+-                        kv_data_type=self.kv_cache_dtype,
+-                        o_data_type=o_dtype,
+-                        fixed_split_size=self.prefill_fixed_split_size,
+-                        disable_split_kv=self.disable_split_kv,
++                    if not (
++                        gpu_plan_mode
++                        and getattr(prefill_wrapper, "_plan_info", None) is not None
++                    ):
++                        prefill_wrapper.plan(
++                            qo_indptr=qo_indptr_prefill_cpu,
++                            paged_kv_indptr=paged_kv_indptr_prefill_cpu,
++                            paged_kv_indices=paged_kv_indices,
++                            paged_kv_last_page_len=paged_kv_last_page_len_prefill_cpu,
++                            seq_lens=kv_lens_prefill_cpu,
++                            num_qo_heads=self.num_qo_heads,
++                            num_kv_heads=self.num_kv_heads,
++                            head_dim_qk=self.head_dim,
++                            page_size=self.page_size,
++                            causal=attn_metadata.causal,
++                            sm_scale=self.sm_scale,
++                            window_left=self.window_left,
++                            logits_soft_cap=self.logits_soft_cap,
++                            q_data_type=self.q_data_type_prefill,
++                            kv_data_type=self.kv_cache_dtype,
++                            o_data_type=o_dtype,
++                            fixed_split_size=self.prefill_fixed_split_size,
++                            disable_split_kv=self.disable_split_kv,
++                        )
++                if gpu_plan_mode:
++                    from .hq_gpu_plan import update
++
++                    update(
++                        prefill_wrapper,
++                        seq_lens,
++                        8,
++                        page_size,
++                        self.num_qo_heads,
++                        self.num_kv_heads,
++                        self.window_left,
++                    )
++                    _copy_page_indices_kernel[(num_reqs,)](
++                        self.paged_kv_indices,
++                        block_table_tensor,
++                        block_table_tensor.stride(0),
++                        self.paged_kv_indptr.gpu,
++                        BLOCK_SIZE=1024,
++                    )
++                    logger.info_once(
++                        "GPU FA2 exact-length planner active; host sequence readback skipped"
+                     )
+                 attn_metadata.prefill = FIPrefill(wrapper=prefill_wrapper)
+ 
+         ## DECODE PATHWAY

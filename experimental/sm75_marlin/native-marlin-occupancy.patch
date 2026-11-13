@@ -1,0 +1,25 @@
+--- a/csrc/quantization/marlin/marlin.cu
++++ b/csrc/quantization/marlin/marlin.cu
+@@ -359,6 +359,22 @@
+     int num_threads = thread_tfg.num_threads;
+     thread_k = thread_tfg.thread_k;
+     thread_n = thread_tfg.thread_n;
++    // RTX 2080 Ti, TP=2 Qwen MLP gate/up verification: 136 column tiles
++    // occupy two CTAs per SM without changing the per-column reduction.
++    // Preserve the existing kernel, precision, and every other shape's policy.
++    if (stages == 2 && sms == 68 && prob_m_split == 8 &&
++        prob_n == 17408 && prob_k == 5120 && group_size == 128 &&
++        a_type == vllm::kFloat16 && b_type == vllm::kU4B8 &&
++        c_type == vllm::kFloat16 && s_type == vllm::kFloat16 &&
++        !has_bias && !has_zp && !is_zp_float && !use_atomic_add &&
++        use_fp32_reduce && thread_tfg.thread_k == 128 &&
++        thread_tfg.thread_n == 128 && thread_tfg.num_threads == 256 &&
++        is_valid_config(thread_tfg, thread_m_blocks, prob_m_split,
++                        prob_n, prob_k, num_bits, group_size, has_zp,
++                        is_zp_float, is_a_8bit, stages,
++                        max_shared_mem / 2 - 1024)) {
++      exec_cfg.blocks_per_sm = 2;
++    }
+     int blocks = sms * exec_cfg.blocks_per_sm;
+     if (exec_cfg.blocks_per_sm > 1)
+       max_shared_mem_new = max_shared_mem / exec_cfg.blocks_per_sm - 1024;

@@ -1,0 +1,30 @@
+diff --git a/csrc/quantization/marlin/marlin_template.h b/csrc/quantization/marlin/marlin_template.h
+index 962f15c..c8bbaad 100644
+--- a/csrc/quantization/marlin/marlin_template.h
++++ b/csrc/quantization/marlin/marlin_template.h
+@@ -771,7 +771,25 @@ __global__ void Marlin(
+             b_gl_rd + (i % count) * threads +
+             b_gl_stride * (i / count) * div_ceil(threads, b_sh_stride);
+ 
++#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ == 750
++        // Quantized B streams through the cache once per small-batch GEMM.
++        // Evict-first loads preserve the arithmetic and reduction order.
++        if constexpr (m_block_size_8 && stages == 2 &&
++                      a_type_id == vllm::kFloat16.id() &&
++                      (b_type_id == vllm::kU4B8.id() ||
++                       b_type_id == vllm::kU8B128.id())) {
++        int4 loaded;
++        asm volatile("ld.global.cs.v4.u32 {%0,%1,%2,%3}, [%4];"
++                     : "=r"(loaded.x), "=r"(loaded.y), "=r"(loaded.z),
++                       "=r"(loaded.w)
++                     : "l"(&B[b_gl_idx]));
++        sh_b_stage[threads * i + threadIdx.x] = loaded;
++        } else {
+         cp_async4(&sh_b_stage[threads * i + threadIdx.x], &B[b_gl_idx]);
++        }
++#else
++        cp_async4(&sh_b_stage[threads * i + threadIdx.x], &B[b_gl_idx]);
++#endif
+       }
+ 
+       b_gl_rd += b_gl_rd_delta_o;
