@@ -22,7 +22,9 @@ git -C "$W/src" submodule update -q --init --recursive --depth 1   # dlpack, pic
 # the -flto -Werror link fails on -Werror=odr. Hold the build environment (PIP_BUILD_CONSTRAINT on pip >= 25.3, which
 # no longer reads PIP_CONSTRAINT for the isolated build env; PIP_CONSTRAINT on older pip) and the venv's runtime copy
 # to the last C++17 series. Drop this with the directory, or when PIN moves to an xgrammar that builds as C++20.
-TVM_FFI='apache-tvm-ffi<0.1.16'
+# The lower bound is the pinned xgrammar's own runtime requirement: the wheel goes in with --no-deps, so nothing
+# else would raise an older copy already in the venv.
+TVM_FFI='apache-tvm-ffi>=0.1.11,<0.1.16'
 echo "$TVM_FFI" > "$W/constraints.txt"
 PIP_BUILD_CONSTRAINT="$W/constraints.txt" PIP_CONSTRAINT="$W/constraints.txt" "$PY" -m pip wheel -q --no-deps -w "$W/dist" "$W/src"
 "$PY" -m pip install -q "$TVM_FFI"
