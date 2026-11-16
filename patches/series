@@ -79,4 +79,3 @@ flashinfer-sm75-optin.patch
 flashinfer-sm75-spec-graphs.patch
 gdn-sm75-cuda-prefill.patch
 terminal-request-progress.patch
-bench-probe-header-precedence.patch
