@@ -35,6 +35,9 @@ unkeyed server, and the None-on-missing-metrics contract, are unchanged.
 Alignment behaviour is unchanged: it still runs only for str prompts, still
 skips on failure rather than failing the run.
 
+Explicit Authorization header names are matched case-insensitively. The environment
+key is a fallback only, so aiohttp normalization cannot replace a caller-supplied key.
+
 Kind: fix
 What: `vllm bench serve`'s /tokenize alignment probe sends the API key (Bearer from OPENAI_API_KEY,
   --header wins) and classifies its failure (404 route-or-name vs 401 vs unreachable vs timeout)
@@ -46,13 +49,27 @@ Cut-against: 0.33.0: #59888 carries the 404, connection and generic hints; this 
   probe's Authorization and the keyed /metrics scrapes
 Retires-when: upstream PR
 
---- exported from 589a819b39 (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from e3328c3 (bench-probe-errors); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/serve.py b/benchmarks/serve.py
-index d0909ea8c9..8cda0e9385 100644
+index d0909ea..0586e55 100644
 --- a/benchmarks/serve.py
 +++ b/benchmarks/serve.py
-@@ -83,6 +83,7 @@
+@@ -78,11 +78,21 @@
+ )
+ 
+ 
++def _benchmark_probe_headers(headers: dict[str, str] | None) -> dict[str, str]:
++    """Honor an explicit Authorization header regardless of its HTTP casing."""
++    result = dict(headers or {})
++    if not any(name.lower() == "authorization" for name in result):
++        if api_key := os.environ.get("OPENAI_API_KEY"):
++            result["Authorization"] = f"Bearer {api_key}"
++    return result
++
++
+ async def _align_prompts_to_server_tokenizer(
+     base_url: str,
      model_id: str,
      input_requests: list[SampleRequest],
      ssl_context: ssl.SSLContext | bool | None = None,
@@ -60,19 +77,17 @@ index d0909ea8c9..8cda0e9385 100644
  ) -> list[SampleRequest]:
      """Re-align prompts if local/server tokenizers disagree."""
      if not input_requests or not isinstance(input_requests[0].prompt, str):
-@@ -90,6 +91,11 @@
+@@ -90,6 +100,9 @@
  
      tok_url = f"{base_url}/tokenize"
      detok_url = f"{base_url}/detokenize"
 +    # The benchmark requests carry the key from OPENAI_API_KEY; this probe
 +    # must too, or a server bound with --api-key rejects it with a 401.
-+    probe_headers = dict(headers or {})
-+    if api_key := os.environ.get("OPENAI_API_KEY"):
-+        probe_headers.setdefault("Authorization", f"Bearer {api_key}")
++    probe_headers = _benchmark_probe_headers(headers)
      connector = aiohttp.TCPConnector(ssl=ssl_context)
  
      async with aiohttp.ClientSession(connector=connector) as session:
-@@ -105,6 +111,7 @@
+@@ -105,6 +118,7 @@
                          "prompt": prompt,
                          "add_special_tokens": False,
                      },
@@ -80,7 +95,7 @@ index d0909ea8c9..8cda0e9385 100644
                  ) as r,
              ):
                  r.raise_for_status()
-@@ -114,7 +121,9 @@
+@@ -114,7 +128,9 @@
              async with (
                  sem,
                  session.post(
@@ -91,7 +106,7 @@ index d0909ea8c9..8cda0e9385 100644
                  ) as r,
              ):
                  r.raise_for_status()
-@@ -122,11 +131,16 @@
+@@ -122,11 +138,16 @@
  
          try:
              first_tokens = await _tokenize(input_requests[0].prompt)
@@ -109,7 +124,7 @@ index d0909ea8c9..8cda0e9385 100644
                  hint = (
                      "404 Not Found: either this server has no /tokenize route,"
                      f" or it does not serve a model named `{model_id}`"
-@@ -208,15 +222,23 @@
+@@ -208,15 +229,21 @@
  
  
  async def fetch_spec_decode_metrics(
@@ -126,16 +141,14 @@ index d0909ea8c9..8cda0e9385 100644
 +    # Same requirement as the /tokenize probe above: a server bound with
 +    # --api-key rejects an unauthenticated scrape, and the caller's
 +    # extra_headers only carries --header pairs, never the key.
-+    scrape_headers = dict(headers or {})
-+    if api_key := os.environ.get("OPENAI_API_KEY"):
-+        scrape_headers.setdefault("Authorization", f"Bearer {api_key}")
++    scrape_headers = _benchmark_probe_headers(headers)
      try:
 -        async with session.get(metrics_url) as response:
 +        async with session.get(metrics_url, headers=scrape_headers) as response:
              if response.status != 200:
                  return None
              text = await response.text()
-@@ -281,7 +303,9 @@
+@@ -281,7 +308,9 @@
  
  
  async def fetch_diffusion_metrics(
@@ -146,23 +159,21 @@ index d0909ea8c9..8cda0e9385 100644
  ) -> DiffusionMetrics | None:
      """Fetch diffusion decoding metrics from the server's Prometheus endpoint.
  
-@@ -289,8 +313,14 @@
+@@ -289,8 +318,12 @@
      available.
      """
      metrics_url = f"{base_url}/metrics"
 +    # Same requirement as the /tokenize probe above: a server bound with
 +    # --api-key rejects an unauthenticated scrape, and the caller's
 +    # extra_headers only carries --header pairs, never the key.
-+    scrape_headers = dict(headers or {})
-+    if api_key := os.environ.get("OPENAI_API_KEY"):
-+        scrape_headers.setdefault("Authorization", f"Bearer {api_key}")
++    scrape_headers = _benchmark_probe_headers(headers)
      try:
 -        async with session.get(metrics_url) as response:
 +        async with session.get(metrics_url, headers=scrape_headers) as response:
              if response.status != 200:
                  return None
              text = await response.text()
-@@ -993,8 +1023,12 @@
+@@ -993,8 +1026,12 @@
      else:
          print("Self timing is set, using the timestamps from the trace file.")
  
@@ -177,7 +188,7 @@ index d0909ea8c9..8cda0e9385 100644
  
      pbar = None if disable_tqdm else tqdm(total=len(input_requests))
  
-@@ -1128,7 +1162,9 @@
+@@ -1128,7 +1165,9 @@
          probe_stop.set()
          await probe_task
  
@@ -188,7 +199,7 @@ index d0909ea8c9..8cda0e9385 100644
      spec_decode_stats: dict[str, Any] | None = None
      if spec_decode_metrics_before is not None and spec_decode_metrics_after is not None:
          delta_drafts = (
-@@ -1170,7 +1206,9 @@
+@@ -1170,7 +1209,9 @@
                  "per_position_acceptance_rates": per_pos_rates,
              }
  
@@ -199,7 +210,7 @@ index d0909ea8c9..8cda0e9385 100644
      diffusion_stats: dict[str, Any] | None = None
      if diffusion_metrics_before is not None and diffusion_metrics_after is not None:
          delta_steps = (
-@@ -2214,7 +2252,7 @@
+@@ -2214,7 +2255,7 @@
  
      if args.dataset_name in ("random", "prefix_repetition"):
          input_requests = await _align_prompts_to_server_tokenizer(

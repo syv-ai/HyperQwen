@@ -73,6 +73,7 @@ RUN set -e; SP=$(venv/bin/python -c 'import vllm, os; print(os.path.dirname(vllm
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_async_mamba_kv_sizing.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_kv_cache_seat_budget.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python bench/test_continuous_stream_usage.py; \
+    venv/bin/python bench/test_benchmark_probe_headers.py; \
     venv/bin/python bench/test_gdn_ba_lora.py; \
     CUDA_VISIBLE_DEVICES= venv/bin/python lsa/tests/gate_test.py
 
