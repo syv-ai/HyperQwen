@@ -8,11 +8,15 @@ The --api-key help text warned about this type of hole.
 
 With --api-key set, every path now needs the bearer token, except
 /health, /ping, /load, /version and /metrics. Liveness probes and load
-balancers need the first four. /metrics stays open in the same spirit:
-it serves counters and histograms, not model capability, so an
-unauthenticated reader sees throughput, not the model, and the in-tree
-scrapes in bench/ read it directly. A route that is added later is
-guarded by default. It does not stay open until somebody extends a
+balancers need the first four. /metrics is intentionally readable
+without the token in the same spirit: it serves counters and
+histograms, not model capability, so an unauthenticated reader sees
+throughput, not the model. The public-metrics policy choice is
+separate from repairing authenticated scrape behavior: the in-tree
+scrapers already send their configured key (the bench/ harness, the
+bench-probe-errors scrapes and the Turing readers), a valid key
+passes on /metrics, so they keep working. A route that is added later
+is guarded by default. It does not stay open until somebody extends a
 prefix list. The --api-key help text now describes the allowlist.
 
 The allowlist is matched on the path without a trailing slash. This
@@ -36,8 +40,9 @@ Kind: fix
 What: --api-key guards every path except /health, /ping, /load, /version and /metrics (deny by
   default). The old prefix list left /tokenize, /detokenize, /metrics and the docs open without
   the key. The inference routes and /tokenize now need it (the latter renders arbitrary text
-  through the chat template). /metrics stays open like the liveness paths: it serves counters
-  and histograms, not model capability, so the in-tree bench scrapes read it without a key. The
+  through the chat template). /metrics is intentionally readable without the token: it serves
+  counters and histograms, not model capability, and the in-tree scrapers (the bench/ harness,
+  the bench-probe-errors scrapes and the Turing readers) send their key and keep working. The
   allowlist ignores a trailing slash, so a probe on /health/ does not get a 401. Only a real
   CORS preflight (OPTIONS with Origin and Access-Control-Request-Method) skips the token; a bare
   OPTIONS needs it on every path outside the allowlist. The --api-key help text describes the
