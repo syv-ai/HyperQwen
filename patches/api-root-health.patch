@@ -142,37 +142,35 @@ index 59c4fc37a0..d8f69da0bd 100644
  
      # Endpoint plugin hooks run after core routers so plugins can inspect them.
 diff --git a/entrypoints/serve/middleware/authenticate.py b/entrypoints/serve/middleware/authenticate.py
-index 7327529b6b..71150c999a 100644
+index 1f79c81853..d7ad0906d5 100644
 --- a/entrypoints/serve/middleware/authenticate.py
 +++ b/entrypoints/serve/middleware/authenticate.py
-@@ -10,12 +10,24 @@
+@@ -10,17 +10,23 @@
  from starlette.types import ASGIApp, Receive, Scope, Send
  
  # The paths that answer without the API key: the liveness and readiness
--# probes, and the load and version endpoints. Every other path on the app
--# needs a bearer token. This includes the inference routes, /tokenize (it
--# renders arbitrary text through the chat template), /metrics and the docs.
--# A route that is added later is therefore guarded by default. A scraper
--# that cannot send the key belongs on a separate listener, not in this set.
--UNGUARDED_PATHS = frozenset({"/health", "/ping", "/load", "/version"})
-+# probes, the load and version endpoints, and Ollama discovery routes
-+# (/, /api/status, /api/experimental/model-recommendations, /api/show)
-+# used by client launchers like `ollama launch codex`. Every other path
-+# on the app needs a bearer token. This includes the inference routes,
-+# /tokenize (it renders arbitrary text through the chat template),
-+# /metrics and the docs. A route that is added later is therefore guarded
-+# by default. A scraper that cannot send the key belongs on a separate
-+# listener, not in this set.
-+UNGUARDED_PATHS = frozenset({
-+    "/health",
-+    "/ping",
-+    "/load",
-+    "/version",
+-# probes, the load and version endpoints, and the /metrics exposition.
+-# Every other path on the app needs a bearer token. This includes the
+-# inference routes, /tokenize (it renders arbitrary text through the chat
+-# template) and the docs. A route that is added later is therefore guarded
+-# by default.
++# probes, the load and version endpoints, the /metrics exposition, and
++# the Ollama discovery routes (/, /api/status,
++# /api/experimental/model-recommendations, /api/show) used by client
++# launchers like `ollama launch codex`. Every other path on the app needs
++# a bearer token. This includes the inference routes, /tokenize (it
++# renders arbitrary text through the chat template) and the docs. A route
++# that is added later is therefore guarded by default.
+ UNGUARDED_PATHS = frozenset({
+     "/health",
+     "/ping",
+     "/load",
+     "/version",
+     "/metrics",
 +    "/",
 +    "/api/status",
 +    "/api/experimental/model-recommendations",
 +    "/api/show",
-+})
+ })
  
  
- def _is_cors_preflight(scope: Scope, headers: Headers) -> bool:
