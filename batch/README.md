@@ -197,8 +197,8 @@ All overridable as env vars, defaults in the script:
 |---|---|---|
 | `PREFIX_CACHE` | 1 | 1 = prefix caching on (`--enable-prefix-caching --mamba-cache-mode align`, see above), 13x on shared-prompt workloads against caching off on vLLM 0.27.1. 0 = `--no-enable-prefix-caching`, for raw-engine benchmarks, A/Bs that must not reuse a prefix, quality comparisons and debugging the cache path. It costs every follow-up turn and shared prompt a full prefill. Other values refuse to boot. The last `--enable-prefix-caching` / `--no-enable-prefix-caching` in `EXTRA_ARGS` wins |
 | `KV` | `fp8` | `kvarn` switches to the KVarN 4/2-bit KV cache (run `bash kvarn/install.sh` once): 262k context, ~2× the token pool, slower decode — see the main README's "262k context" section |
-| `INT8_ACT` | `int8` | int8 activations on the Marlin GEMMs (int8 tensor cores, weights stay int4). Empty string = plain W4A16 |
-| `INT8_LAYERS` | `mlp` | regex on the layer name that gets int8 activations. `gate_up` for the gentle variant, `.` for everything, or a hand-picked list from `bench/act_calib.py` |
+| `INT8_ACT` | empty | must stay empty on vLLM 0.34: Marlin's int8 activations were removed upstream (vllm #65542), and the launcher refuses any other value. Up to 0.33 the default was `int8` (int8 tensor cores, weights int4); see [docs/vllm-0.34.md](../docs/vllm-0.34.md) |
+| `INT8_LAYERS` | `mlp` | (0.33 and earlier) regex on the layer name that gets int8 activations. `gate_up` for the gentle variant, `.` for everything, or a hand-picked list from `bench/act_calib.py` |
 | `MAX_SEQS` | 64 | scheduler slots; with fp16 state ~70 short requests fit the page pool |
 | `MAX_LEN` | 150000 | max context. Raising it much past this fails startup, the pool can't hold a longer request |
 | `TOOLS` | 1 | tool/function calling (`--enable-auto-tool-choice --tool-call-parser`). `TOOL_PARSER` (`qwen3_coder`) must match the XML call format this model's chat template emits — `hermes` parses the JSON a Qwen model does *not* produce here, and fails silently. 0 = off, and `tool_choice: "auto"` then 400s |
