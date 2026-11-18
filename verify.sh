@@ -110,7 +110,10 @@ for name in "${SERIES[@]}"; do
 done
 # Behavioural, not textual: the name must be in the live registry, so a comment or docstring cannot satisfy it
 # (a text grep here would; found on the native 3090, 2026-09-13). Negative control: a made-up name exits 1 in the same image.
-$PY -c "import vllm.envs as e, sys; sys.exit(0 if 'VLLM_MARLIN_INT8_INCLUDE_RE' in e.environment_variables else 1)" 2>/dev/null && ok "int8 layer-select env vars registered in envs.py (live registry)" || fail "envs.py does not register VLLM_MARLIN_INT8_INCLUDE_RE"
+$PY -c "import vllm.envs as e, sys; sys.exit(0 if 'VLLM_DFLASH2_LOOKUP' in e.environment_variables else 1)" 2>/dev/null && ok "the series' env vars are registered in envs.py (live registry: VLLM_DFLASH2_LOOKUP)" || fail "envs.py does not register VLLM_DFLASH2_LOOKUP (patches/speed-knobs-envs.patch)"
+# vLLM 0.34 removed Marlin's int8 activations (vllm #65542) and lists VLLM_MARLIN_INPUT_DTYPE as a removed variable;
+# the retired marlin-int8-layer-select registered VLLM_MARLIN_INT8_INCLUDE_RE, so it must be gone from the live registry.
+$PY -c "import vllm.envs as e, sys; sys.exit(1 if 'VLLM_MARLIN_INT8_INCLUDE_RE' in e.environment_variables else 0)" 2>/dev/null && ok "no int8 layer-select env var registered (retired with vLLM 0.34)" || fail "envs.py still registers VLLM_MARLIN_INT8_INCLUDE_RE: a retired patch is applied"
 
 echo "== KVarN (optional, kvarn/)"
 if [ -f "$SP/v1/attention/backends/kvarn_attn.py" ]; then

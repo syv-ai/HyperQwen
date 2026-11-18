@@ -74,7 +74,7 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
      Marlin workspace size, so a new knob that changes it must be registered in
      `envs.py` (`patches/speed-knobs-envs.patch`) or you get `assert_size_stride
      ... expected size 328==82` from a cached artifact.
-   - **A second cache vLLM does not control.** The layer-select envs *are* in
+   - **A second cache vLLM does not control** (vLLM 0.33 and earlier; 0.34 removed the int8 path). The layer-select envs *are* in
      vLLM's compile hash, but `torch_aot_compile` keeps its own; changing
      `VLLM_MARLIN_INT8_INCLUDE_RE` can crash at the first forward with a
      stable-ABI `aten::empty` RuntimeError from a cached inductor artifact. Wipe
