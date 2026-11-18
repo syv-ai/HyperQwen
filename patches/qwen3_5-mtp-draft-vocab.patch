@@ -18,7 +18,7 @@ Upstream: none
 Cut-against: 0.34.0
 Retires-when: upstreamed
 
---- exported from 043bc9284a (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 15c3a017d6 (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
 index b895b58c0a..2142457f39 100644
@@ -84,6 +84,79 @@ index b895b58c0a..2142457f39 100644
  
      def get_top_tokens(
 @@ -327,6 +365,9 @@
+             for name, weight in weights:
+                 if self.is_unused_checkpoint_weight(name):
+                     continue
++                # syv patch: skip the truncated draft head when it is disabled
++                if "draft_lm_head" in name and self.model.draft_lm_head is None:
++                    continue
+                 if name.startswith("mtp."):
+                     name = name.replace("mtp.", "model.")
+                 elif "embed_tokens" in name:
+diff --git a/models/qwen3_5/nvidia/mtp.py b/models/qwen3_5/nvidia/mtp.py
+index 447e3ad10c..4a7f2cc8d3 100644
+--- a/models/qwen3_5/nvidia/mtp.py
++++ b/models/qwen3_5/nvidia/mtp.py
+@@ -70,6 +70,26 @@
+             prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
++        # syv patch: vocab-truncated draft head. If the checkpoint ships
++        # mtp_draft_vocab_ids.pt (built by build_draft_vocab.py) the drafter
++        # scores only those rows (mtp.draft_lm_head.*) instead of the full
++        # 248k-row lm_head; logits for all other ids are -inf. Speculative
++        # decoding stays exact, only the acceptance rate can change.
++        import os as _os
++        self.draft_lm_head = None
++        self.draft_vocab_ids = None
++        _ids_path = _os.path.join(model_config.model, "mtp_draft_vocab_ids.pt")
++        if _os.path.exists(_ids_path) and _os.environ.get("MTP_DRAFT_VOCAB", "1") != "0":
++            _ids = torch.load(_ids_path, map_location="cpu")
++            self.draft_vocab_ids = _ids
++            self.draft_lm_head = ParallelLMHead(
++                int(_ids.numel()),
++                config.hidden_size,
++                quant_config=vllm_config.quant_config,
++                prefix=maybe_prefix(prefix, "draft_lm_head"),
++            )
++            logger.info("MTP drafter uses a %d-token draft head", int(_ids.numel()))
++
+         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
+         # missing from hf_quant_config.json exclude_modules. Force unquantized.
+         # Ref: https://github.com/vllm-project/vllm/pull/38650
+@@ -219,6 +239,12 @@
+             self.lm_head = PPMissingLayer()
+ 
+         self.logits_processor = LogitsProcessor(config.vocab_size)
++        # syv patch: vocab-truncated draft head
++        self.draft_logits_processor = (
++            LogitsProcessor(int(self.model.draft_vocab_ids.numel()))
++            if getattr(self.model, "draft_lm_head", None) is not None
++            else None
++        )
+ 
+         self.make_empty_intermediate_tensors = (
+             self.model.make_empty_intermediate_tensors
+@@ -274,6 +300,18 @@
+         hidden_states: torch.Tensor,
+         spec_step_idx: int = 0,
+     ) -> torch.Tensor | None:
++        # syv patch: vocab-truncated draft head
++        if self.draft_logits_processor is not None:
++            sub = self.draft_logits_processor(self.model.draft_lm_head, hidden_states)
++            if sub is None:
++                return None
++            ids = self.model.draft_vocab_ids
++            if ids.device != sub.device:
++                ids = ids.to(sub.device)
++                self.model.draft_vocab_ids = ids
++            full = sub.new_full((sub.shape[0], self.config.vocab_size), float("-inf"))
++            full.index_copy_(1, ids, sub)
++            return full
+         return self.logits_processor(self.lm_head, hidden_states)
+ 
+     def get_top_tokens(
+@@ -294,6 +332,9 @@
              for name, weight in weights:
                  if self.is_unused_checkpoint_weight(name):
                      continue

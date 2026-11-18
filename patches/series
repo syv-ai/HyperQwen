@@ -73,3 +73,4 @@ flashinfer-sm75-spec-graphs.patch
 gdn-sm75-cuda-prefill.patch
 terminal-request-progress.patch
 vllm-pr64165-flashinfer-plan-event.patch
+qwen3_5-nvidia-gated-norm-warmup.patch

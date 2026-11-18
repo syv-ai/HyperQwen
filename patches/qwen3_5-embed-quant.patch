@@ -16,7 +16,7 @@ Upstream: none yet
 Cut-against: 0.34.0
 Retires-when: upstream PR
 
---- exported from f4ed92aabe (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from a997aa3239 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
 index 6e370f180d..e6c25a11a5 100644
@@ -40,6 +40,32 @@ index b6b2c3851c..b895b58c0a 100644
              self.vocab_size,
              config.hidden_size,
 +            quant_config=vllm_config.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
+diff --git a/models/qwen3_5/nvidia/model.py b/models/qwen3_5/nvidia/model.py
+index be483f5a88..d1ef4f59c1 100644
+--- a/models/qwen3_5/nvidia/model.py
++++ b/models/qwen3_5/nvidia/model.py
+@@ -495,6 +495,8 @@
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=self.quant_config,
++            prefix=maybe_prefix(prefix, "embed_tokens"),
+         )
+ 
+         def get_layer(prefix: str):
+diff --git a/models/qwen3_5/nvidia/mtp.py b/models/qwen3_5/nvidia/mtp.py
+index dfdee2d90b..447e3ad10c 100644
+--- a/models/qwen3_5/nvidia/mtp.py
++++ b/models/qwen3_5/nvidia/mtp.py
+@@ -66,6 +66,8 @@
+         self.embed_tokens = VocabParallelEmbedding(
+             self.vocab_size,
+             config.hidden_size,
++            quant_config=quant_config,
 +            prefix=maybe_prefix(prefix, "embed_tokens"),
          )
  
