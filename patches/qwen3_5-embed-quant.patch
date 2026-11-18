@@ -13,16 +13,16 @@ Validated against vLLM 0.28.0. Reapply after upgrades.
 Kind: fix
 What: pass `quant_config` to the token embedding (main model and MTP module)
 Upstream: none yet
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstream PR
 
---- exported from 199eaec7d2 (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from f4ed92aabe (qwen3_5-embed-quant); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5.py b/model_executor/models/qwen3_5.py
-index f105948f92..90f03ee543 100644
+index 6e370f180d..e6c25a11a5 100644
 --- a/model_executor/models/qwen3_5.py
 +++ b/model_executor/models/qwen3_5.py
-@@ -251,6 +251,8 @@
+@@ -249,6 +249,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,
@@ -32,10 +32,10 @@ index f105948f92..90f03ee543 100644
  
          def get_layer(prefix: str):
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 2acac6b5b7..4d19e54475 100644
+index b6b2c3851c..b895b58c0a 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
-@@ -84,6 +84,8 @@
+@@ -86,6 +86,8 @@
          self.embed_tokens = VocabParallelEmbedding(
              self.vocab_size,
              config.hidden_size,

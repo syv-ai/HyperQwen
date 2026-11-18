@@ -40,24 +40,24 @@ What: --api-key guards every path except /health, /ping, /load and /version (den
   Access-Control-Request-Method) skips the token; a bare OPTIONS needs it, because /metrics answers
   any method. The --api-key help text describes the allowlist
 Upstream: vllm #59892
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstream PR
 
---- exported from b46d8e0155 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 8f1edca787 (auth-deny-default); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/entrypoints/common/cli_args.py b/entrypoints/common/cli_args.py
-index b861c9e73f..5e0391cdc6 100644
+index 08fe3f3658..ac516587fa 100644
 --- a/entrypoints/common/cli_args.py
 +++ b/entrypoints/common/cli_args.py
-@@ -336,13 +336,13 @@
+@@ -337,13 +337,13 @@
      """If provided, the server will require one of these keys to be presented in
      the header.
  
--    Warning: this only authenticates endpoints under the `/v1`, `/v2`, and
--    `/inference` path prefixes. Other endpoints on the same server, including
--    `/invocations` (which exposes the same inference capabilities as `/v1`),
--    remain unauthenticated. Do not rely on `--api-key` alone to secure vLLM;
--    see
+-    Warning: this only authenticates endpoints under the `/v1`, `/v2`,
+-    `/inference`, and `/cohere` path prefixes. Other endpoints on the same
+-    server, including `/invocations` (which exposes the same inference
+-    capabilities as `/v1`), remain unauthenticated. Do not rely on `--api-key`
+-    alone to secure vLLM; see
 +    This authenticates every endpoint on the server, except a small liveness
 +    allowlist (`/health`, `/ping`, `/load`, `/version`). All other endpoints
 +    need the key. This includes `/invocations`, `/tokenize` and `/metrics`.

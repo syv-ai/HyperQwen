@@ -15,16 +15,16 @@ Validated against vLLM 0.28.0.
 Kind: feature
 What: vocab-truncated draft head for MTP
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstreamed
 
---- exported from 3bfe8f1d2a (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 043bc9284a (qwen3_5-mtp-draft-vocab); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/models/qwen3_5_mtp.py b/model_executor/models/qwen3_5_mtp.py
-index 4d19e54475..24eeedc7c1 100644
+index b895b58c0a..2142457f39 100644
 --- a/model_executor/models/qwen3_5_mtp.py
 +++ b/model_executor/models/qwen3_5_mtp.py
-@@ -88,6 +88,26 @@
+@@ -90,6 +90,26 @@
              prefix=maybe_prefix(prefix, "embed_tokens"),
          )
  
@@ -51,7 +51,7 @@ index 4d19e54475..24eeedc7c1 100644
          # Workaround: mtp.fc is stored as BF16 in NVFP4 checkpoints but is
          # missing from hf_quant_config.json exclude_modules. Force unquantized.
          # Ref: https://github.com/vllm-project/vllm/pull/38650
-@@ -249,6 +269,12 @@
+@@ -252,6 +272,12 @@
              self.lm_head = PPMissingLayer()
  
          self.logits_processor = LogitsProcessor(config.vocab_size)
@@ -64,7 +64,7 @@ index 4d19e54475..24eeedc7c1 100644
  
          self.make_empty_intermediate_tensors = (
              self.model.make_empty_intermediate_tensors
-@@ -299,6 +325,18 @@
+@@ -307,6 +333,18 @@
          hidden_states: torch.Tensor,
          spec_step_idx: int = 0,
      ) -> torch.Tensor | None:
@@ -82,8 +82,8 @@ index 4d19e54475..24eeedc7c1 100644
 +            return full
          return self.logits_processor(self.lm_head, hidden_states)
  
-     def is_unused_checkpoint_weight(self, name: str) -> bool:
-@@ -311,6 +349,9 @@
+     def get_top_tokens(
+@@ -327,6 +365,9 @@
              for name, weight in weights:
                  if self.is_unused_checkpoint_weight(name):
                      continue

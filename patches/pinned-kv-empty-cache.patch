@@ -11,16 +11,16 @@ What: with `kv_cache_memory_bytes` pinned (the launchers' `KV_MEM`), synchronize
   GPU memory to system RAM and slows the KVarN kernels; `memory-profile-after-warmup` does the same
   on the measured path only
 Upstream: vllm #59893
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstream empties the cache on the pinned path
 
---- exported from f5d7c64c0a (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from d701413f76 (pinned-kv-empty-cache); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
-index c68c7f2f21..b8508b51d2 100644
+index 944966d041..e19d8428b6 100644
 --- a/v1/worker/gpu_worker.py
 +++ b/v1/worker/gpu_worker.py
-@@ -660,6 +660,15 @@
+@@ -692,6 +692,15 @@
                  self.model_runner.profile_run(
                      randomize_inputs=self.randomize_dummy_inputs
                  )

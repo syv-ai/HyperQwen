@@ -74,16 +74,16 @@ branch was taken there. The int4 profile then padded the five drafter layers at 
 Kind: fix
 What: promote a draft SW layer's block to a divisor of the primary block instead of padding its page
 Upstream: none yet (upstream pads)
-Cut-against: 0.33.0: #61183 moved the planning code to v1/core/kv_cache_planning.py; hunks unchanged
+Cut-against: 0.34.0: #61183 moved the planning code to v1/core/kv_cache_planning.py; hunks unchanged
 Retires-when: upstream PR
 
---- exported from 560870719e (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 9e56f8c69c (hybrid-sw-block-promote); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_planning.py b/v1/core/kv_cache_planning.py
-index 0c1d9df03b..00a07ee0ad 100644
+index a33b7d56ab..3811c8f2ff 100644
 --- a/v1/core/kv_cache_planning.py
 +++ b/v1/core/kv_cache_planning.py
-@@ -343,6 +343,148 @@
+@@ -389,6 +389,148 @@
      return [KVCacheGroupSpec(list(spec.kv_cache_specs.keys()), spec)]
  
  
@@ -232,7 +232,7 @@ index 0c1d9df03b..00a07ee0ad 100644
  def unify_kv_cache_spec_page_size(
      kv_cache_spec: dict[str, KVCacheSpec],
  ) -> dict[str, KVCacheSpec]:
-@@ -373,6 +515,12 @@
+@@ -419,6 +561,12 @@
          return kv_cache_spec
  
      max_page_size = max(page_sizes)
