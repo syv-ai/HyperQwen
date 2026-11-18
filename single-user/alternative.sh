@@ -58,6 +58,8 @@ export VLLM_DFLASH2_LOOKUP=${LOOKUP:-1}
 # 16.6 tok/s at 24k / 49k / 88k tokens; with it on, 90.4 / 73.7 / 60.2 (and 48.1 at 145k on a 200k boot). Set
 # INT4_MQ_3D=0 to get the old path back.
 export VLLM_INT4_MQ_3D=${INT4_MQ_3D:-1}
+# vLLM 0.34 removed this path (vllm #65542): launcher_common.sh refuses INT8_ACT=int8 there.
+# The text and numbers below are 0.33's, kept for the record.
 # INT8_ACT=int8: the W4A8 Marlin path for prefill, the same knob start_qwen.sh has (docs/optimizations.md). On this
 # profile it lifts fresh prefill +42% at 24k tokens to +13% at 145k (2,765 / 1,884 / 1,246 / 835 tok/s against
 # 1,942 / 1,446 / 1,039 / 736 on a 4090, 200k max length). It is a prefill knob: the paired 4090 repro measured

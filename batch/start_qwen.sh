@@ -8,11 +8,10 @@
 #    request; fp16 halves that AND halves the state traffic per decode step.
 #    That is what lets all 64 requests actually run at once (fp32: only 37).
 #    Perplexity is unchanged (8.045 vs 8.046 on our en/da/code check).
-#  - VLLM_MARLIN_INPUT_DTYPE=int8: int8 tensor-core (W4A8) Marlin path for the
-#    MLP GEMMs, weights stay int4. Roughly +35% aggregate on top of the state
-#    change for +2.2% perplexity. Needs both marlin patches from patches/.
-#    INT8_LAYERS=gate_up is the gentler variant (+0.9% PPL, ~+15%);
-#    INT8_ACT= (empty) turns it off entirely (pure W4A16, quality-neutral).
+#  - W4A16 on vLLM 0.34. Up to 0.33 this mode defaulted to int8 activations on
+#    the MLP GEMMs (W4A8 Marlin, roughly +35% aggregate on top of the state change
+#    for +2.2% perplexity); vLLM 0.34 removed that kernel path (vllm #65542), so
+#    INT8_ACT must stay empty (launcher_common.sh refuses anything else).
 #  - --language-model-only skips the vision tower entirely (0.858 GiB on this
 #    checkpoint); VISION=1 keeps it for a client that sends images
 #  - expandable_segments is required: the DeltaNet prefill kernels allocate
@@ -151,9 +150,8 @@ else
   GPU_UTIL=${GPU_UTIL:-0.94}
   KV_ARGS="--kv-cache-dtype fp8"
 fi
-# int8 activations: "int8" (default) or empty for W4A16; layers: regex on the
-# layer name, "mlp" (default: gate_up_proj + down_proj) or "gate_up"
-INT8_ACT=${INT8_ACT-int8}
+# int8 activations: empty (W4A16) is the only value vLLM 0.34 serves; see above.
+INT8_ACT=${INT8_ACT-}
 INT8_LAYERS=${INT8_LAYERS-mlp}
 
 # Prefix caching (PREFIX_CACHE=1, the default; 0 turns it off; qwen_prefix_cache passes the

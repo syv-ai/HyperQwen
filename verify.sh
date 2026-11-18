@@ -43,7 +43,7 @@ PY=${PY:-$HERE/venv/bin/python}
 echo "== environment"
 [ -x "$PY" ] && ok "python: $PY" || { fail "no $PY (see README Setup)"; exit 1; }
 VER=$($PY -c "import vllm; print(vllm.__version__)" 2>/dev/null | tail -n1)
-[ "$VER" = "0.33.0" ] && ok "vllm $VER" || warn "vllm ${VER:-missing} (patches were written against 0.33.0)"
+[ "$VER" = "0.34.0" ] && ok "vllm $VER" || warn "vllm ${VER:-missing} (patches were written against 0.34.0)"
 SP=$($PY -c "import vllm, os; print(os.path.dirname(vllm.__file__))" 2>/dev/null | tail -n1)
 [ -n "$SP" ] && [ -d "$SP" ] && ok "vllm package at $SP" || { fail "cannot import vllm with $PY"; exit 1; }
 if [ $INSTALL = 0 ]; then
@@ -217,7 +217,7 @@ def fail(m):
 # An asymmetric *body* group is legitimate: an AWQ body carries real zero points --
 # philbert440/Qwen3.8-27B-Uncensored-Aggressive-W4A16-AWQ, this repo's own worked
 # example, is symmetric=false on group_0 and serves fine, and
-# patches/marlin-int8-asym-zp.patch runs such bodies on the INT8_ACT=int8 path too.
+# (up to vLLM 0.33, patches/marlin-int8-asym-zp.patch ran such bodies on the INT8_ACT=int8 path; 0.34 has none).
 # The group is resolved the way vLLM's find_matched_target does it: modules in
 # "ignore" are skipped, then the first target in config order that names the module
 # (exactly, or re: with re.match), else a "Linear" class target -- which never covers
@@ -274,7 +274,7 @@ if not zp_bad:
     asym_groups = sorted({of[m] for m in checked if is_asym(groups[of[m]])})
     ok(f"zero points match their group on all {len(checked)} packed modules"
        + (" outside those head groups" if asym_head else "")
-       + (f" (asymmetric: {', '.join(asym_groups)}; INT8_ACT=int8 runs it through patches/marlin-int8-asym-zp.patch)" if asym_groups else " (all symmetric)"))
+       + (f" (asymmetric: {', '.join(asym_groups)})" if asym_groups else " (all symmetric)"))
 # lm_head requantized to int8 (prepare/quant_lm_head.py), or int4-GPTQ as the
 # drafter/ pipeline writes it (the shipped ...-AutoRound-fast layout). The width
 # is whatever config declares; what must hold is the packed geometry it implies,

@@ -59,7 +59,7 @@
 # k+1 recurrent-state slots), and past a handful of concurrent users you
 # should be running batch mode anyway. Int8 activations buy nothing at
 # batch size 1 *decode* (memory-bound) — but prefill is compute-bound at any
-# concurrency, so INT8_ACT below borrows batch mode's W4A8 path for the
+# concurrency, so INT8_ACT below borrowed batch mode's W4A8 path (up to vLLM 0.33) for the
 # prompt-side win; see "Prefill" in ../batch/README.md.
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,7 +131,9 @@ MAX_SEQS=${MAX_SEQS:-}
 # the flag entirely, which is what a vLLM tree WITHOUT patches/sse-keep-alive.patch
 # applied needs — the flag does not exist there, and the deploy tree drifts.
 SSE_KEEP_ALIVE=${SSE_KEEP_ALIVE-30}   # no colon: SSE_KEEP_ALIVE= keeps the empty value
-# INT8_ACT=int8 turns on the W4A8 Marlin path (weights stay int4, activations
+# vLLM 0.34 removed this path (vllm #65542): launcher_common.sh refuses INT8_ACT=int8 there.
+# The text and numbers below are 0.33's, kept for the record.
+# INT8_ACT=int8 turned on the W4A8 Marlin path (weights stay int4, activations
 # quantized per token to int8, int8 tensor cores) for the layers INT8_LAYERS
 # selects — the same knob batch mode ships on by default. At batch size 1 it
 # does nothing for decode (memory-bound; C1 122±5 vs 121 tok/s over repeats,
