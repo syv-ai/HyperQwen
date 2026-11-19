@@ -547,7 +547,7 @@ if [ "$SPEC" = "dflash2" ]; then
     # Above 7 drafts the aligned state pages grow and one request at 131072 needs 5.6 GiB
     # of KV against the 5.19 GiB pin, so the server refused to start ("estimated maximum
     # model length is 117120", #454). 114688 = 896 x 128 leaves ~2% margin, the same trade
-    # CTX=fast (57344) and CTX=huge (221184) make at DFLASH_TOKENS>7.
+    # CTX=fast (55296 since 0.34) and CTX=huge (221184) make at DFLASH_TOKENS>7.
     if [ "$DRAFT_TOKENS" -gt 7 ]; then
       MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-114688}}
     else
@@ -555,11 +555,14 @@ if [ "$SPEC" = "dflash2" ]; then
     fi
     KV_MEM=${KV_MEM-5583457484}
   elif [ "$DRAFT_TOKENS" -gt 7 ]; then
-    # 4 slots and 56k instead of 8 and 64k: the aligned state pages and the bigger decode
+    # 4 slots and 54k instead of 8 and 64k: the aligned state pages and the bigger decode
     # graphs are what the long block costs, and this is where they still fit next to the
-    # 5.2 GiB pool (57,669 tokens). DFLASH_TOKENS=7 gets 8 slots and 64k back.
+    # 5.2 GiB pool. DFLASH_TOKENS=7 gets 8 slots and 64k back. vLLM 0.34 rounds the hybrid
+    # attention block up to every attention backend's kernel block (480 tokens became 512),
+    # so the same pin holds less: 57344 asked for 5.23 GiB against 5.18 and the engine's
+    # estimate was 56320 (RTX 3090, 11-19). 55296 = 108 x 512 leaves ~2% under that.
     MAX_SEQS=${MAX_SEQS:-4}
-    MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-57344}}
+    MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-55296}}
     KV_MEM=${KV_MEM-5583457484}
     # Decode graphs are captured for both block lengths (the drafter's and the full verify
     # block), or the short step -- the common one -- runs piecewise and costs 8%. That is
