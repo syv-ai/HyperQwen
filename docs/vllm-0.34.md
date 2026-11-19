@@ -28,6 +28,37 @@ flash-attention d8dca8f0, the commit 0.34.0 builds: two commits past 0.33's b273
 `csrc/flash_attn/src`, the cutlass submodule unchanged, and `fa2/check_upstream.py` passes on it (18 mapped files
 byte for byte).
 
+## The extensible KV cache
+
+vLLM 0.34 turns on an extensible KV cache by default on CUDA. It reserves the KV pool's address range, commits memory
+only after warmup and CUDA-graph capture, and sizes the pool from what it measures free then, less a margin for
+activation spikes warmup didn't see (the larger of 1 GiB and 75% of the measured peak, plus 10% of what warmup
+leaves; `vllm/v1/worker/extensible_kv_cache.py`). Upstream says to leave `gpu_memory_utilization` unset with it on,
+and every launcher here sets `GPU_UTIL`, so with it on we paid our cap and its margin both.
+
+**Every launcher passes `--disable-extensible-kv-cache`**, which keeps 0.33's sizing. Batch's `GPU_UTIL` moves from
+0.94 to 0.93 with it. To turn the cache on, put `--enable-extensible-kv-cache` in `EXTRA_ARGS` (the launchers then
+leave the flag to you). One boot per setting:
+
+| card, profile | off | on, `GPU_UTIL` kept | on, `GPU_UTIL=1.0` |
+|---|---|---|---|
+| native 3090, `alternative.sh`-style at 160k, 4 seqs, vision, an 8 GB CPU tier (`GPU_UTIL=0.90`) | 339 blocks | 281 (-17%) | 353 (+4%) |
+| native 3090, batch | 287 blocks at 0.94, 277 at 0.93, 64 seats | 252 at 0.94, 63 seats | 255, 63 seats |
+| 4090 under WSL2, the same 160k profile | 368 blocks | 292 (-21%) | 292 (-21%) |
+| 4090 under WSL2, `alternative.sh` at its shipped 256k | 431 blocks | refuses: 5.08 GiB needed, 4.29 available | refuses |
+
+With it on, batch stays a seat short at any `GPU_UTIL`: the 1 GiB margin floor binds, not the cap. Under WSL2 the
+cap doesn't bind at all; the free memory WSL reports after warmup, less the margin, does. Every arm that booted
+passed the same stress load (four concurrent requests with two ~58k-token prompts and an 8-image prompt, a second
+turn, then a 16-request burst), and greedy acceptance read the same on and off, so the setting moves capacity.
+
+Turning it on pays, as far as measured, on a native-Linux card nothing else uses, with `GPU_UTIL=1.0`: a few
+percent more KV than off on the single-user profile, plus upstream's margin against activation spikes. Not for batch,
+not under WSL2, and not with `LSA=1`, which turns it off itself: with it on the plugin's index tables follow the whole
+reserved range, and a 50k/100k ruler read 0/8 and 0/6 with no error (8/8 and 6/6 off), so the plugin refuses it.
+KVarN runs with it on (`kvarn-extensible-kv-commit`: the deferred int4 flush commits the blocks it writes before
+writing them), with the same texts as off and a 6.9-13.5% smaller pool. No native 4090 was measured.
+
 ## Patch series
 
 63 files (59 in the series, 4 KVarN), re-exported from a vLLM branch that carries the series as one commit per topic
@@ -96,3 +127,4 @@ Pending: this section is filled from the runs, against 0.33.0 (main-033-663bdd7)
 - Batch serves W4A16 and refuses `INT8_ACT`, rather than wiring Humming in the same change.
 - huggingface_hub 2.4.0 (upstream CI's), with transformers kept at 5.19.0 rather than moved to CI's 5.22.0.
 - #64165 carried without its test file, as with the other backports.
+- The launchers turn the extensible KV cache off, rather than keep upstream's default and document the cost.

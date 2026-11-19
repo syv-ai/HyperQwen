@@ -129,6 +129,9 @@ elif [ "$KV" = "kvarn" ]; then
   export KVARN_POOL_MEM_FRAC=${KVARN_POOL_MEM_FRAC:-0.25}
 else
   MAX_LEN=${MAX_LEN:-150000}
+  # 0.93 on 0.34, with the extensible KV cache off. At 0.94 the forced 64-prompt step (below) cleared by 131 MiB
+  # on a native 3090, under 0.31's ~174; at 0.93 it clears by 393 MiB with 64 seats running and the burst at 0.33's
+  # speed (875 against 867 tok/s), for 277 KV blocks against 287 (one boot each, 11-19).
   # 0.94 on 0.31, not 0.30's 0.95. The profiling run skips the GDN layers, so the
   # worst prefill step is never budgeted: 64 new short prompts in one step (one
   # /v1/completions request carrying 64 prompts forces it) needed ~624 MiB over rest
@@ -147,7 +150,7 @@ else
   # boot and serve with VISION=0 and 1, 0.972 does not. 0.95 keeps one 0.01 step
   # below the highest value that passed, boots cold to the same pool as warm
   # (219,587 tokens with the tower), and holds at least the pool 0.28 had at 0.972.
-  GPU_UTIL=${GPU_UTIL:-0.94}
+  GPU_UTIL=${GPU_UTIL:-0.93}
   KV_ARGS="--kv-cache-dtype fp8"
 fi
 # int8 activations: empty (W4A16) is the only value vLLM 0.34 serves; see above.
@@ -256,6 +259,7 @@ source "$REPO/resolve_api_key.sh" \
   || { echo "start_qwen: cannot source $REPO/resolve_api_key.sh - refusing to boot with an unknown key" >&2; exit 1; }
 resolve_vllm_key
 resolve_bind_host
+qwen_extensible_kv_args
 
 qwen_exec venv/bin/vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -274,4 +278,5 @@ qwen_exec venv/bin/vllm serve "$MODEL" \
   --enable-prompt-tokens-details \
   "${METRICS_ARGS[@]}" \
   "${TOOL_ARGS[@]}" \
+  $EKV_ARGS \
   ${EXTRA_ARGS}

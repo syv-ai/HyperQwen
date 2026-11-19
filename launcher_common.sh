@@ -192,6 +192,15 @@ qwen_kv_offload_args() {
   fi
 }
 
+# vLLM 0.34 turns on the extensible KV cache by default on CUDA; these launchers turn it off, keeping 0.33's sizing,
+# unless EXTRA_ARGS names it (docs/vllm-0.34.md, "The extensible KV cache": what it costs and when turning it on pays).
+qwen_extensible_kv_args() {
+  EKV_ARGS="--disable-extensible-kv-cache"
+  case " ${ATTN_ARGS:-} ${EXTRA_ARGS:-} " in
+    *" --enable-extensible-kv-cache"*|*" --disable-extensible-kv-cache"*|*" --no-enable-extensible-kv-cache"*) EKV_ARGS= ;;
+  esac
+}
+
 qwen_prefix_cache() {
   local knob=${PREFIX_CACHE:-1} w words why
   case "$knob" in

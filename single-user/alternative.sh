@@ -144,6 +144,7 @@ ASYNC_ARGS=(--no-async-scheduling)
 # Array, not $( [ ] && echo ): the command substitution exits 1 when the test
 # is false, which under `set -e` killed this script silently (#59).
 qwen_request_metrics_args "$SPEC"
+qwen_extensible_kv_args
 
 qwen_exec vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -165,4 +166,5 @@ qwen_exec vllm serve "$MODEL" \
   --enable-auto-tool-choice --tool-call-parser qwen3_coder \
   --tool-strict-level "${TOOL_STRICT:-parameter}" \
   --default-chat-template-kwargs "{\"enable_thinking\": $ENABLE_THINKING}" \
+  $EKV_ARGS \
   ${EXTRA_ARGS}

@@ -1051,6 +1051,7 @@ source "$REPO/resolve_api_key.sh" \
   || { echo "start_qwen: cannot source $REPO/resolve_api_key.sh - refusing to boot with an unknown key" >&2; exit 1; }
 resolve_vllm_key
 resolve_bind_host
+qwen_extensible_kv_args
 
 qwen_exec venv/bin/vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -1070,5 +1071,6 @@ qwen_exec venv/bin/vllm serve "$MODEL" \
   --enable-prompt-tokens-details \
   "${METRICS_ARGS[@]}" \
   "${TOOL_ARGS[@]}" \
+  $EKV_ARGS \
   ${EXTRA_ARGS} \
   ${SSE_KEEP_ALIVE:+--sse-keep-alive-interval $SSE_KEEP_ALIVE}
