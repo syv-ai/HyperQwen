@@ -666,6 +666,10 @@ if [ "$SPEC" = "dflash2" ]; then
   if [ "$RESIDENT_OK" = 1 ]; then
     RESIDENT_STATE_B=$(( 20480 * (3 + DRAFT_TOKENS) + 48 * 128 * 128 * RESIDENT_SSM_B ))
     RESIDENT_BLOCK=$(( 16 * ((RESIDENT_STATE_B + 16 * RESIDENT_TGT - 1) / (16 * RESIDENT_TGT)) ))
+    # vLLM 0.34 rounds the hybrid attention block up to every attention backend's smallest kernel block, which is
+    # 64 tokens on these profiles (threadchip's logs, 11-19: on all 8 profiles both pins share, 0.34's block is
+    # 0.33's rounded up to 64, e.g. 480 -> 512, 800 -> 832, 1696 -> 1728).
+    RESIDENT_BLOCK=$(( 64 * ((RESIDENT_BLOCK + 63) / 64) ))
     RESIDENT_PAGE=$(( 8 * RESIDENT_BLOCK * (RESIDENT_DFT > RESIDENT_TGT ? RESIDENT_DFT : RESIDENT_TGT) ))
     RESIDENT_POOL=$(( KV_MEM / RESIDENT_PAGE ))
     RESIDENT_STATE=$(( 6 * RESIDENT_PER_GROUP ))
