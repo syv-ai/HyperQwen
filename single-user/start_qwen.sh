@@ -389,7 +389,10 @@ if [ "$LSA" = 1 ]; then
   export LSA_MAP=${LSA_MAP:-$REPO/models/lsa/$LSA_MAP_NAME}
   [ -f "$LSA_MAP" ] || { echo "LSA=1 needs the distilled map $LSA_MAP: bash lsa/install.sh --map-only" >&2; exit 1; }
   export LSA=1
-  ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head"
+  # The extensible KV cache (vLLM 0.34's default) hands the plugin the whole reserved pool before it commits
+  # pages, and with it on LSA answered a 50k/100k ruler 0/8 and 0/6 with no error (8/8 and 6/6 with it off;
+  # threadchip, RTX 3090, 11-19). The plugin refuses it too; this keeps LSA=1 booting.
+  ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head --disable-extensible-kv-cache"
   PTH_SPEC_BACKEND=',"attention_backend":"CUSTOM"'
   [ -n "$USER_GPU_UTIL" ] || GPU_UTIL=$(awk -v u="$GPU_UTIL" 'BEGIN { printf "%.2f", u - 0.02 }')
   echo "[start_qwen] LSA=1: D-LSA flat on the full-attention layers (lsa/), int8_per_token_head KV on CUSTOM, map $LSA_MAP, GPU_UTIL=$GPU_UTIL" >&2
