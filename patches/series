@@ -75,3 +75,4 @@ terminal-request-progress.patch
 vllm-pr64165-flashinfer-plan-event.patch
 qwen3_5-nvidia-gated-norm-warmup.patch
 vision-tower-cpu-offload-meta.patch
+kvarn-no-extensible-kv.patch
