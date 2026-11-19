@@ -1,0 +1,33 @@
+vLLM 0.34 builds a model's vision tower on the meta device on every pipeline rank after the first
+(_mark_tower_model now applies no_init_weights there unconditionally; 0.33 did so only under the v2 model
+runner) and replaces it with a stage stub. vision-tower-cpu-offload wraps the tower's merger and blocks in a
+UVA offloader inside the tower's constructor, and the offloader's copy to host raised "Cannot copy out of meta
+tensor" on rank 1, so VISION=1 with VLLM_VISION_CPU_OFFLOAD_GB at PP=2 could not boot (2x RTX 3090, the #328
+PP=2 profile). The offloader is now skipped when the tower is being built on the meta device. A tower built
+for real is offloaded as before.
+
+Kind: own
+What: skip the vision tower's CPU offload on pipeline ranks that build the tower on the meta device, so
+  VISION=1 with VLLM_VISION_CPU_OFFLOAD_GB boots at PP=2 on 0.34
+Upstream: none
+Cut-against: 0.34.0
+Retires-when: rides with vision-tower-cpu-offload
+
+--- exported from 45ca225445 (vision-tower-cpu-offload-meta); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/models/qwen3_vl.py b/model_executor/models/qwen3_vl.py
+index 1a498833e3..aee2e92299 100644
+--- a/model_executor/models/qwen3_vl.py
++++ b/model_executor/models/qwen3_vl.py
+@@ -637,7 +637,10 @@
+         )
+ 
+         vision_offloader = None
+-        if envs.VLLM_VISION_CPU_OFFLOAD_GB > 0:
++        # Under pipeline parallelism every rank after the first builds the
++        # tower on the meta device (no_init_weights in _mark_tower_model) and
++        # replaces it with a stage stub; there is nothing to copy to the host.
++        if envs.VLLM_VISION_CPU_OFFLOAD_GB > 0 and not torch.empty(0).is_meta:
+             from vllm.model_executor.offloader.uva import UVAOffloader
+ 
+             vision_offloader = UVAOffloader(
