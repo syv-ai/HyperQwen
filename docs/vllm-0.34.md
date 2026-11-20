@@ -61,7 +61,7 @@ writing them), with the same texts as off and a 6.9-13.5% smaller pool. No nativ
 
 ## Patch series
 
-63 files (59 in the series, 4 KVarN), re-exported from a vLLM branch that carries the series as one commit per topic
+66 files (62 in the series, 4 KVarN), re-exported from a vLLM branch that carries the series as one commit per topic
 on v0.34.0. Applied to pristine v0.34.0, the series plus the KVarN files reproduce that branch's `vllm/` tree with 0
 differing files; a one-byte change to one patch shows as 1 differing file. The rebase stopped 21 times.
 
@@ -94,6 +94,23 @@ note and in the fork's history):
   padded op is used on both of upstream's paths.
 - `dflash2-prewarm`: the prewarm launches take #65488's grid, `num_reqs` and `NUM_PAD_PROGRAMS`, so they compile the
   variant the real launch uses.
+- `qwen3_5-embed-quant`, `qwen3_5-mtp-draft-vocab` and `qwen3_5-embed-uva`: on CUDA, 0.34.0 runs Qwen3.5 through
+  `vllm/models/qwen3_5/nvidia` (#51012), so each patches those files as well as the old ones, which still serve other
+  platforms.
+- `dflash2-lookup-drafting` goes back to 0.34.0's own quantized-weight fallback for the drafter's context KV (#64357)
+  in place of its dense unpack.
+- `spec-decode-scratch-within-budget` sizes the int4 scratch from the caller's geometry, which is what 0.34.0's
+  metadata builder reads (#56996).
+
+New in this port:
+
+- `qwen3_5-nvidia-gated-norm-warmup`: the new CUDA path's fused GDN norm (`_fused_gdn_gated_rms_norm_kernel`)
+  compiled during the first requests; it is warmed at boot.
+- `vision-tower-cpu-offload-meta`: 0.34.0 builds the vision tower on the meta device on every pipeline rank after the
+  first, and the vision offload copied to host at construction, so `VISION=1` with `VLLM_VISION_CPU_OFFLOAD_GB` did
+  not boot at PP=2. The offload is skipped where the tower is on meta.
+- `kvarn-extensible-kv-commit`: KVarN's deferred int4 flush commits the extensible cache's blocks it writes before
+  writing them (above, "The extensible KV cache").
 
 Breaks no conflict showed, found by reading upstream's changes and by `scripts/port-changed-signatures.py` /
 `port-removed-names.py` (item 0), all fixed in their topics:
@@ -110,7 +127,57 @@ Breaks no conflict showed, found by reading upstream's changes and by `scripts/p
 
 ## Acceptance
 
-Pending: this section is filled from the runs, against 0.33.0 (main-033-663bdd7) on the same box.
+0.33 arm: 0.33.0 with the 0.33 series, built from the vLLM fork. 0.34 arm: this series on 0.34.0, built the same way.
+A native RTX 3090 with the two images alternating in one session, one boot per cell unless stated. The items ran on an
+image from before the extensible-cache default and the `DFLASH_TOKENS=15` length below, with the cache on wherever no
+KV pin was set; each fix was then checked on a later image.
+
+- Static: `scripts/port-changed-signatures.py` binds 227 calls on our added lines against 0.34.0 with 0 breaks (2
+  before the fixes above); `port-removed-names.py` finds 4 uses, all our own parameter name or words in comments.
+- Every launcher setting (408 cases) through 0.34.0's `create_engine_config()` on CPU in the image: 320 build, 24 are
+  the launchers' own `INT8_ACT` refusal, and 64 are `SPEC=none` with `REQ_METRICS=1` (the alias misses #444's fix,
+  syv-ai #464). Nothing new RAISEs on 0.34. 0.34.0 deprecates `cudagraph_capture_sizes` and
+  `max_cudagraph_capture_size`, which the launchers pass, and says `--mamba-cache-mode` will be removed.
+- Every profile at its shipped defaults with a 64-way burst of 128 requests: 128/128 on both. With the cache off at
+  `GPU_UTIL=0.93`, batch's forced 64-prompt step serves 64 of 64 with 373 MiB to spare (0.33: 171 MiB at int8, 231 at
+  W4A16), and the burst runs at 875.5 tok/s, against 866.6 for 0.33 at W4A16 and 1,201.5 at int8.
+- Tokens per step at greedy, two boots per image: every boot uses its shipped draft count, and the copy probe reads
+  7.701 at k7 and 14.472 at k15 on both. Greedy is inside the 0.33 boots' range on MTP long, DFlash2 k7 and
+  `alternative.sh`. MTP fast k4 reads 3.714 on both 0.34 boots, above both 0.33 boots (3.674, 3.681) and every MTP
+  fast greedy reading on this card from 0.31 to 0.33 (3.674-3.701, 9 boots), with the same five texts as one 0.33
+  boot; the cause is not measured. Seeded default temperature on each profile is no farther from the 0.33 mean than
+  the two 0.33 boots are from each other.
+- Every knob the launchers export reaches the engine on both, and the invalid values refused on 0.33 are refused on
+  0.34, apart from the int8-activation knobs, which are gone.
+- First requests on a cold volume (8 streams of 3 requests, two waves): no kernel compiled during inference on 0.34
+  at the single-user defaults or `alternative.sh`. On 0.33, `alternative.sh` compiles `_attn_packed` in both waves.
+- `bench/residue_sweep.py` at `SPEC=dflash2 CTX=huge PREFIX_CACHE=1`: 0 broken of 128 on both, 0 broken cold, and
+  all 256 answers per image one hash, the same on both.
+- Two ~59K conversations at once: `alternative.sh` 96.3% reuse on 0.33 against 98.1% on 0.34; with an 8 GB CPU
+  tier, 57,664 and 59,360 tokens on 0.33 against 58,752 for both. On the MTP profile with `PREFIX_CACHE=1`, 0.33's
+  99.6% was #61589's admission hit, which preempted the other conversation and saved no time (turn-2 decode 4.0 and
+  4.2 tok/s, 258.7 s in all). 0.34 runs the two one after the other, 0% hit, turn-2 decode 107.8 and 96.3 tok/s,
+  256.4 s, with the cache on or off; one conversation alone reuses 99.5%.
+- The launcher defaults the READMEs document, 13 combinations of SPEC, CTX and DFLASH_TOKENS: 9 booted on the first
+  image, with the cache on. The other 4 boot with the fixes in this port: three KVarN profiles with no KV pin, which
+  died in CUDA-graph capture with the cache on, and `SPEC=dflash2 CTX=fast DFLASH_TOKENS=15`, whose page went from
+  480 to 512 tokens (0.34.0 rounds the hybrid attention page up to every backend's smallest kernel block), so its
+  57,344 default no longer fit the 5.2 GiB pin; it defaults to 55,296.
+- Vision (0, 1 and 8 images read, the ninth refused with the documented 400), LSA (`lsa/tests/ruler_mk.py` 8/8 and
+  6/6 on both, once `LSA=1` turns the cache off) and streamed tool calls (3 `tool_calls` deltas, `finish_reason`
+  `tool_calls`, on both thinking settings) are unchanged.
+- The native install from `docs/install.md`, run as extracted on a Python 3.14 host with a system nvcc 12.4: every
+  step exits 0 and `verify.sh` passes, except pthfa's optional build, which fails on that host's glibc 2.43 headers
+  with CUDA 13.0 as it did on 0.33. A patch run with one corrupted patch exits naming it and leaves the venv unchanged
+  (a stat manifest of 155,737 entries and the vllm package's hashes, before and after).
+- #328's load at PP=2 on a rented 2x3090, 60 minutes: no crash with #64165 and without the old port (551 requests
+  served; the 47 refused are the load's own over-limit image requests); the same build with only #64165 reversed hit
+  the illegal memory access 5 s in. One machine, one boot each.
+- On a production RTX 4090 (native Linux, `alternative.sh` with vision, an 8 GB CPU tier and 4 seats at 160k), against
+  0.33 on the same probes: auth, tool calls, vision, `return_progress` and a 16-request burst read the same. Greedy
+  decode on one 600-token prompt is 104.5 tok/s against 112.9 (-7.4%), and with two ~59K conversations at once both
+  turn-2 prompts hit 50,112 tokens, all from the CPU tier, against 59,360 (turn-2 first token 9.9 s against
+  0.7-0.8 s). One prompt sent twice does hit the GPU prefix cache. Neither cause is measured yet.
 
 ## What is still unproven
 
@@ -119,6 +186,10 @@ Pending: this section is filled from the runs, against 0.33.0 (main-033-663bdd7)
 - SM120 keeps upstream's 64-segment decode mode off, as on 0.33, because the 3D scratch comes from the budgeted pool
   (`spec-decode-scratch-within-budget`), which is sized for 16 segments.
 - Whether `gdn-ba-pad-small-m` still pays once upstream hides the ba GEMM on an aux stream.
+- Why the production 4090 decodes 7.4% slower on 0.34, and why two long conversations lose their GPU prefix blocks
+  before turn 2 there (Acceptance, last item).
+- The seat-budget log line (`kv_cache_utils.py`, "KV cache seat budget") counts 9 fixed blocks a request on batch
+  where 4 are held, so it implies about 25 resident requests where 63-64 run. The same on 0.33; not this port's.
 - KVarN's `build_for_drafting` override had no caller on the V2 runner on 0.33 either (only V1 proposers called it);
   0.34.0 removes the last caller. Pre-existing, unchanged by this port.
 
@@ -128,3 +199,5 @@ Pending: this section is filled from the runs, against 0.33.0 (main-033-663bdd7)
 - huggingface_hub 2.4.0 (upstream CI's), with transformers kept at 5.19.0 rather than moved to CI's 5.22.0.
 - #64165 carried without its test file, as with the other backports.
 - The launchers turn the extensible KV cache off, rather than keep upstream's default and document the cost.
+- No constraints file for vLLM's unpinned dependencies, although `openai` (3.55.1 to 3.56.0) and `anthropic` (2.10.0
+  to 2.11.0) moved between two `--no-cache` builds of this branch four hours apart.
