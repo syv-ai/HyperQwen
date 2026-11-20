@@ -177,7 +177,10 @@ KV pin was set; each fix was then checked on a later image.
   0.33 on the same probes: auth, tool calls, vision, `return_progress` and a 16-request burst read the same. Greedy
   decode on one 600-token prompt is 104.5 tok/s against 112.9 (-7.4%), and with two ~59K conversations at once both
   turn-2 prompts hit 50,112 tokens, all from the CPU tier, against 59,360 (turn-2 first token 9.9 s against
-  0.7-0.8 s). One prompt sent twice does hit the GPU prefix cache. Neither cause is measured yet.
+  0.7-0.8 s). One prompt sent twice does hit the GPU prefix cache. The decode cause is not measured yet. The
+  reuse cost was `alternative.sh`'s dense retention with a KV tier, which now defaults to `0`
+  ([gotchas.md](gotchas.md) 60): on an RTX 3090 with the same profile, both turn 2s hit 58,752 tokens on the GPU
+  at `0`, and the tier still serves a forced miss.
 
 ## What is still unproven
 
@@ -186,8 +189,8 @@ KV pin was set; each fix was then checked on a later image.
 - SM120 keeps upstream's 64-segment decode mode off, as on 0.33, because the 3D scratch comes from the budgeted pool
   (`spec-decode-scratch-within-budget`), which is sized for 16 segments.
 - Whether `gdn-ba-pad-small-m` still pays once upstream hides the ba GEMM on an aux stream.
-- Why the production 4090 decodes 7.4% slower on 0.34, and why two long conversations lose their GPU prefix blocks
-  before turn 2 there (Acceptance, last item).
+- Why the production 4090 decodes 7.4% slower on 0.34 (Acceptance, last item). An RTX 3090 shows no 0.34 cost per
+  decode step on the same profile (26.10 against 26.12 ms).
 - The seat-budget log line (`kv_cache_utils.py`, "KV cache seat budget") counts 9 fixed blocks a request on batch
   where 4 are held, so it implies about 25 resident requests where 63-64 run. The same on 0.33; not this port's.
 - KVarN's `build_for_drafting` override had no caller on the V2 runner on 0.33 either (only V1 proposers called it);
@@ -199,5 +202,6 @@ KV pin was set; each fix was then checked on a later image.
 - huggingface_hub 2.4.0 (upstream CI's), with transformers kept at 5.19.0 rather than moved to CI's 5.22.0.
 - #64165 carried without its test file, as with the other backports.
 - The launchers turn the extensible KV cache off, rather than keep upstream's default and document the cost.
+- `alternative.sh` keeps prefix retention at `0` with a KV tier too, rather than dense as since 0.29.
 - No constraints file for vLLM's unpinned dependencies, although `openai` (3.55.1 to 3.56.0) and `anthropic` (2.10.0
   to 2.11.0) moved between two `--no-cache` builds of this branch four hours apart.

@@ -117,18 +117,16 @@ qwen_vision_args
 
 # With the drafter on, pass the retention interval explicitly: 0.30's unset default is 0 (the replay
 # boundaries only), where 0.29 resolved it to dense (vllm #55760); start_qwen.sh has the measurement.
-# The default here depends on a KV tier (the connector check above): without one it is 0, because at dense two
-# ~60K conversations on this int4 pool evicted each other completely (0 / 0 cached where 0 held 93.5% for both);
-# with one it is None (dense), which the tier serves from (gotcha 60). PREFIX_RETENTION sets it (0 = boundaries
-# only, empty = dense); the flag in EXTRA_ARGS wins.
+# The default is 0, with or without a KV tier: at dense two ~60K conversations on this int4 pool evict each
+# other (0 / 0 cached where 0 held 93.5% for both). Until 0.34 a tier switched it to None, because beside 0 a
+# tier served nothing on 0.29; on 0.34 the tier serves at 0, and dense with a tier cached a Mamba state per
+# block, so the first of two ~59K conversations lost its GPU hit to the second's prefill (gotcha 60).
+# PREFIX_RETENTION sets it (0 = boundaries only, empty = dense); the flag in EXTRA_ARGS wins.
 if [ "$PREFIX_CACHE_ON" = 1 ] && [ "$SPEC" = dflash2 ]; then
   case " ${EXTRA_ARGS:-} " in
     *"--prefix-cache-retention-interval"*) ;;
     *)
-      case " ${EXTRA_ARGS:-} " in
-        *"--kv-offloading-size"*|*"--kv-transfer-config"*) R_DEFAULT=None ;;
-        *) R_DEFAULT=0 ;;
-      esac
+      R_DEFAULT=0
       if [ "${PREFIX_RETENTION+set}" = set ]; then R=${PREFIX_RETENTION:-None}; else R=$R_DEFAULT; fi
       EXTRA_ARGS="--prefix-cache-retention-interval $R ${EXTRA_ARGS:-}" ;;
   esac

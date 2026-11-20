@@ -1428,12 +1428,20 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     into the reply, so a turn prefills those again. So both single-user launchers now pass the
     interval on every draft profile: the measured one above, else `None` (dense,
     0.29's behaviour). `PREFIX_RETENTION=0` asks for boundaries only
-    ([vllm-0.30.md](vllm-0.30.md) has the measurement). `alternative.sh` keys its
-    default on a KV tier, so `None` in one boot log and `0` in another is the tier:
-    without one it passes `0`, because at dense two ~60K conversations on its int4
-    pool evicted each other completely (0 / 0 cached, where `0` held 93.5% for both);
-    with `--kv-offloading-size` it passes `None`, which the tier serves from (96-98%
-    on 0.30, where beside `0` a tier served nothing on 0.29).
+    ([vllm-0.30.md](vllm-0.30.md) has the measurement). `alternative.sh` passes `0`,
+    because at dense two ~60K conversations on its int4 pool evicted each other
+    completely (0 / 0 cached, where `0` held 93.5% for both). ~~With
+    `--kv-offloading-size` it passes `None`, which the tier serves from (96-98% on
+    0.30, where beside `0` a tier served nothing on 0.29).~~ Until 0.34 a KV tier
+    switched it to `None`. On 0.34 that cost the first of two ~59K conversations its
+    GPU hit: dense caches a Mamba state at every block (34 per group per
+    conversation), the second conversation's prefill evicted the first's, and its
+    turn 2 came from the tier at 9.9 s instead of 0.7 s. 0.33 cached as densely and
+    survived on one state its 1,696-token block put past the prompt end; 0.34's
+    1,728-token block puts that boundary inside the prompt. At `0` with the tier,
+    both turn 2s hit the GPU (58,752 each), and the tier still serves a forced miss
+    (46,656 tokens in 2.9 s). So the tier no longer changes the default
+    (RTX 3090, `alternative.sh` at 160k with vision and an 8 GB tier, 11-20).
 61. **The shipped MTP draft vocabulary is English, Danish and code. On Chinese
     output it covers about 6% of tokens, and `SPEC=mtp` collapses to ~1.06
     tokens per step.** The 40,960-id list (`prepare/draft_vocab_ids.json`, and
