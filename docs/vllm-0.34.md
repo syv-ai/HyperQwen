@@ -178,12 +178,12 @@ KV pin was set; each fix was then checked on a later image.
   decode on one 600-token prompt is 104.5 tok/s against 112.9 (-7.4%), and with two ~59K conversations at once both
   turn-2 prompts hit 50,112 tokens, all from the CPU tier, against 59,360 (turn-2 first token 9.9 s against
   0.7-0.8 s). One prompt sent twice does hit the GPU prefix cache. The decode gap is acceptance, not step time:
-  one request at a time on that card, 0.33 and 0.34 run 22.27 and 22.30 ms per decode step over six greedy prompts,
-  and that one prompt's greedy text forks between the versions (2.549 against 2.358 tokens per step). Over the six,
-  greedy acceptance is 2.9% lower on 0.34, deterministic, as on the 3090 (-3.2%); on prompts whose greedy text is
-  identical in both, 0.34 still takes a step or two more, so the shift is in what the drafter proposes. At the
-  server's default sampling, 78 requests per version, 0.34 reads 1.9% lower (95% interval -3.9% to +0.1%), not
-  established. The reuse cost was `alternative.sh`'s dense retention with a KV tier, which now defaults to `0`
+  one request at a time on that card, 0.33 and 0.34 run 22.27 and 22.30 ms per decode step over six greedy prompts.
+  The gap comes from that one prompt, a 600-token essay: under greedy it reads 2.358 tokens per step on 0.34 against
+  2.549 there, and on a second RTX 4090 (WSL, 64k context, three boots each) 2.400 against 2.496-2.593. The other five
+  prompts show no greedy gap on either card (lepton 4.796 against 4.704). At the server's default sampling, 78
+  requests per version over all six, 0.34 reads 1.9% lower (95% interval -3.9% to +0.1%), not established; the essay
+  alone reads 2.5% lower. The reuse cost was `alternative.sh`'s dense retention with a KV tier, which now defaults to `0`
   ([gotchas.md](gotchas.md) 60): on an RTX 3090 with the same profile, both turn 2s hit 58,752 tokens on the GPU
   at `0`, and the tier still serves a forced miss.
 
@@ -194,9 +194,11 @@ KV pin was set; each fix was then checked on a later image.
 - SM120 keeps upstream's 64-segment decode mode off, as on 0.33, because the 3D scratch comes from the budgeted pool
   (`spec-decode-scratch-within-budget`), which is sized for 16 segments.
 - Whether `gdn-ba-pad-small-m` still pays once upstream hides the ba GEMM on an aux stream.
-- Which change moves greedy acceptance by about 3% (Acceptance, last item). 0.34 runs Qwen3.5 on its new NVIDIA path
-  (breakable CUDA graphs, no torch.compile, upstream #51012), where 0.33 compiled it; the drafter reads the target's
-  hidden states, which that path computes with different kernels. Not tested.
+- Why one 600-token essay reads fewer tokens per step under greedy on 0.34 (Acceptance, last item). 0.34 runs
+  Qwen3.5 on its new NVIDIA path (breakable CUDA graphs, no torch.compile, upstream #51012). With
+  `VLLM_USE_BREAKABLE_CUDAGRAPH=0` the drafter is compiled again, and the essay still reads 2.368-2.410 over three
+  boots, beside 2.400 with the switch on. What that switch cannot reach is the target's new model class, which
+  computes the hidden states the drafter reads. Not tested.
 - The seat-budget log line (`kv_cache_utils.py`, "KV cache seat budget") counts 9 fixed blocks a request on batch
   where 4 are held, so it implies about 25 resident requests where 63-64 run. The same on 0.33; not this port's.
 - KVarN's `build_for_drafting` override had no caller on the V2 runner on 0.33 either (only V1 proposers called it);
