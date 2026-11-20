@@ -1,6 +1,7 @@
 #!/bin/bash
 # CPU test: every launcher turns vLLM 0.34's extensible KV cache off (--disable-extensible-kv-cache, once) unless
-# EXTRA_ARGS names it, in which case the launcher adds nothing and EXTRA_ARGS decides; and
+# EXTRA_ARGS names it, in which case the launcher adds nothing and EXTRA_ARGS decides; LSA=1 passes it once through
+# its own arguments; and
 # batch's fp8 default GPU_UTIL is 0.93 (docs/vllm-0.34.md, "The extensible KV cache"). Copies
 # the checkout to a temp dir and runs the launchers with PRINT_ARGV=1 (launcher_common.sh) against a stub vllm. No
 # GPU, no model, no network.
@@ -30,6 +31,16 @@ for sc in single-user/start_qwen.sh batch/start_qwen.sh single-user/alternative.
   check 1 "$(argv_of "$sc" EXTRA_ARGS=--disable-extensible-kv-cache | count --disable-extensible-kv-cache)" \
     "EXTRA_ARGS=--disable-extensible-kv-cache: once, not twice"
 done
+# LSA=1 turns the cache off with its own arguments (the plugin refuses it), so the flag still appears once, and an
+# EXTRA_ARGS --enable-extensible-kv-cache reaches the engine beside it, where the plugin refuses it at boot.
+echo "== single-user/start_qwen.sh LSA=1"
+printf '#!/bin/sh\nexit 0\n' > "$T/venv/bin/python"; chmod +x "$T/venv/bin/python"
+( . "$T/lsa/PIN" && mkdir -p "$T/models/lsa" && : > "$T/models/lsa/$LSA_MAP_NAME" )
+lsa() { argv_of single-user/start_qwen.sh LSA=1 SPEC=mtp CTX=long "$@"; }
+check 1 "$(lsa | count --disable-extensible-kv-cache)" "LSA=1: --disable-extensible-kv-cache, once"
+a=$(lsa EXTRA_ARGS=--enable-extensible-kv-cache)
+check "1 1" "$(echo "$a" | count --disable-extensible-kv-cache) $(echo "$a" | count --enable-extensible-kv-cache)" \
+  "LSA=1 with EXTRA_ARGS=--enable-extensible-kv-cache: both reach the engine, which refuses"
 # The native rows need a host that is not WSL; WSL changes batch's GPU_UTIL default on purpose.
 if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
   echo "  skip  native batch GPU_UTIL rows: this host reports WSL in /proc/sys/kernel/osrelease"

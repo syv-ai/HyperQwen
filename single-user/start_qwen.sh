@@ -391,7 +391,7 @@ if [ "$LSA" = 1 ]; then
   export LSA=1
   # The extensible KV cache (vLLM 0.34's default) hands the plugin the whole reserved pool before it commits
   # pages, and with it on LSA answered a 50k/100k ruler 0/8 and 0/6 with no error (8/8 and 6/6 with it off;
-  # threadchip, RTX 3090, 11-19). The plugin refuses it too; this keeps LSA=1 booting.
+  # an RTX 3090, 11-19). The plugin refuses it too; this keeps LSA=1 booting.
   ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head --disable-extensible-kv-cache"
   PTH_SPEC_BACKEND=',"attention_backend":"CUSTOM"'
   [ -n "$USER_GPU_UTIL" ] || GPU_UTIL=$(awk -v u="$GPU_UTIL" 'BEGIN { printf "%.2f", u - 0.02 }')
@@ -670,7 +670,7 @@ if [ "$SPEC" = "dflash2" ]; then
     RESIDENT_STATE_B=$(( 20480 * (3 + DRAFT_TOKENS) + 48 * 128 * 128 * RESIDENT_SSM_B ))
     RESIDENT_BLOCK=$(( 16 * ((RESIDENT_STATE_B + 16 * RESIDENT_TGT - 1) / (16 * RESIDENT_TGT)) ))
     # vLLM 0.34 rounds the hybrid attention block up to every attention backend's smallest kernel block, which is
-    # 64 tokens on these profiles (threadchip's logs, 11-19: on all 8 profiles both pins share, 0.34's block is
+    # 64 tokens on these profiles (RTX 3090 boot logs, 11-19: on all 8 profiles both pins share, 0.34's block is
     # 0.33's rounded up to 64, e.g. 480 -> 512, 800 -> 832, 1696 -> 1728).
     RESIDENT_BLOCK=$(( 64 * ((RESIDENT_BLOCK + 63) / 64) ))
     RESIDENT_PAGE=$(( 8 * RESIDENT_BLOCK * (RESIDENT_DFT > RESIDENT_TGT ? RESIDENT_DFT : RESIDENT_TGT) ))
