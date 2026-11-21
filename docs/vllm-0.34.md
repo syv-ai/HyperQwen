@@ -65,6 +65,16 @@ its perplexity. The GSM8K differences are inside its standard error at n=200 (ab
 -0.36% with int8 on the MLP. Boot to /health is 5-10 s longer than W4A16 (Humming's first compiles). Before the second
 patch the same arms read W4A16's perplexity to the third decimal and its speed within 1%: that is the silent path.
 
+**The shipped path**, built from this branch's own Dockerfile (with #474's xgrammar hold, without which no 0.34 image
+builds today) and served by the launcher's own override, no overlay: batch at shipped defaults read 1,121.1 tok/s at
+128/512 and 815.9 at 256/256 against 790.8 and 547.6 with `INT8_ACT=` on the same image; the forced 64-prompt step
+served 64 of 64 with 365 MiB to spare (407 at W4A16); a 64-way burst of 128 requests served 128 of 128 (1,209.9
+against 866.1 tok/s). Int8 on the MLP read PPL all 8.1095 on four of five boots across both images and both config
+routes and 8.0962 on one, each value exact within its boot; W4A16 read 8.0229-8.0264 over three boots and two
+images. Why one boot lands on the other value is not found. It is not the image (the humming package is
+byte-identical in both, and its JIT cache lives on each boot's fresh volume) and not the config route (the variant
+config on the shipped image read 8.1095). GSM8K across those boots ran 94.5-96.5, inside its noise.
+
 ## Dependencies
 
 `vllm==0.34.0`. torch stays at 2.14.0 and torchvision at 0.29.0. `flashinfer-python` moves from 0.7.2.post1 to 0.7.3
