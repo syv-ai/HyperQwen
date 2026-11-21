@@ -131,8 +131,9 @@ MAX_SEQS=${MAX_SEQS:-}
 # the flag entirely, which is what a vLLM tree WITHOUT patches/sse-keep-alive.patch
 # applied needs — the flag does not exist there, and the deploy tree drifts.
 SSE_KEEP_ALIVE=${SSE_KEEP_ALIVE-30}   # no colon: SSE_KEEP_ALIVE= keeps the empty value
-# vLLM 0.34 removed this path (vllm #65542): launcher_common.sh refuses INT8_ACT=int8 there.
-# The text and numbers below are 0.33's, kept for the record.
+# On vLLM 0.34 INT8_ACT=int8 runs on compressed-tensors' W4A8 scheme with the Humming kernels
+# (launcher_common.sh, qwen_int8_args), measured in batch mode only; the text and numbers below
+# are 0.33's Marlin path, kept for the record.
 # INT8_ACT=int8 turned on the W4A8 Marlin path (weights stay int4, activations
 # quantized per token to int8, int8 tensor cores) for the layers INT8_LAYERS
 # selects — the same knob batch mode ships on by default. At batch size 1 it
@@ -1052,6 +1053,7 @@ source "$REPO/resolve_api_key.sh" \
 resolve_vllm_key
 resolve_bind_host
 qwen_extensible_kv_args
+qwen_int8_args "$MODEL"
 
 qwen_exec venv/bin/vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -1072,5 +1074,6 @@ qwen_exec venv/bin/vllm serve "$MODEL" \
   "${METRICS_ARGS[@]}" \
   "${TOOL_ARGS[@]}" \
   $EKV_ARGS \
+  "${INT8_ARGS[@]}" \
   ${EXTRA_ARGS} \
   ${SSE_KEEP_ALIVE:+--sse-keep-alive-interval $SSE_KEEP_ALIVE}

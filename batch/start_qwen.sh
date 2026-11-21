@@ -8,10 +8,12 @@
 #    request; fp16 halves that AND halves the state traffic per decode step.
 #    That is what lets all 64 requests actually run at once (fp32: only 37).
 #    Perplexity is unchanged (8.045 vs 8.046 on our en/da/code check).
-#  - W4A16 on vLLM 0.34. Up to 0.33 this mode defaulted to int8 activations on
-#    the MLP GEMMs (W4A8 Marlin, roughly +35% aggregate on top of the state change
-#    for +2.2% perplexity); vLLM 0.34 removed that kernel path (vllm #65542), so
-#    INT8_ACT must stay empty (launcher_common.sh refuses anything else).
+#  - int8 activations on the MLP GEMMs (INT8_ACT=int8, INT8_LAYERS=mlp), as up to
+#    0.33. vLLM 0.34 removed Marlin's W4A8 path (vllm #65542); this pin runs it on
+#    compressed-tensors' W4A8 scheme with the Humming kernels (launcher_common.sh,
+#    qwen_int8_args). On a 3090 at 350 W, 64 concurrent, 128/512: 1,119 tok/s against
+#    790 at W4A16 (and 1,092 for 0.33's Marlin int8), for +1.04% perplexity
+#    (docs/vllm-0.34.md). INT8_ACT= turns it off.
 #  - --language-model-only skips the vision tower entirely (0.858 GiB on this
 #    checkpoint); VISION=1 keeps it for a client that sends images
 #  - expandable_segments is required: the DeltaNet prefill kernels allocate
@@ -153,8 +155,8 @@ else
   GPU_UTIL=${GPU_UTIL:-0.93}
   KV_ARGS="--kv-cache-dtype fp8"
 fi
-# int8 activations: empty (W4A16) is the only value vLLM 0.34 serves; see above.
-INT8_ACT=${INT8_ACT-}
+# int8 activations on the MLP (W4A8 through Humming); INT8_ACT= for W4A16. See above.
+INT8_ACT=${INT8_ACT-int8}
 INT8_LAYERS=${INT8_LAYERS-mlp}
 
 # Prefix caching (PREFIX_CACHE=1, the default; 0 turns it off; qwen_prefix_cache passes the
@@ -260,6 +262,7 @@ source "$REPO/resolve_api_key.sh" \
 resolve_vllm_key
 resolve_bind_host
 qwen_extensible_kv_args
+qwen_int8_args "$MODEL"
 
 qwen_exec venv/bin/vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -279,4 +282,5 @@ qwen_exec venv/bin/vllm serve "$MODEL" \
   "${METRICS_ARGS[@]}" \
   "${TOOL_ARGS[@]}" \
   $EKV_ARGS \
+  "${INT8_ARGS[@]}" \
   ${EXTRA_ARGS}
