@@ -79,6 +79,8 @@ jobs:
         run: python bench/test_t4_battery.py
       - name: Check PTH_FA in the launchers (argv, refusals, unset = unchanged) without a GPU
         run: bash bench/test_pthfa_knob.sh
+      - name: Check INT8_ACT and INT8_LAYERS in every launcher (the int8 override, refusals, batch's W4A16 fallback) without a GPU
+        run: bash bench/test_int8_knob.sh
       - name: Check pthfa/install.sh builds with an nvcc of torch's CUDA major and checks with a cuobjdump not older
         run: bash bench/test_pthfa_install_toolchain.sh
       - name: Check patches/apply.sh leaves the package unchanged when a patch fails, and what its stamp tells apart (#445)
