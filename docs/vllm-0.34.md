@@ -6,17 +6,62 @@ What the move from 0.33.0 to 0.34.0 changed in this repo, what was re-measured, 
 
 ## What it costs, first
 
-- **Batch mode serves W4A16.** vLLM 0.34.0 removed Marlin's 8-bit activations, the kernels included (vllm #65542),
-  and setting `VLLM_MARLIN_INPUT_DTYPE` is now a startup error. Batch mode defaulted to int8 activations on its MLP
-  GEMMs, which batch/README.md's table puts at +24% end-to-end (876 against 707 tok/s at 128/512) and +27% steady
-  decode (~1,050 against ~830) over W4A16, at 64 concurrent requests on vLLM 0.27.1. That gain is gone on this pin.
-  Upstream's route to W4A8 is the Humming kernels (`--quantization humming` with
-  `VLLM_HUMMING_INPUT_QUANT_CONFIG='{"dtype":"int8"}'`; humming-kernels 0.1.19 ships with 0.34.0). They are not
-  wired into these launchers yet, and whether they load this checkpoint correctly is untested.
-- **`INT8_ACT` is refused.** Every launcher now exits with the reason (exit 2, before the engine starts) on a
-  non-empty `INT8_ACT`, instead of exporting a variable the engine rejects. Single-user and `alternative.sh` already
-  defaulted to empty; batch's default moves from `int8` to empty. `PREFILL_ATTN=int8` (our own attention kernel) is
-  unaffected.
+- **Batch mode's int8 activations run on different kernels.** vLLM 0.34.0 removed Marlin's 8-bit activations, the
+  kernels included (vllm #65542), and setting `VLLM_MARLIN_INPUT_DTYPE` is now a startup error. `INT8_ACT=int8` now runs
+  on compressed-tensors' W4A8 scheme (`CompressedTensorsWNA8Int`) with the Humming kernels that ship with 0.34.0
+  (humming-kernels 0.1.19), and batch mode defaults to it as before. Two patches make that path do what its config
+  says on this checkpoint, and the launchers add the config; see "int8 activations (W4A8)" below. On an RTX 3090 it
+  serves at 0.33's int8 speed for about half its perplexity cost.
+- `PREFILL_ATTN=int8` (our own attention kernel) is unaffected.
+
+## int8 activations (W4A8)
+
+**How it is wired.** `INT8_ACT=int8` makes the launchers pass one `--hf-overrides` (`scripts/int8_overrides.py`) that
+copies the checkpoint's `quantization_config` and adds a group: the weights of the group that targets `Linear`, the
+targets `re:.*(?:<INT8_LAYERS>).*`, and int8 symmetric dynamic per-token input activations. compressed-tensors serves a
+layer from the first target that matches its name, so the layers `INT8_LAYERS` matches get `CompressedTensorsWNA8Int`,
+and everything the checkpoint already groups (the int8 lm_head and embeddings, the MTP module) or ignores (the vision
+tower, the GDN `in_proj_a/b`) loads as before. `INT8_LAYERS` keeps its meaning (a regex searched in the layer name;
+`mlp` is batch's default, `.` every linear). The launchers also put the venv's NVRTC builtins
+(`site-packages/nvidia/cu13/lib`) on `LD_LIBRARY_PATH`: Humming compiles its kernels with NVRTC, which loads
+`libnvrtc-builtins.so.13.0` by soname, and no default path names that directory, so without it the first Humming
+kernel fails to compile at boot. `INT8_ACT=fp8` is refused (Humming has fp8 activations; nothing here measured them),
+and so is an `--hf-overrides` in `EXTRA_ARGS`, which would replace this one.
+
+**Why two patches.** Without them the scheme serves W4A16 on a 3090 or a 4090 and says nothing:
+- `wna8-int-humming-kernel`: the scheme picked its kernel with `choose_mp_linear_kernel` and the params dtype as the
+  activation type, so below SM90 the list reached Marlin first, and Marlin never reads the int8 input config. It now
+  takes Humming when it has an input quant, and raises with Humming's reason if Humming cannot implement the layer.
+- `humming-explicit-input-schema`: with Humming chosen, the kernel left `allow_input_schema_fallback` at its default
+  `True`, and Humming's `check_and_fallback_input_schema` returns a 16-bit input schema for 8-bit activations on
+  groupwise weights ("prefer wna16 for groupwise weight or groupwise input"). It is now `False` for a layer with an
+  input quant config, and the first layer config built per activation dtype is logged
+  (`Humming layer config: a_dtype=int8 (input quant config set)`), which is how to tell it is live. On upstream main
+  that fallback now warns, and `VLLM_STRICT_QUANT_SCHEME=1` forbids it (#59460).
+
+**Measured** on a native RTX 3090 at its default 350 W limit (batch's numbers above are at 250 W, so compare rows
+here with each other only): batch launcher, `Qwen3.8-27B-W4A16-AutoRound`, `GPU_UTIL=0.93`, one fresh cache volume per
+boot; `bench/quality_battery.py` (PPL over wikitext-2, fineweb-2 Danish and 33 windows of vLLM's own `v1/core` source,
+which is a different code corpus from docs/quality.md's, then GSM8K, 200 questions, greedy); `vllm bench serve`, random
+dataset, `--ignore-eos`, 256 prompts, 64 concurrent, second of two runs; steady decode = the median engine
+generation-throughput line with 64 running, 0 waiting and no prompt throughput. The int8 arms ran these two patches as
+read-only overlays on the 0.34 image, with the int8 group in a config-only copy of the checkpoint whose targets named
+the MLP projections (`re:.*\.mlp\.(gate_up_proj|gate_proj|up_proj|down_proj)$`); the launcher's `re:.*(?:mlp).*`
+puts the same layers in that group (bench/test_int8_overrides.py, through compressed-tensors' own matching).
+
+| configuration | PPL all | GSM8K | 128/512 tok/s | 256/256 tok/s | steady decode |
+|---|---|---|---|---|---|
+| 0.33, Marlin int8 on the MLP (0.33's batch default), two boots | 8.2060 / 8.2012 | 95.0 / 95.0 | 1,091.9 / 1,092.9 | 782.6 / 784.0 | 1,260 |
+| 0.33, W4A16 | 8.0269 | 95.5 | 782.2 | 542.1 | 915 |
+| 0.34, W4A16, two boots | 8.0230 / 8.0264 | 95.0 / 95.0 | 789.4 / 790.3 | 547.3 / 547.4 | 928 |
+| **0.34, int8 on the MLP (`INT8_LAYERS=mlp`), two boots** | 8.1095 / 8.1095 | 94.5 / 94.5 | 1,119.0 / 1,120.2 | 815.6 / 816.2 | 1,280 |
+| 0.34, int8 on every linear (`INT8_LAYERS=.`) | 8.2180 | 93.5 | 1,369.4 | 1,035.7 | 1,536 |
+
+So on this pin int8 on the MLP is +41.6% at 128/512 over W4A16 for +1.04% perplexity, where 0.33's Marlin int8 cost
++2.24%, and +2.5% over 0.33's int8 at 128/512 (+4.2% at 256/256). Int8 on every linear is +25% over 0.33's int8 at
+its perplexity. The GSM8K differences are inside its standard error at n=200 (about 1.5 points). The KV pool moves
+-0.36% with int8 on the MLP. Boot to /health is 5-10 s longer than W4A16 (Humming's first compiles). Before the second
+patch the same arms read W4A16's perplexity to the third decimal and its speed within 1%: that is the silent path.
 
 ## Dependencies
 
@@ -189,7 +234,9 @@ KV pin was set; each fix was then checked on a later image.
 
 ## What is still unproven
 
-- Humming W4A8 on this checkpoint (correctness with its negative group scales, the per-layer selection, speed).
+- int8 activations outside batch mode (single-user and `alternative.sh`, opt-in as before), on any card but the
+  RTX 3090, at 250 W, and on any checkpoint but `Qwen3.8-27B-W4A16-AutoRound`.
+- `INT8_ACT=fp8` (refused) and `INT8_LAYERS` values other than `mlp` and `.`.
 - Turing (sm75, #448) and GA100 (#451) were not run on this pin.
 - SM120 keeps upstream's 64-segment decode mode off, as on 0.33, because the 3D scratch comes from the budgeted pool
   (`spec-decode-scratch-within-budget`), which is sized for 16 segments.
@@ -206,7 +253,9 @@ KV pin was set; each fix was then checked on a later image.
 
 ## Decisions made in this port, one line each (reject any by name)
 
-- Batch serves W4A16 and refuses `INT8_ACT`, rather than wiring Humming in the same change.
+- `INT8_ACT=int8` runs compressed-tensors' W4A8 scheme with Humming through a launcher-built `--hf-overrides`, rather
+  than `--quantization humming` (which cannot load this checkpoint's int8 embed group) or a second checkpoint.
+- Batch's `INT8_ACT` default goes back to `int8`, as up to 0.33.
 - huggingface_hub 2.4.0 (upstream CI's), with transformers kept at 5.19.0 rather than moved to CI's 5.22.0.
 - #64165 carried without its test file, as with the other backports.
 - The launchers turn the extensible KV cache off, rather than keep upstream's default and document the cost.

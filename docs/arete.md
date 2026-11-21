@@ -47,8 +47,8 @@ EXTRA_ARGS='--dtype bfloat16 --served-model-name hyper-arete-27b --watermark-con
   bash batch/start_qwen.sh
 ```
 
-Up to vLLM 0.33 this recipe also set `INT8_ACT=int8 INT8_LAYERS=mlp`; 0.34 removed Marlin's int8 activations, and the
-launcher refuses them ([vllm-0.34.md](vllm-0.34.md)).
+Up to vLLM 0.33 this recipe also set `INT8_ACT=int8 INT8_LAYERS=mlp`, which batch mode now defaults to again on 0.34
+through the Humming kernels ([vllm-0.34.md](vllm-0.34.md)); this checkpoint was not measured on that path.
 
 The fixed watermark key reproduces the measured profile; it is public and is not
 an attribution secret. Gumbel marks generated text, not image pixels. The batch
