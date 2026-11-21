@@ -1,0 +1,118 @@
+vLLM 0.34 turns on the extensible KV cache by default on CUDA: it reserves the pool's address range, commits
+physical pages as warmup needs them, and sizes the pool after warmup and CUDA-graph capture. KVarN's batched flush
+writes int4 tiles into the pool from the metadata builder, outside the model's forward, and a warmup step's dummy
+blocks lie past what the cache has committed by then. So every KVarN profile without a --kv-cache-memory pin
+(SPEC=off CTX=huge, SPEC=mtp CTX=huge, batch KV=kvarn) died in capture with an illegal memory access in
+_batched_flush (boots of every documented launcher default on an RTX 3090, 11-19).
+
+The flush now commits what it writes first, as upstream's own warmups do with ensure_kv_cache_blocks. A KVarN block
+id is a kernel block (one tile), several to a cache block, so the cache block each write needs comes from its
+address: ExtensibleKVCache.blocks_backing(end_ptr). Before sizing, kv_blocks_writable commits up to the highest; once
+the cache is sized it commits nothing, and a write past the committed count (only a warmup leftover, since the
+scheduler never hands those blocks out) is dropped while the caller still frees its slot. Without an extensible
+cache both helpers return None and nothing changes.
+
+Measured with the cache on, against the same profiles with it off (an RTX 3090, the 0.34 image with
+these files laid over it): all three profiles boot and print the cache-off texts; the 128-residue sweep on
+SPEC=mtp CTX=huge PREFIX_CACHE=1 has 0 broken, with the same answer as cache off; a DEBUG boot logs no commit after
+the extension, and warmup peaks at 105 of 206 blocks. The pool is 6.9-13.5% smaller than with the cache off. That
+is the cache's own sizing margin, the same as on the non-KVarN profiles.
+
+An earlier version committed max(tile id) + 1 as if it were a block count. It over-committed: the whole reservation
+in warmup (the cache then shrank to fit), and up to capacity again after the first long request, 0.52 GiB past the
+measured budget on the 3090 and 1.9 GiB on a 4090. Answers stayed right.
+
+This replaces the opt-out it was folded into, which turned the extensible cache off for KVarN cache dtypes.
+
+Kind: own
+What: KVarN's batched flush commits the extensible KV cache's blocks it writes (found from the write's address), so
+  unpinned KVarN profiles boot on 0.34 with the cache on; the KVarN half is in `kvarn/files`
+Upstream: none
+Cut-against: 0.34.0
+Retires-when: rides with KVarN
+
+--- exported from 3d551db924 (kvarn-extensible-kv-commit); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/worker/extensible_kv_cache.py b/v1/worker/extensible_kv_cache.py
+index df7645f144..65244d2ec0 100644
+--- a/v1/worker/extensible_kv_cache.py
++++ b/v1/worker/extensible_kv_cache.py
+@@ -4,6 +4,7 @@
+ 
+ import copy
+ import gc
++import weakref
+ from bisect import bisect_right
+ from collections.abc import Iterator
+ from contextlib import contextmanager
+@@ -121,6 +122,10 @@
+         # Bytes torch's caching allocator may reserve, set once the cache is
+         # sized; None leaves it unlimited.
+         self.torch_memory_limit: int | None = None
++        # Blocks the cache holds once `extend_kv_cache` has sized it; None before.
++        self.final_num_blocks: int | None = None
++        global _active_kv_cache
++        _active_kv_cache = weakref.ref(self)
+         self.buffer = ExtensibleTensor(
+             self.size,
+             device=device,
+@@ -180,6 +185,18 @@
+             raise ValueError("KV cache tensors do not tile the allocation.")
+         return offsets, strides
+ 
++    def blocks_backing(self, end_ptr: int) -> int | None:
++        """Blocks to commit so that the byte just below device address end_ptr is backed.
++
++        Lets a writer that indexes the pool in its own units (kernel blocks, tiles) find the block count from the
++        address it writes. None for an address outside this cache.
++        """
++        rel = end_ptr - 1 - self.buffer.base_ptr
++        for offset, stride in zip(self.segment_offsets, self.segment_strides):
++            if offset <= rel < offset + self.capacity_blocks * stride:
++                return (rel - offset) // stride + 1
++        return None
++
+     @property
+     def min_committed_blocks(self) -> int:
+         """The null block, plus one under block-outermost layouts, whose views
+@@ -470,6 +487,32 @@
+     return padded
+ 
+ 
++_active_kv_cache: "weakref.ref[ExtensibleKVCache] | None" = None
++
++
++def kv_cache_blocks_backing(end_ptr: int) -> int | None:
++    """`ExtensibleKVCache.blocks_backing` on this process's cache; None without one."""
++    cache = _active_kv_cache() if _active_kv_cache is not None else None
++    return None if cache is None else cache.blocks_backing(end_ptr)
++
++
++def kv_blocks_writable(num_blocks: int) -> int | None:
++    """Back this process's extensible KV cache for a write outside the model's forward, and return the block bound.
++
++    For a backend that writes the KV pool from its metadata builder (KVarN's deferred int4 flush), which has no
++    runner to pass to ensure_kv_cache_blocks. Before the cache is sized it commits up to num_blocks, as warmup does.
++    Once sized it commits nothing: block ids at or past the final size are left from warmup, the scheduler never
++    hands them out, and backing them would take memory the sizing did not budget. The caller writes only blocks
++    below the returned count. None without an extensible cache.
++    """
++    cache = _active_kv_cache() if _active_kv_cache is not None else None
++    if cache is None:
++        return None
++    if cache.final_num_blocks is None and num_blocks > cache.num_committed_blocks:
++        cache.commit(num_blocks)
++    return cache.num_committed_blocks
++
++
+ def num_committable_kv_blocks(runner: "GPUModelRunner") -> int:
+     """Blocks warmup may address: all of them, or, for an extensible cache,
+     the count agreed across ranks so that every rank warms up the same shapes."""
+@@ -533,6 +576,7 @@
+         shrink=True,
+     )
+     runner.kv_cache_config.num_blocks = kv_cache.num_committed_blocks
++    kv_cache.final_num_blocks = kv_cache.num_committed_blocks
+     logger.info(
+         "Extended KV cache to %d blocks (%.2f GiB).",
+         kv_cache.num_committed_blocks,

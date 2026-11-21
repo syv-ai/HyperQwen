@@ -116,7 +116,8 @@ from `drafter/gptq_lm_head.py` (calibrated on 600k teacher-forced UltraChat toke
 KL 0.0070 RTN -> 0.0024 GPTQ; building one from a single-shard export like these takes
 the `drafter/` fixes in #181). Asymmetric bodies need
 `patches/marlin-int8-asym-zp.patch` for `INT8_ACT=int8` (batch mode, the production
-line): without it vLLM refuses the zero-point weights on the int8 path at load.
+line) up to vLLM 0.33: without it vLLM refuses the zero-point weights on the int8 path at load. vLLM 0.34 has no
+int8-activation Marlin path, so that patch is retired and the question does not arise ([vllm-0.34.md](vllm-0.34.md)).
 `verify.sh --no-server` passes all eight model checks on the four of them. Measured on an
 RTX 3090 at 350 W on vLLM 0.29.0 (the #148 port with this patch on top) with `VISION=1`
 (tower offloaded to host RAM), C1 at the model's default sampling, second harness run

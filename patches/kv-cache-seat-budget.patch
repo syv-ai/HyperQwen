@@ -31,16 +31,16 @@ Kind: feature
 What: one INFO line after "GPU KV cache size": resident requests at ~1k, 32k and max_model_len,
   from each device group's admission cap at that length and the pool's usable blocks
 Upstream: none; vllm #54840 (open) logs a per-group block budget at the same point
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstream logs residency by context length
 
---- exported from 9dcea96535 (kv-cache-seat-budget); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from a39211ee2e (kv-cache-seat-budget); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/kv_cache_utils.py b/v1/core/kv_cache_utils.py
-index d24674e483..a0e583761c 100644
+index 8cec22a6d8..ed1cd80fb7 100644
 --- a/v1/core/kv_cache_utils.py
 +++ b/v1/core/kv_cache_utils.py
-@@ -1152,6 +1152,76 @@
+@@ -1173,6 +1173,76 @@
          f"{max_model_len:,}",
          max_concurrency,
      )

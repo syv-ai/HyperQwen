@@ -3,10 +3,10 @@ multi-query 3D int4 verify path
 Kind: feature
 What: multi-query 3D int4 verify path
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: rides with int4-kv-per-token-head
 
---- exported from 09d586a396 (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 86c89302bf (spec-decode-int4-kv-mq3d); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/ops/int4_per_token_head.py b/v1/attention/ops/int4_per_token_head.py
 index 68ef5348a4..a9231396be 100644
@@ -64,10 +64,10 @@ index 68ef5348a4..a9231396be 100644
      # 3D never reads ``output_ptr`` and 2D never reads the segm tensors,
      # but Triton needs a non-null pointer everywhere; reuse ``out`` as
 diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
-index 93c6bba4be..c8b6d680c8 100644
+index a9bf110122..f918875bf1 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -736,6 +736,27 @@
+@@ -850,6 +850,27 @@
      if seq_len <= 0:
          return
  

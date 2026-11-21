@@ -35,6 +35,10 @@ text, Python source), and **GSM8K** (200 test questions, greedy, thinking off):
 | + int8 activations, whole MLP (**default**) | 10.88 | 11.05 | 3.15 | 8.22 (+2.2%) | 95.0% | 942 tok/s |
 | + int8 activations, all linear layers | 10.93 | 11.29 | 3.20 | 8.34 (+3.7%) | — | 1,042 tok/s* |
 
+On vLLM 0.34 the int8 rows run on different kernels (Humming, with int8 per-token activations); the same check on
+a 3090 put int8 on the MLP at +1.04% PPL all over W4A16 and every linear at +2.39%, on a different code corpus
+([vllm-0.34.md](vllm-0.34.md), "int8 activations (W4A8)").
+
 Reading: the 16-bit recurrent state is free; every int8-activation step costs a
 little perplexity, mostly on code, and buys throughput. The default takes the
 middle row; `INT8_LAYERS=gate_up` and `INT8_ACT=` (off) are one env var away,

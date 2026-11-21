@@ -8,11 +8,12 @@
 #    request; fp16 halves that AND halves the state traffic per decode step.
 #    That is what lets all 64 requests actually run at once (fp32: only 37).
 #    Perplexity is unchanged (8.045 vs 8.046 on our en/da/code check).
-#  - VLLM_MARLIN_INPUT_DTYPE=int8: int8 tensor-core (W4A8) Marlin path for the
-#    MLP GEMMs, weights stay int4. Roughly +35% aggregate on top of the state
-#    change for +2.2% perplexity. Needs both marlin patches from patches/.
-#    INT8_LAYERS=gate_up is the gentler variant (+0.9% PPL, ~+15%);
-#    INT8_ACT= (empty) turns it off entirely (pure W4A16, quality-neutral).
+#  - int8 activations on the MLP GEMMs (INT8_ACT=int8, INT8_LAYERS=mlp), as up to
+#    0.33. vLLM 0.34 removed Marlin's W4A8 path (vllm #65542); this pin runs it on
+#    compressed-tensors' W4A8 scheme with the Humming kernels (launcher_common.sh,
+#    qwen_int8_args). On a 3090 at 350 W, 64 concurrent, 128/512: 1,119 tok/s against
+#    790 at W4A16 (and 1,092 for 0.33's Marlin int8), for +1.04% perplexity
+#    (docs/vllm-0.34.md). INT8_ACT= turns it off.
 #  - --language-model-only skips the vision tower entirely (0.858 GiB on this
 #    checkpoint); VISION=1 keeps it for a client that sends images
 #  - expandable_segments is required: the DeltaNet prefill kernels allocate
@@ -130,6 +131,9 @@ elif [ "$KV" = "kvarn" ]; then
   export KVARN_POOL_MEM_FRAC=${KVARN_POOL_MEM_FRAC:-0.25}
 else
   MAX_LEN=${MAX_LEN:-150000}
+  # 0.93 on 0.34, with the extensible KV cache off. At 0.94 the forced 64-prompt step (below) cleared by 131 MiB
+  # on a native 3090, under 0.31's ~174; at 0.93 it clears by 393 MiB with 64 seats running and the burst at 0.33's
+  # speed (875 against 867 tok/s), for 277 KV blocks against 287 (one boot each, 11-19).
   # 0.94 on 0.31, not 0.30's 0.95. The profiling run skips the GDN layers, so the
   # worst prefill step is never budgeted: 64 new short prompts in one step (one
   # /v1/completions request carrying 64 prompts forces it) needed ~624 MiB over rest
@@ -148,12 +152,12 @@ else
   # boot and serve with VISION=0 and 1, 0.972 does not. 0.95 keeps one 0.01 step
   # below the highest value that passed, boots cold to the same pool as warm
   # (219,587 tokens with the tower), and holds at least the pool 0.28 had at 0.972.
-  GPU_UTIL=${GPU_UTIL:-0.94}
+  GPU_UTIL=${GPU_UTIL:-0.93}
   KV_ARGS="--kv-cache-dtype fp8"
 fi
-# int8 activations: "int8" (default) or empty for W4A16; layers: regex on the
-# layer name, "mlp" (default: gate_up_proj + down_proj) or "gate_up"
-INT8_ACT=${INT8_ACT-int8}
+# int8 activations on the MLP (W4A8 through Humming); INT8_ACT= for W4A16. See above. Left unset, a checkpoint the
+# int8 override does not fit serves W4A16 with a note (QWEN_INT8_DEFAULT); INT8_ACT=int8 set explicitly refuses it.
+if [ -z "${INT8_ACT+set}" ]; then INT8_ACT=int8 QWEN_INT8_DEFAULT=1; fi
 INT8_LAYERS=${INT8_LAYERS-mlp}
 
 # Prefix caching (PREFIX_CACHE=1, the default; 0 turns it off; qwen_prefix_cache passes the
@@ -258,6 +262,8 @@ source "$REPO/resolve_api_key.sh" \
   || { echo "start_qwen: cannot source $REPO/resolve_api_key.sh - refusing to boot with an unknown key" >&2; exit 1; }
 resolve_vllm_key
 resolve_bind_host
+qwen_extensible_kv_args
+qwen_int8_args "$MODEL"
 
 qwen_exec venv/bin/vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -276,4 +282,6 @@ qwen_exec venv/bin/vllm serve "$MODEL" \
   --enable-prompt-tokens-details \
   "${METRICS_ARGS[@]}" \
   "${TOOL_ARGS[@]}" \
+  $EKV_ARGS \
+  "${INT8_ARGS[@]}" \
   ${EXTRA_ARGS}

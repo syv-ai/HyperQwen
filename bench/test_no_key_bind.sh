@@ -29,6 +29,11 @@ host_of() { local sc=$1; shift
 int8_of() { local sc=$1; shift
   rm -f "$T/api_key.txt"
   (cd "$T" && env -u VLLM_API_KEY -u HOST -u PRINT_ARGV -u VLLM_MARLIN_INPUT_DTYPE -u VLLM_MARLIN_INT8_INCLUDE_RE "$@" bash "$sc" 2>/dev/null </dev/null) | tail -n 1; }
+# int8_refused <launcher> <env assignments...>: "exit 2, no engine" when the launcher stops before the stub vllm runs.
+int8_refused() { local sc=$1 out rc; shift
+  rm -f "$T/api_key.txt"
+  out=$(cd "$T" && env -u VLLM_API_KEY -u HOST -u PRINT_ARGV -u VLLM_MARLIN_INPUT_DTYPE -u VLLM_MARLIN_INT8_INCLUDE_RE "$@" bash "$sc" 2>/dev/null </dev/null); rc=$?
+  [ $rc = 2 ] && [ -z "$out" ] && echo "exit 2, no engine" || echo "exit $rc, stub printed: ${out:-<nothing>}"; }
 # refused <launcher>: resolve_api_key.sh missing, the key only in api_key.txt. Prints "exit 1, no --host" when
 # the launcher stops before it prints an argv.
 refused() { local out rc
@@ -48,9 +53,9 @@ for sc in single-user/start_qwen.sh batch/start_qwen.sh single-user/alternative.
   check 127.0.0.1 "$(host_of $sc HOST=127.0.0.1 VLLM_API_KEY=k)" "key, HOST=127.0.0.1"
   check 10.1.2.3  "$(host_of $sc HOST=10.1.2.3 VLLM_API_KEY=k)"  "key, HOST=10.1.2.3"
   check "exit 1, no --host" "$(refused $sc)"                    "resolve_api_key.sh missing, key only in api_key.txt"
-  check "int8 mlp"    "$(int8_of $sc INT8_ACT=int8 INT8_LAYERS=mlp)" "INT8_ACT=int8 INT8_LAYERS=mlp"
-  check "unset unset" "$(int8_of $sc INT8_ACT= INT8_LAYERS=mlp)"     "INT8_ACT= INT8_LAYERS=mlp: no regex without the dtype"
-  check "int8 unset"  "$(int8_of $sc INT8_ACT=int8 INT8_LAYERS=)"    "INT8_ACT=int8 INT8_LAYERS=: empty is unset (#20)"
+  check "unset unset" "$(int8_of $sc INT8_ACT= INT8_LAYERS=mlp)"     "INT8_ACT= INT8_LAYERS=mlp: nothing exported (W4A16)"
+  check "unset unset" "$(int8_of $sc)"                                "INT8_ACT unset: the launcher default is W4A16"
+  check "exit 2, no engine" "$(int8_refused $sc INT8_ACT=int8 INT8_LAYERS=mlp)" "INT8_ACT=int8: refused, vLLM 0.34 has no int8-activation Marlin (#65542)"
 done
 echo "== verify.sh key check (the section only, as the launcher env would set it)"
 vk() { (cd "$T" && rm -f api_key.txt; env -u VLLM_API_KEY -u HOST "$@" bash -c '

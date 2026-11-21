@@ -15,11 +15,8 @@
 # the directory disagree in either direction; the apply refuses to start then.
 
 qwen3_5-embed-quant.patch
-marlin-int8-layer-select.patch
-marlin-int8-negative-scales.patch
 qwen3_5-mtp-draft-vocab.patch
 vllm-pr50021-gdn-spec-bounds.patch
-sampler-small-topk-fast-softmax.patch
 spec-decode-attn.patch
 speed-knobs-envs.patch
 hybrid-kv-groups-v2-cudagraph.patch
@@ -52,7 +49,6 @@ cudagraph-memory-from-allocator.patch
 bench-probe-errors.patch
 serve-model-path-match.patch
 tokenize-v1-route.patch
-marlin-int8-asym-zp.patch
 compile-key-runtime-knobs.patch
 auth-deny-default.patch
 spec-attn-smem-fit.patch
@@ -64,13 +60,10 @@ qwen3_5-embed-uva.patch
 vllm-pr40371-prompt-progress.patch
 kv-cache-seat-budget.patch
 gdn-ba-pad-small-m.patch
-vllm-pr61612-flashinfer-async-barrier.patch
-quant-scale-view-preserve-pages.patch
 dflash-context-capacity.patch
 async-mamba-kv-sizing.patch
 continuous-stream-usage.patch
 offload-mamba-swa-replay-boundaries.patch
-vllm-pr64137-logits-stats-no-specialize.patch
 gdn-multi-prefill-checkpoints.patch
 vllm-pr66026-gather-draft-sampled-no-specialize.patch
 dflash2-fp16-residual-scale.patch
@@ -79,3 +72,9 @@ flashinfer-sm75-optin.patch
 flashinfer-sm75-spec-graphs.patch
 gdn-sm75-cuda-prefill.patch
 terminal-request-progress.patch
+vllm-pr64165-flashinfer-plan-event.patch
+qwen3_5-nvidia-gated-norm-warmup.patch
+vision-tower-cpu-offload-meta.patch
+kvarn-extensible-kv-commit.patch
+wna8-int-humming-kernel.patch
+humming-explicit-input-schema.patch

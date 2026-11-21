@@ -13,7 +13,7 @@ The container image (same stack, frozen) and an independent WSL2 reproduction wi
 
 [← back to the main README](../README.md)
 
-The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.33.0 pinned
+The container image is the same stack, frozen: Python 3.12 venv, vLLM 0.34.0 pinned
 (torch 2.14 / cu130 / Triton 3.8.0), every compatible patch in `patches/` applied
 (`dflash2-backport.patch` is retired because DFlash2 is native since v0.28.0), and
 `verify.sh --install` run at build time, KVarN preinstalled (its 0.31 port is

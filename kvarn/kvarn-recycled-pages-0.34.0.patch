@@ -32,16 +32,16 @@ What: both runners hand KVarN each step's block ids, so it drops (never flushes)
   of an evicted retired sink, into another request's mamba state was the "!!!!" output (#208); the
   KVarN half is in `kvarn/files`
 Upstream: none
-Cut-against: 0.33.0: beside the runner's new encoder-input update, both before apply_staged_writes
+Cut-against: 0.34.0: beside the runner's new encoder-input update, both before apply_staged_writes
 Retires-when: rides with KVarN
 
---- exported from 7c148b75e7 (kvarn-recycled-pages-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 8b98c6a64a (kvarn-recycled-pages-0.34.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 8e883169ec..0b9ebd177b 100644
+index 6ec38a4d11..f98cab454c 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1806,6 +1806,13 @@
+@@ -1869,6 +1869,13 @@
                  # add_requests initializes RoPE positions from CPU metadata first.
                  for req_id, updates in scheduler_output.encoder_input_updates.items():
                      self.encoder_cache.update_encoder_inputs(req_id, updates)
@@ -55,20 +55,3 @@ index 8e883169ec..0b9ebd177b 100644
              self.block_tables.apply_staged_writes()
              if self.aux_output_connector is not None:
                  # Register this step before the GPU forward.
-diff --git a/v1/worker/gpu_model_runner.py b/v1/worker/gpu_model_runner.py
-index ac3ff3b658..f7d9abf419 100644
---- a/v1/worker/gpu_model_runner.py
-+++ b/v1/worker/gpu_model_runner.py
-@@ -1204,6 +1204,12 @@
-         # stale NaN/data from corrupting attention or SSM computation.
-         if scheduler_output.new_block_ids_to_zero:
-             self._zero_block_ids(scheduler_output.new_block_ids_to_zero)
-+        if self.cache_config.cache_dtype.startswith("kvarn"):
-+            # port(kvarn-v2): tell KVarN which pages this step moved to another
-+            # KV-cache group, before preprocess_mamba writes state into them (#208).
-+            from vllm.v1.attention.backends.kvarn_attn import note_scheduled_blocks
-+
-+            note_scheduled_blocks(scheduler_output, self.kv_cache_config)
-         if scheduler_output.kv_cache_block_copies:
-             copy_kv_cache_blocks_inplace(
-                 self.kv_caches,

@@ -13,20 +13,31 @@
 #                       0.0.0.0, since a published port cannot reach a loopback
 #                       bind; there the port mapping is what limits exposure.
 #
-#   qwen_int8_exports   <act> <layers>, where the launcher sets INT8_ACT and INT8_LAYERS
-#                       (each launcher keeps its own defaults). Exports
-#                       VLLM_MARLIN_INPUT_DTYPE=<act> and, only with it,
-#                       VLLM_MARLIN_INT8_INCLUDE_RE=<layers>. The engine reads the
-#                       regex only when the dtype is set
-#                       (patches/marlin-int8-layer-select.patch); alone it only
-#                       changes vLLM's compile cache key. "Off" for these is UNSET,
-#                       not empty. vllm/envs.py registers VLLM_MARLIN_INPUT_DTYPE
-#                       through env_with_choices(..., None, ["int8", "fp8"]), which
-#                       rejects "" outright -- `ValueError: Invalid value '' ...
-#                       Valid options: ['int8', 'fp8']` -- so exporting the empty
-#                       string killed the engine at startup instead of turning the
-#                       feature off. That is the documented way to disable it
-#                       (issue #20), so export only when non-empty.
+#   qwen_int8_exports   <act> <layers>, where the launcher sets INT8_ACT and INT8_LAYERS.
+#                       vLLM 0.34.0 removed Marlin's 8-bit activations (vllm #65542), so
+#                       INT8_ACT=int8 now runs on compressed-tensors' W4A8 scheme
+#                       (CompressedTensorsWNA8Int) with the Humming kernels: the weights stay
+#                       int4, the activations of the layers INT8_LAYERS matches (a regex
+#                       searched in the layer name, as before) are quantized per token to
+#                       int8. Empty means W4A16. fp8 (Marlin's other 8-bit option up to 0.33)
+#                       is refused: Humming has fp8 activations, but nothing here measured
+#                       them. This checks the value; qwen_int8_args builds the flag.
+#
+#   qwen_int8_args      <model dir>, right before qwen_exec, once MODEL is final. With
+#                       INT8_ACT=int8 it sets INT8_ARGS to one --hf-overrides that adds an
+#                       int8-activation group to the checkpoint's own quantization_config
+#                       (scripts/int8_overrides.py), so the weights, the int8 lm_head and
+#                       embed, the MTP group and the ignore list load as the checkpoint has
+#                       them. An --hf-overrides in EXTRA_ARGS would replace it, so the two
+#                       together are refused. It also puts the venv's NVRTC builtins on
+#                       LD_LIBRARY_PATH whenever they are there: Humming compiles its kernels
+#                       with NVRTC, which loads libnvrtc-builtins by soname, and the wheel
+#                       ships it in site-packages/nvidia/cu13/lib, on no default path.
+#                       When int8 is only the launcher's default (QWEN_INT8_DEFAULT=1, batch with
+#                       INT8_ACT unset), a checkpoint the override does not fit, or an
+#                       --hf-overrides in EXTRA_ARGS, serves W4A16 with a note instead of refusing:
+#                       up to 0.33 Marlin's int8 took any Marlin checkpoint, so the default must
+#                       not stop a GPTQ or AWQ one from booting.
 #
 #   qwen_check_bool_knobs  refuses to start when one of the series' boolean knobs is set
 #                       to anything but 0 or 1 (empty counts as unset). The patches read them
@@ -118,10 +129,56 @@ resolve_bind_host() {
 # if, not && lists: alternative.sh runs under set -e, and a function whose last
 # && list fails returns 1 and stops the launcher.
 qwen_int8_exports() {
-  if [ -n "$1" ]; then
-    export VLLM_MARLIN_INPUT_DTYPE=$1
-    if [ -n "$2" ]; then export VLLM_MARLIN_INT8_INCLUDE_RE=$2; fi
+  QWEN_INT8_ACT=$1 QWEN_INT8_LAYERS=$2
+  case "$1" in
+    ""|int8) ;;
+    *)
+      echo "[start_qwen] INT8_ACT=$1: on vLLM 0.34 INT8_ACT is int8 (W4A8 through Humming) or empty (W4A16)." >&2
+      echo "  Marlin's int8/fp8 activations were removed upstream (vllm #65542); see docs/vllm-0.34.md." >&2
+      exit 2 ;;
+  esac
+  if [ "$1" = int8 ] && [ -z "$2" ]; then
+    echo "[start_qwen] INT8_ACT=int8 with INT8_LAYERS empty: set a regex (mlp, gate_up, or . for every linear)" >&2
+    exit 2
   fi
+}
+
+qwen_nvrtc_path() {
+  local d
+  for d in "${REPO:-.}"/venv/lib/python3*/site-packages/nvidia/cu13/lib; do
+    if [ -e "$d/libnvrtc-builtins.so.13.0" ]; then
+      case ":${LD_LIBRARY_PATH:-}:" in
+        *":$d:"*) ;;
+        *) export LD_LIBRARY_PATH="${LD_LIBRARY_PATH:+$LD_LIBRARY_PATH:}$d" ;;
+      esac
+    fi
+  done
+}
+
+qwen_int8_args() {
+  local py=python3 ov
+  INT8_ARGS=()
+  qwen_nvrtc_path
+  [ "${QWEN_INT8_ACT:-}" = int8 ] || return 0
+  case " ${EXTRA_ARGS:-} " in
+    *" --hf-overrides"*|*" --hf_overrides"*)
+      if [ "${QWEN_INT8_DEFAULT:-0}" = 1 ]; then
+        echo "[start_qwen] INT8_ACT defaults to int8, but EXTRA_ARGS carries its own --hf-overrides: serving W4A16 (set INT8_ACT= to silence this)." >&2
+        return 0
+      fi
+      echo "[start_qwen] INT8_ACT=int8 builds its own --hf-overrides; EXTRA_ARGS has one too and would replace it." >&2
+      echo "  Set INT8_ACT= and carry the int8 group in your own override (scripts/int8_overrides.py prints it)." >&2
+      exit 2 ;;
+  esac
+  if [ -x "${REPO:-.}/venv/bin/python" ]; then py="${REPO:-.}/venv/bin/python"; fi
+  if ! ov=$("$py" "${REPO:-.}/scripts/int8_overrides.py" "$1" "$QWEN_INT8_LAYERS"); then
+    if [ "${QWEN_INT8_DEFAULT:-0}" = 1 ]; then
+      echo "[start_qwen] INT8_ACT defaults to int8 and the reason above stops it here: serving W4A16 (set INT8_ACT= to silence this)." >&2
+      return 0
+    fi
+    exit 2
+  fi
+  INT8_ARGS=(--hf-overrides "$ov")
 }
 
 qwen_exec() {
@@ -195,6 +252,15 @@ qwen_kv_offload_args() {
       *) EXTRA_ARGS="--kv-offloading-size $KV_OFFLOAD_GB ${EXTRA_ARGS:-}" ;;
     esac
   fi
+}
+
+# vLLM 0.34 turns on the extensible KV cache by default on CUDA; these launchers turn it off, keeping 0.33's sizing,
+# unless EXTRA_ARGS names it (docs/vllm-0.34.md, "The extensible KV cache": what it costs and when turning it on pays).
+qwen_extensible_kv_args() {
+  EKV_ARGS="--disable-extensible-kv-cache"
+  case " ${ATTN_ARGS:-} ${EXTRA_ARGS:-} " in
+    *" --enable-extensible-kv-cache"*|*" --disable-extensible-kv-cache"*|*" --no-enable-extensible-kv-cache"*) EKV_ARGS= ;;
+  esac
 }
 
 qwen_prefix_cache() {

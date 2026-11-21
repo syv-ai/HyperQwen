@@ -2091,6 +2091,20 @@ class KVarNAttentionImpl(AttentionImpl["KVarNMetadata"]):
         layout; only the data movement is batched."""
         if not flush_pairs:
             return
+        # The flush writes the KV pool outside the model's forward. Under the extensible KV cache only a prefix of
+        # the pool's blocks is backed, and a KVarN tile is a kernel block, several to one cache block, so the cache
+        # block each write needs comes from its address. Warmup commits to cover the writes; once the cache is
+        # sized, a write past it can only be a warmup leftover the scheduler never hands out, and is dropped (the
+        # caller still frees its slot).
+        from vllm.v1.worker.extensible_kv_cache import kv_blocks_writable, kv_cache_blocks_backing
+        need = [kv_cache_blocks_backing(kvc.data_ptr() + (bid + 1) * kvc.stride(0) * kvc.element_size())
+                for _, bid, kvc in flush_pairs]
+        known = [n for n in need if n is not None]
+        if known:
+            bound = kv_blocks_writable(max(known))
+            flush_pairs = [p for p, n in zip(flush_pairs, need) if n is None or n <= bound]
+            if not flush_pairs:
+                return
         if not envs.KVARN_FAST_FLUSH:
             return cls._batched_flush_legacy(flush_pairs)
 

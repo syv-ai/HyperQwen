@@ -1,16 +1,16 @@
 Kind: fix
 What: adaptive z counts emitted tokens, not sampling slots
 Upstream: none yet
-Cut-against: 0.33.0: beside #58984's dummy-run clamp; num_rejected's definition unchanged
+Cut-against: 0.34.0: beside #58984's dummy-run clamp; num_rejected's definition unchanged
 Retires-when: upstream PR
 
---- exported from 08bc1eb270 (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 094c792aa9 (dflash2-z-adaptive-emitted); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash/speculator.py b/v1/worker/gpu/spec_decode/dflash/speculator.py
-index 41f0b21cfa..9ca54925fa 100644
+index b3e080a878..763c26af58 100644
 --- a/v1/worker/gpu/spec_decode/dflash/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash/speculator.py
-@@ -492,11 +492,12 @@
+@@ -516,11 +516,12 @@
          num_reqs = input_batch.num_reqs
          if dummy_run and dp_sync_state is not None:
              num_reqs = min(num_reqs, dp_sync_state.num_reqs)
@@ -29,10 +29,10 @@ index 41f0b21cfa..9ca54925fa 100644
          num_query_tokens = num_reqs * self.num_query_per_req
          max_seq_len = input_batch.seq_lens_cpu_upper_bound[:num_reqs].max().item()
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 6c060c021b..ce4a9289cc 100644
+index b788b59a6d..54356bd5fb 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-@@ -603,9 +603,7 @@
+@@ -611,9 +611,7 @@
          self.draft_max_seq_len = min(
              max_seq_len + self.num_query_per_req, self.max_model_len
          )

@@ -11,13 +11,13 @@ per-token [N, C] slots of the runner's 4D view back into one tile per (block, he
 Kind: feature
 What: KVarN cache dtypes, quant mode, backend registration, page size
 Upstream: none (KVarN is Huawei CSL's, Apache-2.0)
-Cut-against: 0.33.0: beside #59774's OCTAVE_* and #52670's CUSTOM; KVARN stays 100
+Cut-against: 0.34.0: beside #59774's OCTAVE_* and #52670's CUSTOM; KVARN stays 100
 Retires-when: upstreamed
 
---- exported from 155a2e4417 (kvarn-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 119a95796f (kvarn-0.34.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/config/cache.py b/config/cache.py
-index 626825dba8..f7760f15eb 100644
+index 1938b8ad6f..56240bc63c 100644
 --- a/config/cache.py
 +++ b/config/cache.py
 @@ -59,6 +59,10 @@
@@ -32,10 +32,10 @@ index 626825dba8..f7760f15eb 100644
      "int8_per_token_head",
      "fp8_per_token_head",
 diff --git a/envs.py b/envs.py
-index 74279b97a0..ccf193bf9e 100755
+index b00d6d8031..bbda2a3d96 100644
 --- a/envs.py
 +++ b/envs.py
-@@ -226,6 +226,26 @@
+@@ -229,6 +229,26 @@
      VLLM_MAMBA_ALIGN_KEEP_CHECKPOINTS: bool = False
      VLLM_DRAFT_TEMP_SCALE: float = 1.0
      VLLM_MARLIN_REPACK_STAGED: str | None = None
@@ -62,7 +62,7 @@ index 74279b97a0..ccf193bf9e 100755
      # GiB of vision-tower weights to keep in pinned host memory; 0 disables.
      VLLM_VISION_CPU_OFFLOAD_GB: float = 0.0
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
-@@ -1646,6 +1666,28 @@
+@@ -1714,6 +1734,28 @@
      "VLLM_DRAFT_TEMP_SCALE": lambda: float(os.environ.get("VLLM_DRAFT_TEMP_SCALE", "1.0")),
      # Marlin repack staging buffer, opt-in: "1" turns it on (GA100 mining cards); unset or anything else = off
      "VLLM_MARLIN_REPACK_STAGED": lambda: os.environ.get("VLLM_MARLIN_REPACK_STAGED"),
@@ -92,10 +92,10 @@ index 74279b97a0..ccf193bf9e 100755
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index 93958bb127..24bf3c805f 100644
+index b7942dbe8c..cce5cfbc22 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
-@@ -672,6 +672,26 @@
+@@ -702,6 +702,26 @@
                  page_size_padded=shared_page,
              )
          else:
@@ -123,10 +123,10 @@ index 93958bb127..24bf3c805f 100644
                  block_size=block_size,
                  num_kv_heads=self.num_kv_heads,
 diff --git a/platforms/cuda.py b/platforms/cuda.py
-index c765877871..bb933a7ca9 100644
+index a3ef3deed3..a653c23bb8 100644
 --- a/platforms/cuda.py
 +++ b/platforms/cuda.py
-@@ -164,6 +164,7 @@
+@@ -161,6 +161,7 @@
                  AttentionBackendEnum.FLASH_ATTN,
                  AttentionBackendEnum.TRITON_ATTN,
                  AttentionBackendEnum.FLEX_ATTENTION,
@@ -134,7 +134,7 @@ index c765877871..bb933a7ca9 100644
                  AttentionBackendEnum.TURBOQUANT,
              ]
          else:
-@@ -177,6 +178,7 @@
+@@ -174,6 +175,7 @@
                  AttentionBackendEnum.FLASHINFER,
                  AttentionBackendEnum.TRITON_ATTN,
                  AttentionBackendEnum.FLEX_ATTENTION,
@@ -142,7 +142,7 @@ index c765877871..bb933a7ca9 100644
                  AttentionBackendEnum.TURBOQUANT,
              ]
  
-@@ -365,6 +367,70 @@
+@@ -406,6 +408,70 @@
                  "`wsl --shutdown`."
              )
  
@@ -214,10 +214,10 @@ index c765877871..bb933a7ca9 100644
      def get_current_memory_usage(
          cls, device: torch.types.Device | None = None
 diff --git a/platforms/interface.py b/platforms/interface.py
-index de899f7a1b..7d10f140e4 100644
+index a779b4d7e8..3a2ea38ade 100644
 --- a/platforms/interface.py
 +++ b/platforms/interface.py
-@@ -983,6 +983,23 @@
+@@ -994,6 +994,23 @@
                  cache_dtype_str=cache_config.cache_dtype,
                  kv_quant_mode=kv_quant_mode,
              ).page_size_bytes
@@ -242,10 +242,10 @@ index de899f7a1b..7d10f140e4 100644
              cache_config.cache_dtype.startswith("turboquant_")
              or cache_config.cache_dtype == "ultraquant_4bit"
 diff --git a/utils/torch_utils.py b/utils/torch_utils.py
-index 7e889e244a..a51f66df95 100644
+index e601992dc6..e5bd16ad38 100644
 --- a/utils/torch_utils.py
 +++ b/utils/torch_utils.py
-@@ -61,6 +61,10 @@
+@@ -62,6 +62,10 @@
      "octave_k3v3": torch.uint8,
      "octave_k3v3_compact": torch.uint8,
      "ultraquant_4bit": torch.uint8,
@@ -257,10 +257,10 @@ index 7e889e244a..a51f66df95 100644
      "nvfp4_4over6": torch.uint8,
  }
 diff --git a/v1/attention/backends/registry.py b/v1/attention/backends/registry.py
-index 093a536cd4..83bf147498 100644
+index eca068d40b..2ff6630713 100644
 --- a/v1/attention/backends/registry.py
 +++ b/v1/attention/backends/registry.py
-@@ -159,6 +159,7 @@
+@@ -163,6 +163,7 @@
      CPU_ATTN = "vllm.v1.attention.backends.cpu_attn.CPUAttentionBackend"
      CPU_MLA = "vllm.v1.attention.backends.mla.cpu_mla.CPUMLABackend"
      AMX_MLA = "vllm.v1.attention.backends.mla.amx_mla.AMXMLABackend"
@@ -269,7 +269,7 @@ index 093a536cd4..83bf147498 100644
      ROCM_OCTAVE = (
          "vllm.v1.attention.backends.rocm_octave_attn.RocmOctaveAttentionBackend"
 diff --git a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
-index 7a6650ce50..ebeaa76e82 100644
+index 9e8d337301..2f5b4dcb3d 100644
 --- a/v1/kv_cache_interface.py
 +++ b/v1/kv_cache_interface.py
 @@ -68,6 +68,10 @@
@@ -283,9 +283,9 @@ index 7a6650ce50..ebeaa76e82 100644
      @property
      def is_per_token_head(self) -> bool:
          """True for any per-token-head quantization mode."""
-@@ -117,6 +121,10 @@
-         """
-         return self == KVQuantMode.CUSTOM
+@@ -106,6 +110,10 @@
+         """True for the UltraQuant 4-bit KV-cache format."""
+         return self == KVQuantMode.ULTRAQUANT_4BIT
  
 +    def is_kvarn(self) -> bool:
 +        """True for KVarN packed KV-cache quantization."""
@@ -294,7 +294,7 @@ index 7a6650ce50..ebeaa76e82 100644
  
  def get_kv_quant_mode(kv_cache_dtype: str) -> KVQuantMode:
      """Map a ``kv_cache_dtype`` string to a :class:`KVQuantMode`."""
-@@ -144,6 +152,8 @@
+@@ -133,6 +141,8 @@
          return KVQuantMode[kv_cache_dtype.upper()]
      if kv_cache_dtype == "ultraquant_4bit":
          return KVQuantMode.ULTRAQUANT_4BIT

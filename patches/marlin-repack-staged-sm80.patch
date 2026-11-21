@@ -52,13 +52,13 @@ Kind: local
 What: one grow-only staging buffer for the sm80 Marlin repack (fork #27), opt-in with
   `VLLM_MARLIN_REPACK_STAGED=1`
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: stays
 
---- exported from c2fbc0fac8 (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 0fd58e6986 (marlin-repack-staged-sm80); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/kernels/linear/mixed_precision/marlin.py b/model_executor/kernels/linear/mixed_precision/marlin.py
-index 13591a141b..a3200a3d4a 100644
+index c043c16b45..fd6f307938 100644
 --- a/model_executor/kernels/linear/mixed_precision/marlin.py
 +++ b/model_executor/kernels/linear/mixed_precision/marlin.py
 @@ -2,8 +2,10 @@
@@ -72,9 +72,9 @@ index 13591a141b..a3200a3d4a 100644
  from vllm import _custom_ops as ops
  from vllm.model_executor.layers.quantization.utils.marlin_utils import (
      MARLIN_SUPPORTED_GROUP_SIZES,
-@@ -24,6 +26,50 @@
+@@ -23,6 +25,50 @@
+ from vllm.model_executor.utils import replace_parameter
  from vllm.platforms import current_platform
- from vllm.scalar_type import scalar_types
  
 +# (syv) #27: sm80 (GA100) wedges with Xid 31 during Marlin repack -- not from
 +# the repack kernel, but from VMM mapping churn under the per-layer transient
@@ -123,7 +123,7 @@ index 13591a141b..a3200a3d4a 100644
  from .MPLinearKernel import MPLinearKernel, MPLinearLayerConfig
  
  
-@@ -129,6 +175,22 @@
+@@ -92,6 +138,21 @@
          def transform_w_q(x):
              assert isinstance(x, BasevLLMParameter)
              permute_param_layout_(x, input_dim=0, output_dim=1, packed_dim=0)
@@ -140,7 +140,6 @@ index 13591a141b..a3200a3d4a 100644
 +                    size_k=padded_k,
 +                    size_n=padded_n,
 +                    num_bits=c.weight_type.size_bits,
-+                    is_a_8bit=is_a_8bit,
 +                )
 +                return x
              x.data = ops.gptq_marlin_repack(

@@ -56,7 +56,7 @@ a different inode and bypass exclusion.
 V=venv/bin/python
 $V drafter/collect_prompts.py                 # 6.8k prompts: UltraChat, Magicoder, syvai/da-instruction,
                                               #   syvai/reasoning-v1, skolegpt-instruct, GSM8K; 45% thinking on
-VLLM_MARLIN_INPUT_DTYPE=int8 VLLM_MARLIN_INT8_INCLUDE_RE=mlp $V drafter/gen_data.py   # 2.2 h, 5.4M output tokens
+VLLM_MARLIN_INPUT_DTYPE=int8 VLLM_MARLIN_INT8_INCLUDE_RE=mlp $V drafter/gen_data.py   # 2.2 h, 5.4M output tokens (vLLM 0.33 or earlier; 0.34 rejects the variable, so drop both there)
 $V drafter/capture.py                         # 1.7 h: hidden states of every token (74 GB memmap), in-process
                                               #   vLLM hook on GPUModelRunner._model_forward
 # draft vocab from the model's own outputs -> prepare/draft_vocab_ids.json (the shipped list)
