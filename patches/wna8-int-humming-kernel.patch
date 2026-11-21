@@ -1,0 +1,40 @@
+CompressedTensorsWNA8Int (int weights, int8 per-token activations) chose its kernel with choose_mp_linear_kernel and
+act_type set to the params dtype, so on CUDA below SM90 the list reached Marlin before Humming. Marlin accepts the
+layer and never reads _humming_input_quant_config, so a checkpoint that declares int8 activations served W4A16 on
+a 3090 or a 4090, with nothing in the log beyond the kernel name. With an input quant the scheme now takes
+HummingLinearKernel, the one mixed-precision kernel that reads it, and raises with Humming's reason when Humming
+cannot implement the layer. Without one, the choice is vLLM's as before.
+
+Kind: fix
+What: compressed-tensors' W4A8 int scheme (CompressedTensorsWNA8Int) takes the Humming kernel when it has an
+  input quant, where vLLM's kernel chooser took Marlin below SM90 and Marlin ignores the int8 input config
+  (served W4A16, silently)
+Upstream: none yet
+Cut-against: 0.34.0
+Retires-when: upstream fixes the kernel choice
+
+--- exported from a7cc0bd1a1 (wna8-int-humming-kernel); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_wNa8.py b/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_wNa8.py
+index 8c6a2c84ff..e6d3989145 100644
+--- a/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_wNa8.py
++++ b/model_executor/layers/quantization/compressed_tensors/schemes/compressed_tensors_wNa8.py
+@@ -160,7 +160,17 @@
+             zero_points=not self.symmetric,
+         )
+ 
+-        kernel_type = choose_mp_linear_kernel(mp_config)
++        if self.input_quant is not None:
++            # Only Humming reads _humming_input_quant_config. choose_mp_linear_kernel ranks Marlin above it on CUDA
++            # (act_type is the bf16/fp16 params dtype here), and Marlin would serve these layers as W4A16.
++            from vllm.model_executor.kernels.linear import HummingLinearKernel
++
++            ok, why = HummingLinearKernel.can_implement(mp_config)
++            if not ok:
++                raise ValueError(f"CompressedTensorsWNA8Int needs Humming for int8 activations: {why}")
++            kernel_type = HummingLinearKernel
++        else:
++            kernel_type = choose_mp_linear_kernel(mp_config)
+         if kernel_type.__name__ not in self._kernel_backends_being_used:
+             logger.info("Using %s for CompressedTensorsWNA8Int", kernel_type.__name__)
+             self._kernel_backends_being_used.add(kernel_type.__name__)

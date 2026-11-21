@@ -76,3 +76,5 @@ vllm-pr64165-flashinfer-plan-event.patch
 qwen3_5-nvidia-gated-norm-warmup.patch
 vision-tower-cpu-offload-meta.patch
 kvarn-extensible-kv-commit.patch
+wna8-int-humming-kernel.patch
+humming-explicit-input-schema.patch
