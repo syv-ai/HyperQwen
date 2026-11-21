@@ -26,7 +26,9 @@ tower, the GDN `in_proj_a/b`) loads as before. `INT8_LAYERS` keeps its meaning (
 (`site-packages/nvidia/cu13/lib`) on `LD_LIBRARY_PATH`: Humming compiles its kernels with NVRTC, which loads
 `libnvrtc-builtins.so.13.0` by soname, and no default path names that directory, so without it the first Humming
 kernel fails to compile at boot. `INT8_ACT=fp8` is refused (Humming has fp8 activations; nothing here measured them),
-and so is an `--hf-overrides` in `EXTRA_ARGS`, which would replace this one.
+and so is an `--hf-overrides` in `EXTRA_ARGS`, which would replace this one. When int8 is only batch's default
+(`INT8_ACT` unset), either case serves W4A16 with a note instead, because up to 0.33 Marlin's int8 took any Marlin
+checkpoint and the default must not stop a GPTQ or AWQ one from booting. `bench/test_int8_knob.sh` covers each case.
 
 **Why two patches.** Without them the scheme serves W4A16 on a 3090 or a 4090 and says nothing:
 - `wna8-int-humming-kernel`: the scheme picked its kernel with `choose_mp_linear_kernel` and the params dtype as the
