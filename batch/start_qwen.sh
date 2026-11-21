@@ -155,8 +155,9 @@ else
   GPU_UTIL=${GPU_UTIL:-0.93}
   KV_ARGS="--kv-cache-dtype fp8"
 fi
-# int8 activations on the MLP (W4A8 through Humming); INT8_ACT= for W4A16. See above.
-INT8_ACT=${INT8_ACT-int8}
+# int8 activations on the MLP (W4A8 through Humming); INT8_ACT= for W4A16. See above. Left unset, a checkpoint the
+# int8 override does not fit serves W4A16 with a note (QWEN_INT8_DEFAULT); INT8_ACT=int8 set explicitly refuses it.
+if [ -z "${INT8_ACT+set}" ]; then INT8_ACT=int8 QWEN_INT8_DEFAULT=1; fi
 INT8_LAYERS=${INT8_LAYERS-mlp}
 
 # Prefix caching (PREFIX_CACHE=1, the default; 0 turns it off; qwen_prefix_cache passes the

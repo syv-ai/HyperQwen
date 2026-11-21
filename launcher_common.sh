@@ -33,6 +33,11 @@
 #                       LD_LIBRARY_PATH whenever they are there: Humming compiles its kernels
 #                       with NVRTC, which loads libnvrtc-builtins by soname, and the wheel
 #                       ships it in site-packages/nvidia/cu13/lib, on no default path.
+#                       When int8 is only the launcher's default (QWEN_INT8_DEFAULT=1, batch with
+#                       INT8_ACT unset), a checkpoint the override does not fit, or an
+#                       --hf-overrides in EXTRA_ARGS, serves W4A16 with a note instead of refusing:
+#                       up to 0.33 Marlin's int8 took any Marlin checkpoint, so the default must
+#                       not stop a GPTQ or AWQ one from booting.
 #
 #   qwen_check_bool_knobs  refuses to start when one of the series' boolean knobs is set
 #                       to anything but 0 or 1 (empty counts as unset). The patches read them
@@ -157,12 +162,22 @@ qwen_int8_args() {
   [ "${QWEN_INT8_ACT:-}" = int8 ] || return 0
   case " ${EXTRA_ARGS:-} " in
     *" --hf-overrides"*|*" --hf_overrides"*)
+      if [ "${QWEN_INT8_DEFAULT:-0}" = 1 ]; then
+        echo "[start_qwen] INT8_ACT defaults to int8, but EXTRA_ARGS carries its own --hf-overrides: serving W4A16 (set INT8_ACT= to silence this)." >&2
+        return 0
+      fi
       echo "[start_qwen] INT8_ACT=int8 builds its own --hf-overrides; EXTRA_ARGS has one too and would replace it." >&2
       echo "  Set INT8_ACT= and carry the int8 group in your own override (scripts/int8_overrides.py prints it)." >&2
       exit 2 ;;
   esac
   if [ -x "${REPO:-.}/venv/bin/python" ]; then py="${REPO:-.}/venv/bin/python"; fi
-  if ! ov=$("$py" "${REPO:-.}/scripts/int8_overrides.py" "$1" "$QWEN_INT8_LAYERS"); then exit 2; fi
+  if ! ov=$("$py" "${REPO:-.}/scripts/int8_overrides.py" "$1" "$QWEN_INT8_LAYERS"); then
+    if [ "${QWEN_INT8_DEFAULT:-0}" = 1 ]; then
+      echo "[start_qwen] INT8_ACT defaults to int8 and the reason above stops it here: serving W4A16 (set INT8_ACT= to silence this)." >&2
+      return 0
+    fi
+    exit 2
+  fi
   INT8_ARGS=(--hf-overrides "$ov")
 }
 

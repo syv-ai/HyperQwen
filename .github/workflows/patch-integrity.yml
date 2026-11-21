@@ -89,7 +89,7 @@ jobs:
           printf '#!/bin/sh\ncase "$*" in *compute_cap*) echo 8.6 ;; *) exit 9 ;; esac\n' > "$RUNNER_TEMP/cc86/nvidia-smi"
           chmod +x "$RUNNER_TEMP/cc86/nvidia-smi"
           export PATH="$RUNNER_TEMP/cc86:$PATH"
-          for t in no_key_bind prefix_cache_knob kv_offload_knob dynamic_k_knob tp_size bool_knobs resident_print fa2_fp8kv_knob pthfa_knob; do
+          for t in no_key_bind prefix_cache_knob kv_offload_knob dynamic_k_knob tp_size bool_knobs resident_print fa2_fp8kv_knob pthfa_knob int8_knob; do
             bash "bench/test_$t.sh"
           done
 
