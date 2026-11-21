@@ -1,0 +1,53 @@
+Ports upstream PR vllm-project/vllm#64165 (merged 2026-11-11, after the 0.34.0 branch) to this pin, in place of
+vllm-pr61612-flashinfer-async-barrier.
+
+FlashInfer's plan() fills the wrapper's page-locked buffer and copies it to the GPU asynchronously. Under async
+scheduling, and across pipeline-parallel micro-batches, the host could run the next plan() while the previous copy
+was still reading that buffer, so a later attention kernel read a half-overwritten plan: the illegal memory access
+of HyperQwen #328 (PP=2), vllm #63505 and #61239. The builder now records a CUDA event after each plan() and waits
+on it before the next, so the host blocks only when it is more than one plan ahead of the GPU. The port it
+replaces took the blocking seq_lens.cpu() again at every step under async scheduling.
+
+Applied unchanged: the vllm/ hunks cherry-pick onto 0.34.0 without conflicts. The PR's test file
+(tests/v1/attention/test_attention_backends.py) is not carried, as with the other backports.
+
+Kind: fix
+What: wait on a CUDA event before each FlashInfer plan() so the host never overwrites a plan buffer the GPU is
+  still copying
+Upstream: vllm #64165 (merged), for #63505; HyperQwen #328
+Cut-against: 0.34.0
+Retires-when: the pin that carries #64165 (0.35)
+
+--- exported from 8bb9096af3 (vllm-pr64165-flashinfer-plan-event); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/v1/attention/backends/flashinfer.py b/v1/attention/backends/flashinfer.py
+index 15b2cd4345..cb9c8d6e4e 100755
+--- a/v1/attention/backends/flashinfer.py
++++ b/v1/attention/backends/flashinfer.py
+@@ -894,6 +894,9 @@
+         # target verification and noncausal DFlash query attention.
+         self._native_prefill_graph_wrappers = {}
+         self._native_spec_graphs = self._use_native_spec_graphs(vllm_config)
++        # plan() fills the wrapper's page-locked buffer and copies it to the
++        # GPU asynchronously, so it must not run again before that copy has.
++        self._plan_copied = torch.cuda.Event(blocking=True)
+ 
+         if envs.VLLM_BATCH_INVARIANT:
+             self.decode_fixed_split_size = 2048
+@@ -1804,6 +1807,7 @@
+                 num_reqs,
+                 page_size,
+             )
++            self._plan_copied.synchronize()
+         else:
+             paged_kv_indices = None
+ 
+@@ -2090,6 +2094,8 @@
+                     q_len_per_req=q_len_per_req,
+                 )
+                 attn_metadata.decode = FIDecode(wrapper=decode_wrapper)
++        if needs_paged_kv_indices:
++            self._plan_copied.record()
+         return attn_metadata
+ 
+     def update_draft_decode_metadata(self, _metadata: FlashInferMetadata) -> None:

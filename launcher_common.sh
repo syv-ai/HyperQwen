@@ -13,20 +13,14 @@
 #                       0.0.0.0, since a published port cannot reach a loopback
 #                       bind; there the port mapping is what limits exposure.
 #
-#   qwen_int8_exports   <act> <layers>, where the launcher sets INT8_ACT and INT8_LAYERS
-#                       (each launcher keeps its own defaults). Exports
-#                       VLLM_MARLIN_INPUT_DTYPE=<act> and, only with it,
-#                       VLLM_MARLIN_INT8_INCLUDE_RE=<layers>. The engine reads the
-#                       regex only when the dtype is set
-#                       (patches/marlin-int8-layer-select.patch); alone it only
-#                       changes vLLM's compile cache key. "Off" for these is UNSET,
-#                       not empty. vllm/envs.py registers VLLM_MARLIN_INPUT_DTYPE
-#                       through env_with_choices(..., None, ["int8", "fp8"]), which
-#                       rejects "" outright -- `ValueError: Invalid value '' ...
-#                       Valid options: ['int8', 'fp8']` -- so exporting the empty
-#                       string killed the engine at startup instead of turning the
-#                       feature off. That is the documented way to disable it
-#                       (issue #20), so export only when non-empty.
+#   qwen_int8_exports   <act> <layers>, where the launcher sets INT8_ACT and INT8_LAYERS.
+#                       vLLM 0.34.0 removed Marlin's 8-bit activations (vllm #65542):
+#                       the kernels are gone, and setting VLLM_MARLIN_INPUT_DTYPE is a
+#                       startup error. So INT8_ACT must be empty (W4A16, every launcher's
+#                       default now), and any other value is refused here with the reason,
+#                       rather than served at W4A16 under a name that says int8. Upstream's
+#                       route to W4A8 is `--quantization humming`; it is not wired into
+#                       these launchers yet.
 #
 #   qwen_check_bool_knobs  refuses to start when one of the series' boolean knobs is set
 #                       to anything but 0 or 1 (empty counts as unset). The patches read them
@@ -119,8 +113,9 @@ resolve_bind_host() {
 # && list fails returns 1 and stops the launcher.
 qwen_int8_exports() {
   if [ -n "$1" ]; then
-    export VLLM_MARLIN_INPUT_DTYPE=$1
-    if [ -n "$2" ]; then export VLLM_MARLIN_INT8_INCLUDE_RE=$2; fi
+    echo "[start_qwen] INT8_ACT=$1: vLLM 0.34 removed Marlin's int8/fp8 activations (vllm #65542)." >&2
+    echo "  Leave INT8_ACT empty to serve W4A16, the default on this pin (docs/vllm-0.34.md)." >&2
+    exit 2
   fi
 }
 
@@ -195,6 +190,15 @@ qwen_kv_offload_args() {
       *) EXTRA_ARGS="--kv-offloading-size $KV_OFFLOAD_GB ${EXTRA_ARGS:-}" ;;
     esac
   fi
+}
+
+# vLLM 0.34 turns on the extensible KV cache by default on CUDA; these launchers turn it off, keeping 0.33's sizing,
+# unless EXTRA_ARGS names it (docs/vllm-0.34.md, "The extensible KV cache": what it costs and when turning it on pays).
+qwen_extensible_kv_args() {
+  EKV_ARGS="--disable-extensible-kv-cache"
+  case " ${ATTN_ARGS:-} ${EXTRA_ARGS:-} " in
+    *" --enable-extensible-kv-cache"*|*" --disable-extensible-kv-cache"*|*" --no-enable-extensible-kv-cache"*) EKV_ARGS= ;;
+  esac
 }
 
 qwen_prefix_cache() {

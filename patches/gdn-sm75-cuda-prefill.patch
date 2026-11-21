@@ -18,16 +18,16 @@ Output relative L2 error 0.00051; final-state relative L2 error 0.00037.
 Kind: local
 What: opt-in recurrent CUDA GDN prefill kernel for sm75 (VLLM_GDN_SM75=1), ported from weicj/vLLM-2080Ti-Definitive (Apache-2.0)
 Upstream: none (weicj/vLLM-2080Ti-Definitive 93c9013)
-Cut-against: 0.33.0 after gdn-multi-prefill-checkpoints; refuse that opt-in on the SM75 CUDA backend
+Cut-against: 0.34.0 after gdn-multi-prefill-checkpoints; refuse that opt-in on the SM75 CUDA backend
 Retires-when: Triton emits tensor-core code on sm75 or FLA ships a faster Turing kernel
 
---- exported from 902189d (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3315e25b6d (gdn-sm75-cuda-prefill); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index 6ffec10..fc1dbd6 100755
+index 9dd49e63d3..77588ed8c5 100644
 --- a/envs.py
 +++ b/envs.py
-@@ -237,6 +237,7 @@
+@@ -260,6 +260,7 @@
      VLLM_HUMMING_MOE_GEMM_TYPE: Literal["indexed", "grouped", "auto"] | None = None
      VLLM_B12X_MOE_FP4_FORCE_A16: bool = False
      VLLM_DEEPEPLL_NVFP4_DISPATCH: bool = False
@@ -35,7 +35,7 @@ index 6ffec10..fc1dbd6 100755
      VLLM_FLASHINFER_NATIVE_SPEC_GRAPHS: bool = False
      VLLM_FLASHINFER_SM75: bool = False
      VLLM_DFLASH2_RESIDUAL_SCALE: str = ""
-@@ -1675,6 +1676,7 @@
+@@ -1788,6 +1789,7 @@
      "VLLM_VISION_CPU_OFFLOAD_GB": lambda: float(
          os.environ.get("VLLM_VISION_CPU_OFFLOAD_GB", "0")
      ),
@@ -44,10 +44,10 @@ index 6ffec10..fc1dbd6 100755
      "VLLM_FLASHINFER_SM75": lambda: os.environ.get("VLLM_FLASHINFER_SM75", "0") == "1",
      "VLLM_DFLASH2_RESIDUAL_SCALE": lambda: os.environ.get("VLLM_DFLASH2_RESIDUAL_SCALE", ""),
 diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-index 87ce6c0..2d9baf3 100644
+index dfbf98738e..cbb0dfcb6e 100644
 --- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
 +++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-@@ -400,6 +400,14 @@
+@@ -483,6 +483,14 @@
          else:
              self._forward_method = self.forward_native
  
@@ -62,7 +62,7 @@ index 87ce6c0..2d9baf3 100644
      def forward_cuda(
          self,
          q: torch.Tensor,
-@@ -757,6 +765,15 @@
+@@ -918,6 +926,15 @@
                  raise RuntimeError(
                      "GDN prefill checkpoints require mamba_cache_mode=align"
                  )
@@ -80,7 +80,7 @@ index 87ce6c0..2d9baf3 100644
              if (
 diff --git a/model_executor/layers/mamba/ops/sm75_gdn.cu b/model_executor/layers/mamba/ops/sm75_gdn.cu
 new file mode 100644
-index 0000000..b3f9af2
+index 0000000000..b3f9af2dd9
 --- /dev/null
 +++ b/model_executor/layers/mamba/ops/sm75_gdn.cu
 @@ -0,0 +1,539 @@
@@ -625,7 +625,7 @@ index 0000000..b3f9af2
 +}
 diff --git a/model_executor/layers/mamba/ops/sm75_gdn.py b/model_executor/layers/mamba/ops/sm75_gdn.py
 new file mode 100644
-index 0000000..b6fc04f
+index 0000000000..b6fc04fbc5
 --- /dev/null
 +++ b/model_executor/layers/mamba/ops/sm75_gdn.py
 @@ -0,0 +1,57 @@

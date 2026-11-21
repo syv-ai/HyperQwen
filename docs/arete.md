@@ -43,10 +43,12 @@ hf download surak/HyperArete-27B-W4A16 --local-dir models/HyperArete-27B-W4A16
 # Activate the prepared environment and set VLLM_API_KEY privately first.
 MODEL="$PWD/models/HyperArete-27B-W4A16" \
 MAX_LEN=150000 MAX_SEQS=64 GPU_UTIL=0.94 KV=fp8 VISION=1 \
-INT8_ACT=int8 INT8_LAYERS=mlp \
 EXTRA_ARGS='--dtype bfloat16 --served-model-name hyper-arete-27b --watermark-config {"algorithm":"gumbel","key":16386}' \
   bash batch/start_qwen.sh
 ```
+
+Up to vLLM 0.33 this recipe also set `INT8_ACT=int8 INT8_LAYERS=mlp`; 0.34 removed Marlin's int8 activations, and the
+launcher refuses them ([vllm-0.34.md](vllm-0.34.md)).
 
 The fixed watermark key reproduces the measured profile; it is public and is not
 an attribution secret. Gumbel marks generated text, not image pixels. The batch

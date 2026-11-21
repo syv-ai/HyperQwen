@@ -42,6 +42,11 @@ fields() {
 }
 
 echo "== measured arms: historical pool/block geometry, current admission counts"
+# vLLM 0.34 rounds the hybrid attention block up to 64 tokens (4bfde3c; threadchip's 3090 logs, 11-19: 800 -> 832,
+# 480 -> 512, 1696 -> 1728), and the note does the same. So the int8- and fp8-KV arms below, measured on vLLM 0.31
+# at blocks 864, 816, 800 and 880, are checked at the rounded block (896, 832, 832, 896) and the pool and ranges
+# that block gives; their 0.31 values stay in the table above and in each message. No 0.34 boot measured those
+# arms. The bf16 arms (block 448, already a multiple of 64) are unchanged.
 # arm                          KV_MEM      k  dtype  num_gpu_blocks  block  seen ~1k  seen ~32.8k  seen ~61.5k
 # batch 5 Q2-a                 5583457484  7  int8   382             864    7         2            1
 # batch 5 Q2-b                 5583457484  3  int8   404             816    13        3            2
@@ -62,25 +67,25 @@ echo "== measured arms: historical pool/block geometry, current admission counts
 # / Running: 54.00 at k=7, 30.00 at k=3, 18.0 at k=1), including H2: vLLM 0.31.0 enables prefix
 # caching, and so align mode, by default for this model, with or without PREFIX_CACHE=1.
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "5:6:1:382:864" "$f" "Q2-a int8 k=7: range 5-6, 1 at 64k, pool 382, block 864"
+check "5:6:1:368:896" "$f" "Q2-a int8 k=7: range 5-6, 1 at 64k, pool 368 at block 896 (0.31: 382 at 864)"
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=3 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "9:11:1:404:816" "$f" "Q2-b int8 k=3: range 9-11, 1 at 64k, pool 404, block 816"
+check "9:11:1:397:832" "$f" "Q2-b int8 k=3: range 9-11, 1 at 64k, pool 397 at block 832 (0.31: 404 at 816)"
 f=$(fields KV_MEM=4509715660 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "4:5:1:308:864" "$f" "Q2-c int8 k=7, KV_MEM -1 GiB: range 4-5, 1 at 64k, pool 308"
+check "4:4:1:297:896" "$f" "Q2-c int8 k=7, KV_MEM -1 GiB: range 4-4, 1 at 64k, pool 297 at block 896 (0.31: 4-5, 308 at 864)"
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1)
 check "5:6:1:380:448" "$f" "Q2-d bf16 k=7 (shipped KV): range 5-6, 1 at 64k, pool 380, block 448"
 f=$(fields KV_MEM=5315022028 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "5:6:1:364:864" "$f" "batch 4 int8 k=7: range 5-6, pool 364"
+check "5:5:1:351:896" "$f" "batch 4 int8 k=7: range 5-5, pool 351 at block 896 (0.31: 5-6, 364 at 864)"
 f=$(fields KV_MEM=5315022028 DFLASH_TOKENS=1 MAX_SEQS=24 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "12:16:1:393:800" "$f" "batch 4 Q4 int8 k=1: range 12-16, pool 393, block 800"
+check "12:15:1:378:832" "$f" "batch 4 Q4 int8 k=1: range 12-15, pool 378 at block 832 (0.31: 12-16, 393 at 800)"
 f=$(fields KV_MEM=5315022028 DFLASH_TOKENS=3 MAX_SEQS=16 MAX_LEN=65536 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")
-check "385:816" "$(cut -d: -f4,5 <<< "$f")" "batch 4 int8 k=3: pool 385, block 816"
+check "378:832" "$(cut -d: -f4,5 <<< "$f")" "batch 4 int8 k=3: pool 378 at block 832 (0.31: 385 at 816)"
 f=$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536)
 check "5:6:1:380:448" "$f" "H2 bf16 k=7 with PREFIX_CACHE unset: 60 async state pages, range 5-6"
 f=$(fields DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1)
-check "5:6:1:382:864" "$f" "H3 CTX=long (int8, MAX_LEN 131072): range 5-6, pool 382, block 864"
+check "5:6:1:368:896" "$f" "H3 CTX=long (int8, MAX_LEN 131072): range 5-6, pool 368 at block 896 (0.31: 382 at 864)"
 f=$(fields DFLASH_TOKENS=7 MAX_SEQS=16 CTX=long PREFIX_CACHE=1 FA2_FP8KV=1)
-check "5:6:1:387:880" "$f" "#153 CTX=long FA2 arm (fp8, MAX_LEN 131072): range 5-6, pool 387, block 880"
+check "5:6:1:380:896" "$f" "#153 CTX=long FA2 arm (fp8, MAX_LEN 131072): range 5-6, pool 380 at block 896 (0.31: 387 at 880)"
 
 echo "== prefix caching switched off explicitly is unmeasured"
 check "" "$(note KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=65536 EXTRA_ARGS="--no-enable-prefix-caching")" \
@@ -93,7 +98,7 @@ check "5:6:1:380:448" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MA
   "--mamba-cache-mode=align still prints"
 
 echo "== MAX_LEN moves the long-context figure, not the ~1k range"
-check "5:6:2:382:864" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" \
+check "5:6:2:368:896" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1 EXTRA_ARGS="$INT8")" \
   "int8 k=7 at MAX_LEN=32768: 2 (Q2-a held 2 at ~32.8k)"
 check "5:6:1:380:448" "$(fields KV_MEM=5583457484 DFLASH_TOKENS=7 MAX_SEQS=16 MAX_LEN=32768 PREFIX_CACHE=1)" \
   "bf16 k=7 at MAX_LEN=32768: 1 (H1 held 1 at ~32k)"

@@ -44,7 +44,9 @@ class ReplayBoundaryTests(unittest.TestCase):
                   blocks_per_chunk=1, offload_prompt_only=True, extra_config={},
                   kv_events_config=OffloadingKVEventsConfig(enable_kv_cache_events=False, self_describing_kv_events=False),
                   get_manager=lambda: manager)
-        config = NS(speculative_config=NS(use_eagle_block_drop=lambda: eagle),
+        # 0.34's scheduler reads num_hash_lookahead_tokens; OffloadingConnector does not support lookahead block
+        # hashes (supports_lookahead_block_hashes is the base class's False), so a real config resolves it to 0.
+        config = NS(speculative_config=NS(use_eagle_block_drop=lambda: eagle), num_hash_lookahead_tokens=0,
                     cache_config=NS(enable_prefix_caching=True, prefix_cache_retention_interval=retention),
                     parallel_config=NS(world_size=1, decode_context_parallel_size=1))
         scheduler = OffloadingConnectorScheduler(
@@ -86,7 +88,8 @@ class ReplayBoundaryTests(unittest.TestCase):
         manager.complete_store(prepared.keys_to_store, state.req_context)
         stored.update(recurrent_keys)
         replay, resumed = request('replay', length + 1046)
-        result = scheduler._lookup_complete_chunks(resumed)
+        # 0.34 returns (hit tokens, the boundary the full-attention groups proved); the hit is what this checks.
+        result, _ = scheduler._lookup_complete_chunks(resumed)
         self.assertEqual(result, boundary,
                          f'retention={retention}, eagle={eagle}, length={length}: '
                          'stored Mamba state must have the SWA history needed at its boundary')

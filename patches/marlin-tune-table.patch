@@ -31,17 +31,17 @@ Written against vLLM 0.27.1.
 Kind: local
 What: wiring for a locally built tunable Marlin extension, off by default
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: stays
 
---- exported from e519d8cca3 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 1670994549 (marlin-tune-table); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/_custom_ops.py b/_custom_ops.py
-index effb39f7ac..645e866185 100644
+index 93f4e0b0a8..13cfe651d7 100644
 --- a/_custom_ops.py
 +++ b/_custom_ops.py
-@@ -1214,6 +1214,51 @@
-     return torch.ops._C.marlin_int4_fp8_preprocess(qweight, qzeros_or_none, inplace)
+@@ -1164,6 +1164,51 @@
+     return output
  
  
 +_MARLIN_TUNE_ENABLED = envs.VLLM_MARLIN_TUNE
@@ -92,15 +92,16 @@ index effb39f7ac..645e866185 100644
  def marlin_gemm(
      a: torch.Tensor,
      c: torch.Tensor | None,
-@@ -1232,6 +1277,13 @@
+@@ -1181,6 +1226,14 @@
      use_fp32_reduce: bool = False,
      is_zp_float: bool = False,
  ) -> torch.Tensor:
 +    if _MARLIN_TUNE_OP is not None:
 +        return _MARLIN_TUNE_OP(
-+            a, c, b_q_weight, b_bias, b_scales, a_scales, global_scale, b_zeros,
-+            # the standalone build keeps the 0.27.1 schema; vllm #54809 (0.30.0) removed
++            # the standalone build keeps the 0.27.1 schema. vllm #65542 (0.34.0) removed
++            # 8-bit activations, so a_scales is always absent; #54809 (0.30.0) removed
 +            # activation ordering, so g_idx/perm are always absent and K is always full
++            a, c, b_q_weight, b_bias, b_scales, None, global_scale, b_zeros,
 +            None, None, workspace, b_q_type.id, size_m, size_n, size_k,
 +            True, use_atomic_add, use_fp32_reduce, is_zp_float)
      return torch.ops._C.marlin_gemm(
