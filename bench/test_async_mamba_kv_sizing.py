@@ -45,6 +45,7 @@ def config(depth=2, mode="align", max_len=163840):
         parallel_config=NS(decode_context_parallel_size=1, tensor_parallel_size=1),
         attention_config=NS(hisparse_config=None),
         cache_config=NS(
+            enable_extensible_kv_cache=False,  # read by 0.34's _more_kv_cache_memory_hint
             mamba_cache_mode=mode,
             num_gpu_blocks_override=None,
             prefix_cache_retention_interval=None,
@@ -102,6 +103,7 @@ def admit(budget, cfg=None):
         lambda: planning._max_memory_usage_bytes_from_groups(get_kv_cache_config_builder(cfg), cfg, gs),
         cfg.model_config.max_model_len,
         lambda am: planning._estimate_max_model_len_from_groups(get_kv_cache_config_builder(cfg), cfg, gs, am),
+        planning._more_kv_cache_memory_hint(cfg),
     )
 
 

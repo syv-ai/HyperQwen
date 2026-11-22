@@ -42,6 +42,7 @@ def cache_for(kind, dtype, layout, offset, head_size=64):
 def implementation(cls, mode, head_size=64):
     obj = cls.__new__(cls)
     obj._k_scale_cache = obj._v_scale_cache = None
+    obj._set_kv_ptr_range = False  # set by 0.34's Impl __init__, which __new__ skips
     obj._kv_quant_mode = mode
     obj.fp8_dtype = torch.float8_e4m3fn
     obj.head_size = head_size

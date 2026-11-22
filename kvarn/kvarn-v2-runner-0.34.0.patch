@@ -14,87 +14,81 @@ still exempt a sliding-window block that does not divide the scheduler block.
 Kind: own
 What: KVarN with the V2 runner and DFlash2 (SW groups, Mamba block index, selector guards)
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: rides with KVarN
 
---- exported from 9d1669650e (kvarn-v2-runner-0.33.0); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 53b36ef466 (kvarn-v2-runner-0.34.0); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/attention/attention.py b/model_executor/layers/attention/attention.py
-index 24bf3c805f..74c87b60f0 100644
+index cce5cfbc22..516d4da9da 100644
 --- a/model_executor/layers/attention/attention.py
 +++ b/model_executor/layers/attention/attention.py
-@@ -104,6 +104,7 @@
-     page_budget: int,
+@@ -105,6 +105,7 @@
      fallback: int,
      kv_cache_spec: KVCacheSpec | None = None,
-+    divisor_of: int | None = None,
+     divisor_of: int | None = None,
++    prefer_multiple_of: int | None = None,
  ) -> int:
      """Largest supported kernel block size whose page fits in ``page_budget``.
  
-@@ -118,11 +119,31 @@
-     sizes = attn_backend.get_supported_kernel_block_sizes(kv_cache_spec)
-     max_block_size = page_budget // per_token_bytes
-     candidates = [s for s in sizes if isinstance(s, int)]
--    candidates.extend(
--        max(s.base, max_block_size // s.base * s.base)
--        for s in sizes
--        if isinstance(s, MultipleOf)
--    )
-+    for s in sizes:
-+        if not isinstance(s, MultipleOf):
-+            continue
-+        scaled = max(s.base, max_block_size // s.base * s.base)
-+        # (kvarn-v2) A padded SW drafter page next to a hybrid primary block: take the
-+        # largest fitting block that also DIVIDES the primary block (a multiple of 128
-+        # first, then of the base), so the group stays a divisor of the scheduler block
-+        # and of prefix_match_unit. The largest aligned block alone lands on 432 against
-+        # a 2176 primary at DFLASH_TOKENS=7, and CTX=huge + prefix caching (#179) is then
-+        # refused: "prefix-cacheable KV cache group block sizes must be divisible by
-+        # prefix_match_unit" (128). 0.29 picked 128 here.
-+        if divisor_of:
-+            for step in (128, s.base):
-+                d = next(
-+                    (
-+                        d
-+                        for d in range(max_block_size, step - 1, -1)
-+                        if divisor_of % d == 0 and d % step == 0
-+                    ),
-+                    0,
-+                )
-+                if d:
-+                    scaled = d
-+                    break
-+        candidates.append(scaled)
-     if not candidates:
-         return fallback
-     smallest = min(candidates)
-@@ -640,6 +661,13 @@
+@@ -116,6 +117,8 @@
+ 
+     With ``divisor_of``, prefer the largest fitting block that divides it, so the
+     page can be scaled to ``divisor_of`` by an integer ratio instead of padded.
++    With ``prefer_multiple_of`` too, prefer among those the largest that is also a
++    multiple of it.
+     """
+     from vllm.v1.attention.backend import MultipleOf
+ 
+@@ -141,6 +144,10 @@
+             if divisor_of % b == 0
+         )
+         if dividing:
++            if prefer_multiple_of:
++                preferred = [b for b in dividing if b % prefer_multiple_of == 0]
++                if preferred:
++                    return max(preferred)
+             return max(dividing)
+     return max(fitting) if fitting else smallest
+ 
+@@ -666,6 +673,15 @@
              # cannot run the primary block start from their smallest block and
              # ``unify`` scales it up by an integer ratio.
              shared_page = vllm_config.cache_config.skip_page_size_padded
 +            # port(kvarn-v2): hybrid without skip layers: pad the drafter's
 +            # SW pages to the mamba/primary page instead of wasting 16-token
 +            # blocks inside 1.8 MB uniform pages (26x overhead).
++            kvarn_padded = False
 +            if shared_page is None and str(
 +                vllm_config.cache_config.cache_dtype
 +            ).startswith("kvarn"):
 +                shared_page = vllm_config.cache_config.mamba_page_size_padded
++                kvarn_padded = shared_page is not None
              # The backend owns its packing
              kv_cache_spec = self.attn_backend.customize_spec(
                  SlidingWindowSpec(
-@@ -660,6 +688,7 @@
+@@ -689,7 +705,15 @@
                  page_budget,
                  block_size,
                  kv_cache_spec,
-+                divisor_of=block_size if shared_page else None,
+-                divisor_of=None if shared_page else block_size,
++                # (kvarn-v2) The drafter's SW page padded to the primary page: its block
++                # must still DIVIDE the primary block, a multiple of 128 first, so the group
++                # stays a divisor of the scheduler block and of prefix_match_unit. The
++                # largest aligned block lands on 432 against a 2176 primary at
++                # DFLASH_TOKENS=7 (and the largest divisor on 272), and CTX=huge + prefix
++                # caching (#179) is then refused: "prefix-cacheable KV cache group block
++                # sizes must be divisible by prefix_match_unit" (128). 0.29 picked 128.
++                divisor_of=block_size if (kvarn_padded or not shared_page) else None,
++                prefer_multiple_of=128 if kvarn_padded else None,
              )
              return SlidingWindowSpec(
                  block_size=sw_block_size,
 diff --git a/model_executor/models/qwen3_dflash.py b/model_executor/models/qwen3_dflash.py
-index 3653418613..dd62170de4 100644
+index 0ca8c3bbf3..64da536533 100644
 --- a/model_executor/models/qwen3_dflash.py
 +++ b/model_executor/models/qwen3_dflash.py
-@@ -231,6 +231,15 @@
+@@ -263,6 +263,15 @@
          )
  
          self.sliding_window = sliding_window
@@ -125,10 +119,10 @@ index 4914fa04db..523ee1aca1 100644
          )
          self.scheduler_block_size = scheduler_block_size
 diff --git a/v1/core/single_type_kv_cache_manager.py b/v1/core/single_type_kv_cache_manager.py
-index bbcec2512a..5c8c66f6e1 100644
+index fa772073a1..b2dfc603cf 100644
 --- a/v1/core/single_type_kv_cache_manager.py
 +++ b/v1/core/single_type_kv_cache_manager.py
-@@ -1191,6 +1191,31 @@
+@@ -1196,6 +1196,31 @@
              num_computed_tokens - self.sliding_window + 1 - self.extra_retained_tokens,
          )
  
@@ -161,10 +155,10 @@ index bbcec2512a..5c8c66f6e1 100644
  class CircularBufferManager(FullAttentionManager):
      """Claims the ring's single block per request; prefix caching disabled."""
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index ba704474e2..968a8d594b 100644
+index 72e82627d1..4aa2c18e37 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -1387,9 +1387,14 @@
+@@ -1457,9 +1457,14 @@
              decode_graph_eligible=decode_graph_eligible,
              max_seq_len_np=max_seq_len_np,
          )
@@ -181,10 +175,10 @@ index ba704474e2..968a8d594b 100644
      def prepare_inputs(
          self,
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index ce4a9289cc..755063fcc7 100644
+index 54356bd5fb..cdcc9aedf2 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-@@ -97,6 +97,9 @@
+@@ -101,6 +101,9 @@
              IS_DRAFTING=True,
              USE_FP64=USE_FP64,
          )
@@ -194,7 +188,7 @@ index ce4a9289cc..755063fcc7 100644
          # vLLM 0.28.0's rejection sampler expects pre-temperature logits. With TRUNCATE
          # the cached row is the truncated proposal (-inf outside the kept support).
          realized = scores
-@@ -260,7 +263,7 @@
+@@ -268,7 +271,7 @@
              device,
              cache_steps=self.num_speculative_steps,
          )
@@ -203,7 +197,7 @@ index ce4a9289cc..755063fcc7 100644
              (self.max_num_reqs, self.draft_block),
              dtype=self.draft_tokens.dtype,
              device=device,
-@@ -752,6 +755,8 @@
+@@ -761,6 +764,8 @@
          scores = self._score_candidates(candidate_ids, unary_logits, hidden_states)
          # The walk writes the drafter's own block into _selector_tokens; it is copied into
          # draft_tokens below, where _apply_lookup can fuse it with the lookup.

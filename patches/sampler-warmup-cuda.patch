@@ -22,18 +22,18 @@ What: registers the V2 runner's top-k/top-p sampler JIT warmups on CUDA too (vll
   #58465's ROCm-only gate): 0 in-request compiles, ~71-78 s of warmup once per cold cache volume,
   ~0.2 s warm
 Upstream: vllm #58092 (merged after 0.30.0)
-Cut-against: 0.33.0: #59260 registers these on CUDA only with speculative decoding; this keeps every CUDA config,
+Cut-against: 0.34.0: #59260 registers these on CUDA only with speculative decoding; this keeps every CUDA config,
   SPEC=off included
 Retires-when: upstream registers the top-k/top-p warmups on every CUDA config (#59260 gates them to speculative
   decoding)
 
---- exported from 2e1c067973 (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 7418c8aaab (sampler-warmup-cuda); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/model_runner.py b/v1/worker/gpu/model_runner.py
-index 0b9ebd177b..47a4e29560 100644
+index f98cab454c..536dc6b560 100644
 --- a/v1/worker/gpu/model_runner.py
 +++ b/v1/worker/gpu/model_runner.py
-@@ -469,17 +469,14 @@
+@@ -487,17 +487,14 @@
              self.vllm_config, self.req_states, self.is_pooling_model, config_processors
          )
          if self.is_last_pp_rank and not self.is_pooling_model:

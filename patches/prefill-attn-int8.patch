@@ -45,16 +45,16 @@ Written against vLLM 0.27.1.
 Kind: feature
 What: int8-QK Triton prefill attention for head_dim 256
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstreamed
 
---- exported from 0452d8fbf5 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 04cea69269 (prefill-attn-int8); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/flash_attn.py b/v1/attention/backends/flash_attn.py
-index 17c0be81b6..4f8c4867fc 100755
+index c54262672a..63f81ab129 100755
 --- a/v1/attention/backends/flash_attn.py
 +++ b/v1/attention/backends/flash_attn.py
-@@ -1401,6 +1401,50 @@
+@@ -1434,6 +1434,50 @@
                  block_table = block_table[:, :num_pages]
                  num_splits = 1
  

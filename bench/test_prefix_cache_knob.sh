@@ -111,4 +111,6 @@ check 0    "$(arg_of $R $AL)"                                  "PREFIX_CACHE uns
 check none "$(arg_of $R $AL PREFIX_CACHE=0)"                   "PREFIX_CACHE=0: retention interval"
 check 0    "$(arg_of $R $AL PREFIX_CACHE=0 EXTRA_ARGS=$ON)"    "PREFIX_CACHE=0, $ON in EXTRA_ARGS: retention interval"
 check none "$(arg_of $R $AL EXTRA_ARGS=$OFF)"                  "$OFF in EXTRA_ARGS: retention interval"
+check 0    "$(arg_of $R $AL KV_OFFLOAD_GB=8)"                  "KV_OFFLOAD_GB=8 (a KV tier): retention interval stays 0"
+check None "$(arg_of $R $AL KV_OFFLOAD_GB=8 PREFIX_RETENTION=)" "KV_OFFLOAD_GB=8, PREFIX_RETENTION= (empty): dense"
 echo; [ $FAILS = 0 ] && echo "all checks passed" || { echo "$FAILS checks FAILED"; exit 1; }

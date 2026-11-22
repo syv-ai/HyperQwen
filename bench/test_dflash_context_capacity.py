@@ -11,12 +11,15 @@ from types import SimpleNamespace as NS
 import unittest
 
 from vllm.config.speculative import SpeculativeConfig
+from vllm.v1.worker.gpu.spec_decode.speculator_config import DraftModelSpeculatorConfig
 
 
 class DFlashCapacityTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        tree = ast.parse(textwrap.dedent(inspect.getsource(SpeculativeConfig.__post_init__)))
+        # vLLM 0.34 builds the draft config in DraftModelSpeculatorConfig.configure() (#63205), which DFlash's config
+        # class inherits; the check runs there, before the draft max_model_len override.
+        tree = ast.parse(textwrap.dedent(inspect.getsource(DraftModelSpeculatorConfig.configure)))
         call = next(n for n in ast.walk(tree) if isinstance(n, ast.If)
                     and isinstance(n.test, ast.Compare)
                     and any(isinstance(c, ast.Constant) and c.value == 'dflash' for c in n.test.comparators)
@@ -27,7 +30,7 @@ class DFlashCapacityTests(unittest.TestCase):
     def select(self, target, capacity=262144, drafts=7, method='dflash'):
         obj = NS(method=method, target_model_config=NS(max_model_len=target),
                  draft_model_config=NS(max_model_len=capacity), num_speculative_tokens=drafts)
-        exec(self.dispatch, dict(self=obj, SpeculativeConfig=SpeculativeConfig))
+        exec(self.dispatch, dict(spec=obj, target=obj.target_model_config, SpeculativeConfig=SpeculativeConfig))
         return obj
 
     def test_shipped_profiles_fit_without_changing_config(self):

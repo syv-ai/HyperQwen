@@ -6,7 +6,7 @@
 #   INT8_ACT=int8 INT8_LAYERS=mlp bash bench/prefill_ab.sh int8-mlp
 #   INT8_ACT=int8 INT8_LAYERS=mlp CHUNK=4096 bash bench/prefill_ab.sh int8-mlp-c4096
 #
-# Rows default to what fits production (DFLASH_TOKENS=15 -> 57344 max):
+# Rows default to what fits production (DFLASH_TOKENS=15 -> 55296 max on 0.34, 57344 before):
 #   ROWS="1024 4096 16384 51200"
 # Results under bench/results-prefill-ab/<arm>/ ; one ROW line per measurement.
 set -u

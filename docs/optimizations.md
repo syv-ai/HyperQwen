@@ -14,7 +14,7 @@ One line each; the rest of this page is the long version.
    embedding kernel (`patches/qwen3_5-embed-quant.patch`).
 3. **16-bit recurrent state** — the GDN state, not the KV cache, is what bounds
    concurrency here: 37 of 64 requests were running before this.
-4. **int8 tensor cores for the batched GEMMs, with a bug fix** — vLLM's W4A8
+4. **int8 tensor cores for the batched GEMMs, with a bug fix** (up to vLLM 0.33: vLLM 0.34 removed Marlin's int8 activations, vllm #65542; see [vllm-0.34.md](vllm-0.34.md)) — vLLM's W4A8
    Marlin path produces garbage on this checkpoint (negative group scales read
    as unsigned); two patches fix it and make it per-layer selectable.
 5. **Cheap speculative drafts, and a draft vocabulary counted over the model's
@@ -34,7 +34,7 @@ One line each; the rest of this page is the long version.
    caching off on 0.27.1, `PREFIX_CACHE=1` made a follow-up chat turn on a 24k
    document cost ~1 s instead of ~23 s, and 64 requests sharing a system prompt
    17 s instead of 222 s.
-10. **int8 prefill for single-user mode** (`INT8_ACT=int8`) — prefill is
+10. **int8 prefill for single-user mode** (`INT8_ACT=int8`) (up to vLLM 0.33: vLLM 0.34 removed Marlin's int8 activations, vllm #65542; see [vllm-0.34.md](vllm-0.34.md)) — prefill is
    compute-bound at every batch size, so the W4A8 tensor-core path is worth
    +27-30% prefill (+19% at 51k) on the dflash2 stack with decode unchanged;
    plus a benchmark-harness fix (seeded prompts) that makes the prefill
@@ -122,6 +122,9 @@ One line each; the rest of this page is the long version.
    222 s → 17 s.
 
 ### int8 prefill for single-user mode (`INT8_ACT=int8`)
+
+Up to vLLM 0.33. vLLM 0.34 removed this path (vllm #65542), and the launchers refuse `INT8_ACT=int8`
+([vllm-0.34.md](vllm-0.34.md)); the measurements below are 0.33's and earlier.
 
 Single-user mode stayed W4A16 because int8 activations buy nothing at batch
 size 1 *decode* — true, and beside the point for prefill, which is

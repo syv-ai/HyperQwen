@@ -18,16 +18,16 @@ Kind: fix
 What: the rejection sampler's draft-token gather kernel no longer recompiles per batch size (num_logits not
   specialized)
 Upstream: vllm #66026 (open)
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: the pin that carries #66026
 
---- exported from c713ee236d (vllm-pr66026-gather-draft-sampled-no-specialize); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 19f8c7d61a (vllm-pr66026-gather-draft-sampled-no-specialize); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/rejection_sampler.py b/v1/worker/gpu/spec_decode/rejection_sampler.py
-index 2200c173ab..6b012ee3c4 100644
+index b85765f6e4..4c15046538 100644
 --- a/v1/worker/gpu/spec_decode/rejection_sampler.py
 +++ b/v1/worker/gpu/spec_decode/rejection_sampler.py
-@@ -74,7 +74,7 @@
+@@ -79,7 +79,7 @@
          tl.store(flat_sampled_ptr + start_idx + i, token_id)
  
  

@@ -59,7 +59,7 @@
 # k+1 recurrent-state slots), and past a handful of concurrent users you
 # should be running batch mode anyway. Int8 activations buy nothing at
 # batch size 1 *decode* (memory-bound) — but prefill is compute-bound at any
-# concurrency, so INT8_ACT below borrows batch mode's W4A8 path for the
+# concurrency, so INT8_ACT below borrowed batch mode's W4A8 path (up to vLLM 0.33) for the
 # prompt-side win; see "Prefill" in ../batch/README.md.
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -131,7 +131,9 @@ MAX_SEQS=${MAX_SEQS:-}
 # the flag entirely, which is what a vLLM tree WITHOUT patches/sse-keep-alive.patch
 # applied needs — the flag does not exist there, and the deploy tree drifts.
 SSE_KEEP_ALIVE=${SSE_KEEP_ALIVE-30}   # no colon: SSE_KEEP_ALIVE= keeps the empty value
-# INT8_ACT=int8 turns on the W4A8 Marlin path (weights stay int4, activations
+# vLLM 0.34 removed this path (vllm #65542): launcher_common.sh refuses INT8_ACT=int8 there.
+# The text and numbers below are 0.33's, kept for the record.
+# INT8_ACT=int8 turned on the W4A8 Marlin path (weights stay int4, activations
 # quantized per token to int8, int8 tensor cores) for the layers INT8_LAYERS
 # selects — the same knob batch mode ships on by default. At batch size 1 it
 # does nothing for decode (memory-bound; C1 122±5 vs 121 tok/s over repeats,
@@ -387,7 +389,10 @@ if [ "$LSA" = 1 ]; then
   export LSA_MAP=${LSA_MAP:-$REPO/models/lsa/$LSA_MAP_NAME}
   [ -f "$LSA_MAP" ] || { echo "LSA=1 needs the distilled map $LSA_MAP: bash lsa/install.sh --map-only" >&2; exit 1; }
   export LSA=1
-  ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head"
+  # The extensible KV cache (vLLM 0.34's default) hands the plugin the whole reserved pool before it commits
+  # pages, and with it on LSA answered a 50k/100k ruler 0/8 and 0/6 with no error (8/8 and 6/6 with it off;
+  # an RTX 3090, 11-19). The plugin refuses it too; this keeps LSA=1 booting.
+  ATTN_ARGS="--attention-backend CUSTOM --kv-cache-dtype int8_per_token_head --disable-extensible-kv-cache"
   PTH_SPEC_BACKEND=',"attention_backend":"CUSTOM"'
   [ -n "$USER_GPU_UTIL" ] || GPU_UTIL=$(awk -v u="$GPU_UTIL" 'BEGIN { printf "%.2f", u - 0.02 }')
   echo "[start_qwen] LSA=1: D-LSA flat on the full-attention layers (lsa/), int8_per_token_head KV on CUSTOM, map $LSA_MAP, GPU_UTIL=$GPU_UTIL" >&2
@@ -545,7 +550,7 @@ if [ "$SPEC" = "dflash2" ]; then
     # Above 7 drafts the aligned state pages grow and one request at 131072 needs 5.6 GiB
     # of KV against the 5.19 GiB pin, so the server refused to start ("estimated maximum
     # model length is 117120", #454). 114688 = 896 x 128 leaves ~2% margin, the same trade
-    # CTX=fast (57344) and CTX=huge (221184) make at DFLASH_TOKENS>7.
+    # CTX=fast (55296 since 0.34) and CTX=huge (221184) make at DFLASH_TOKENS>7.
     if [ "$DRAFT_TOKENS" -gt 7 ]; then
       MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-114688}}
     else
@@ -553,11 +558,14 @@ if [ "$SPEC" = "dflash2" ]; then
     fi
     KV_MEM=${KV_MEM-5583457484}
   elif [ "$DRAFT_TOKENS" -gt 7 ]; then
-    # 4 slots and 56k instead of 8 and 64k: the aligned state pages and the bigger decode
+    # 4 slots and 54k instead of 8 and 64k: the aligned state pages and the bigger decode
     # graphs are what the long block costs, and this is where they still fit next to the
-    # 5.2 GiB pool (57,669 tokens). DFLASH_TOKENS=7 gets 8 slots and 64k back.
+    # 5.2 GiB pool. DFLASH_TOKENS=7 gets 8 slots and 64k back. vLLM 0.34 rounds the hybrid
+    # attention block up to every attention backend's kernel block (480 tokens became 512),
+    # so the same pin holds less: 57344 asked for 5.23 GiB against 5.18 and the engine's
+    # estimate was 56320 (RTX 3090, 11-19). 55296 = 108 x 512 leaves ~2% under that.
     MAX_SEQS=${MAX_SEQS:-4}
-    MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-57344}}
+    MAX_LEN=${DFLASH_MAX_LEN:-${USER_MAX_LEN:-55296}}
     KV_MEM=${KV_MEM-5583457484}
     # Decode graphs are captured for both block lengths (the drafter's and the full verify
     # block), or the short step -- the common one -- runs piecewise and costs 8%. That is
@@ -661,6 +669,10 @@ if [ "$SPEC" = "dflash2" ]; then
   if [ "$RESIDENT_OK" = 1 ]; then
     RESIDENT_STATE_B=$(( 20480 * (3 + DRAFT_TOKENS) + 48 * 128 * 128 * RESIDENT_SSM_B ))
     RESIDENT_BLOCK=$(( 16 * ((RESIDENT_STATE_B + 16 * RESIDENT_TGT - 1) / (16 * RESIDENT_TGT)) ))
+    # vLLM 0.34 rounds the hybrid attention block up to every attention backend's smallest kernel block, which is
+    # 64 tokens on these profiles (RTX 3090 boot logs, 11-19: on all 8 profiles both pins share, 0.34's block is
+    # 0.33's rounded up to 64, e.g. 480 -> 512, 800 -> 832, 1696 -> 1728).
+    RESIDENT_BLOCK=$(( 64 * ((RESIDENT_BLOCK + 63) / 64) ))
     RESIDENT_PAGE=$(( 8 * RESIDENT_BLOCK * (RESIDENT_DFT > RESIDENT_TGT ? RESIDENT_DFT : RESIDENT_TGT) ))
     RESIDENT_POOL=$(( KV_MEM / RESIDENT_PAGE ))
     RESIDENT_STATE=$(( 6 * RESIDENT_PER_GROUP ))
@@ -1039,6 +1051,7 @@ source "$REPO/resolve_api_key.sh" \
   || { echo "start_qwen: cannot source $REPO/resolve_api_key.sh - refusing to boot with an unknown key" >&2; exit 1; }
 resolve_vllm_key
 resolve_bind_host
+qwen_extensible_kv_args
 
 qwen_exec venv/bin/vllm serve "$MODEL" \
   --served-model-name qwen3.8-27b \
@@ -1058,5 +1071,6 @@ qwen_exec venv/bin/vllm serve "$MODEL" \
   --enable-prompt-tokens-details \
   "${METRICS_ARGS[@]}" \
   "${TOOL_ARGS[@]}" \
+  $EKV_ARGS \
   ${EXTRA_ARGS} \
   ${SSE_KEEP_ALIVE:+--sse-keep-alive-interval $SSE_KEEP_ALIVE}

@@ -7,16 +7,16 @@ What: run `profile_run` once before the memory-profiling window, synchronize and
   cache, so a cold compile cache's scratch is not counted as transient peak and the KV cache the
   warm boot grants is not refused
 Upstream: none yet
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstream profiles after warmup
 
---- exported from d275a0341b (memory-profile-after-warmup); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from da0500561a (memory-profile-after-warmup); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu_worker.py b/v1/worker/gpu_worker.py
-index 8724faf406..c68c7f2f21 100644
+index 34eec4b9c9..944966d041 100644
 --- a/v1/worker/gpu_worker.py
 +++ b/v1/worker/gpu_worker.py
-@@ -680,6 +680,18 @@
+@@ -712,6 +712,18 @@
                  getattr(self.parallel_config, "_api_process_count", 1),
              )
  

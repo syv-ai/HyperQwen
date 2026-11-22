@@ -51,16 +51,16 @@ Kind: feature
 What: pad 2-4 token batches of the bf16 GDN `in_proj_ba` GEMM to 5 rows (cuBLAS cliff at
   that shape; MTP-3 verify)
 Upstream: none
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstreamed, or a cuBLAS that picks a sane kernel at M = 2..4
 
---- exported from c513da2e88 (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3d5889c08e (gdn-ba-pad-small-m); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index c69099ea9f..2cad20ed44 100755
+index 09fe50820e..ad0247c2bf 100644
 --- a/envs.py
 +++ b/envs.py
-@@ -132,6 +132,7 @@
+@@ -135,6 +135,7 @@
      VLLM_USE_HW_AGNOSTIC: bool = False
      VLLM_ENABLE_FLA_PACKED_RECURRENT_DECODE: bool = True
      VLLM_GDN_DECODE_KERNEL: Literal["cuda", "triton"] = "cuda"
@@ -68,7 +68,7 @@ index c69099ea9f..2cad20ed44 100755
      VLLM_DISABLE_PYNCCL: bool = False
      VLLM_USE_OINK_OPS: bool = False
      VLLM_MXFP4_EMULATION_DEQUANT_AT_LOAD: bool = False
-@@ -1305,6 +1306,11 @@
+@@ -1365,6 +1366,11 @@
          ["cuda", "triton"],
          case_sensitive=False,
      ),
@@ -81,18 +81,10 @@ index c69099ea9f..2cad20ed44 100755
      "VLLM_DISABLE_PYNCCL": lambda: (
          os.getenv("VLLM_DISABLE_PYNCCL", "False").lower() in ("true", "1")
 diff --git a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-index d9a1ad83a9..3eb14c0019 100644
+index 9d313ad672..d7dbb92ee6 100644
 --- a/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
 +++ b/model_executor/layers/mamba/gdn/qwen_gdn_linear_attn.py
-@@ -33,6 +33,7 @@
-     ColumnParallelLinear,
-     MergedColumnParallelLinear,
-     RowParallelLinear,
-+    UnquantizedLinearMethod,
- )
- from vllm.model_executor.layers.mamba.abstract import (
-     get_mamba_prefill_checkpoint_alignment,
-@@ -728,6 +729,18 @@
+@@ -890,6 +890,18 @@
          if self.speculative_config is not None:
              logger.info_once("GDN spec decode kernel: %s", self.gdn_decode_kernel)
  
@@ -111,19 +103,34 @@ index d9a1ad83a9..3eb14c0019 100644
          compilation_config = get_current_vllm_config().compilation_config
          if prefix in compilation_config.static_forward_context:
              raise ValueError(f"Duplicate layer name: {prefix}")
-@@ -1145,7 +1158,10 @@
+@@ -1311,9 +1323,16 @@
          # Part 1: Input Projection
          # ============================================================
-         mixed_qkvz, _ = self.in_proj_qkvz(hidden_states)
--        ba, _ = self.in_proj_ba(hidden_states)
-+        if self.ba_proj_pad_small_m:
-+            ba = torch.ops.vllm.gdn_ba_proj(hidden_states, self.in_proj_ba.weight)
-+        else:
-+            ba, _ = self.in_proj_ba(hidden_states)
- 
-         use_fused_gdn_spec_decode = (
-             self.enable_fused_gdn_spec_decode
-@@ -2310,3 +2326,30 @@
+         qkvz_in = hidden_states if qkvz_input is None else qkvz_input
++
++        def _ba() -> torch.Tensor:
++            # gdn-ba-pad-small-m: 2-4 token batches of the bf16 ba GEMM padded to 5 rows.
++            if self.ba_proj_pad_small_m:
++                return torch.ops.vllm.gdn_ba_proj(hidden_states, self.in_proj_ba.weight)
++            return self.in_proj_ba(hidden_states)[0]
++
+         if self._ba_stream is None:
+             mixed_qkvz, _ = self.in_proj_qkvz(qkvz_in)
+-            ba, _ = self.in_proj_ba(hidden_states)
++            ba = _ba()
+         else:
+             # Hide the tiny ba GEMM on the aux stream. Only under CUDA graph
+             # capture: eagerly the stream switch costs more host time than it
+@@ -1322,7 +1341,7 @@
+             start, done = self._ba_events
+             mixed_qkvz, (ba,) = execute_in_parallel(
+                 lambda: self.in_proj_qkvz(qkvz_in)[0],
+-                [lambda: self.in_proj_ba(hidden_states)[0]],
++                [_ba],
+                 start,
+                 [done],
+                 [self._ba_stream],
+@@ -2588,3 +2607,30 @@
      op_func=qwen_gdn_attention_core_fused_norm_packed,
      mutates_args=["core_attn_out"],
  )
