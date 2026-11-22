@@ -67,6 +67,8 @@ jobs:
         run: bash bench/test_alt_wsl_gpu_util.sh
       - name: Check every launcher turns vLLM 0.34's extensible KV cache off unless EXTRA_ARGS names it, and batch's fp8 GPU_UTIL is 0.93
         run: bash bench/test_extensible_kv_default.sh
+      - name: Check the extensible KV stress report distinguishes unavailable telemetry from zero
+        run: python bench/test_ekv_stress.py
       - name: Check Vision limits, tower offload and boolean controls in every launcher without a GPU
         run: python bench/test_vision_knobs.py
       - name: Check the dflash2 seat note against the measured pools and resident counts
