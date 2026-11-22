@@ -13,9 +13,10 @@ Phases:
   2 reuse: turn 2 of round 3's two long prompts (the prompt, its answer, a follow-up); prints cached_tokens.
   3 burst: 16 requests at concurrency 4, alternating 4-image prompts and ~6k-token text prompts (128 out).
 Prints one line per request, then a summary: errors, HTTP status counts, peak card MiB, peak
-kv_cache_usage_perc, and turn-2 cached share. Exit 1 if any request failed.
+kv_cache_usage_perc, and turn-2 cached share. Exit 1 if any request failed, or 2 if requests
+passed but either telemetry source produced no usable samples.
 """
-import base64, json, os, random, struct, subprocess, sys, threading, time, urllib.error, urllib.request, zlib
+import base64, http.client, json, math, os, random, struct, subprocess, sys, threading, time, urllib.error, urllib.request, zlib
 
 sys.stdout.reconfigure(encoding="utf-8")
 TAG, PORT = sys.argv[1], int(sys.argv[2])
@@ -56,26 +57,46 @@ def png(w, h, seed):
     return "data:image/png;base64," + base64.b64encode(data).decode()
 
 
-samples = {"mib": 0, "kv": 0.0}
-stop = False
+samples = {"mib": None, "kv": None}
+stop = threading.Event()
+
+
+def record_peak(name, value):
+    if math.isfinite(value) and (samples[name] is None or value > samples[name]):
+        samples[name] = value
+
+
+def sample_kv(text):
+    metric = "vllm:kv_cache_usage_perc"
+    for line in text.splitlines():
+        if line.startswith(metric + "{"):
+            fields = line.rpartition("}")[2].split()
+        else:
+            fields = line.split(maxsplit=1)
+            if len(fields) != 2 or fields[0] != metric:
+                continue
+            fields = fields[1].split()
+        if fields:
+            try:
+                record_peak("kv", float(fields[0]))
+            except ValueError:
+                continue
 
 
 def sampler():
-    while not stop:
+    while not stop.is_set():
         try:
             m = int(subprocess.run(["nvidia-smi", "-i", GPU, "--query-gpu=memory.used", "--format=csv,noheader,nounits"],
-                                   capture_output=True, text=True, timeout=10).stdout.strip())
-            samples["mib"] = max(samples["mib"], m)
-        except Exception:
+                                   capture_output=True, text=True, timeout=10, check=True).stdout.strip())
+            record_peak("mib", m)
+        except (OSError, ValueError, subprocess.SubprocessError):
             pass
         try:
-            t = urllib.request.urlopen(urllib.request.Request(B + "/metrics", headers=H), timeout=10).read().decode()
-            for line in t.splitlines():
-                if line.startswith("vllm:kv_cache_usage_perc"):
-                    samples["kv"] = max(samples["kv"], float(line.rsplit(" ", 1)[1]))
-        except Exception:
+            with urllib.request.urlopen(urllib.request.Request(B + "/metrics", headers=H), timeout=10) as response:
+                sample_kv(response.read().decode())
+        except (OSError, UnicodeError, http.client.HTTPException):
             pass
-        time.sleep(0.5)
+        stop.wait(0.5)
 
 
 results = []
@@ -119,7 +140,8 @@ def image_msg(n, seed, question):
     return [{"role": "user", "content": parts + [{"type": "text", "text": question}]}]
 
 
-threading.Thread(target=sampler, daemon=True).start()
+monitor = threading.Thread(target=sampler, daemon=True)
+monitor.start()
 LONG_WORDS = int(os.environ.get("LONG_WORDS", "49000"))  # about 58k tokens with Qwen3.8's tokenizer (40000 words = 47,255)
 long_last = []
 for rnd in (1, 2, 3):
@@ -151,14 +173,19 @@ for i in range(16):
         burst.append((f"burst{i}", [{"role": "user", "content": f"[{TAG}-b{i}] Summarize:\n\n" + text(4500, f"b{i}")}], 128, {}))
 for i in range(0, 16, 4):
     run_parallel(burst[i:i + 4])
-stop = True
-time.sleep(1)
+stop.set()
+monitor.join()
 
 bad = [r for r in results if r["status"] != 200]
 codes = {}
 for r in results:
     codes[r["status"]] = codes.get(r["status"], 0) + 1
-shares = [f"{r['cached']}/{r['prompt']}" for r in results if r["name"].startswith("reuse")]
-print(f"[{TAG}] SUMMARY requests {len(results)} failed {len(bad)} status {codes} peak_card_MiB {samples['mib']} "
-      f"peak_kv_usage {samples['kv']:.3f} turn2_cached {shares}", flush=True)
-sys.exit(1 if bad else 0)
+shares = [
+    f"{r['cached']}/{r['prompt']}" if r["status"] == 200 else "unavailable"
+    for r in results if r["name"].startswith("reuse")
+]
+peak_mib = "unavailable" if samples["mib"] is None else samples["mib"]
+peak_kv = "unavailable" if samples["kv"] is None else f"{samples['kv']:.3f}"
+print(f"[{TAG}] SUMMARY requests {len(results)} failed {len(bad)} status {codes} peak_card_MiB {peak_mib} "
+      f"peak_kv_usage {peak_kv} turn2_cached {shares}", flush=True)
+sys.exit(1 if bad else 2 if None in samples.values() else 0)
