@@ -8,6 +8,7 @@ target matching, so the layers INT8_LAYERS names get int8 per-token activations 
 import copy
 import json
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -63,6 +64,19 @@ check("mlp: ignore list and top-level keys unchanged",
       and {k: v for k, v in ov.items() if k != "config_groups"}
       == {k: v for k, v in CONFIG["quantization_config"].items() if k != "config_groups"})
 
+regex_cases = ("(?i)MLP", "(?i)^MODEL", "(?x) mlp # target the MLP", "(?x) # comment\n (?i) MLP # trailing",
+               "(?# start)(?i)MLP", r"(?i)(mlp)\.\1$")
+layer_names = ("model.language_model.layers.0.mlp.gate_up_proj", "model.layers.0.self_attn.qkv_proj",
+               "model.layers.0.mlp.MLP", "lm_head")
+for layers in regex_cases:
+    rc, out, err = run(CONFIG, layers)
+    target = json.loads(out)["quantization_config"]["config_groups"]["group_int8_act"]["targets"][0] if rc == 0 else ""
+    try:
+        same_matches = all(bool(re.match(target[3:], name)) == bool(re.search(layers, name)) for name in layer_names)
+    except re.error:
+        same_matches = False
+    check(f"{layers!r}: generated target preserves layer-name search", rc == 0 and same_matches, target or err)
+
 refusals = [
     ("no config.json", None, "mlp"),
     ("not compressed-tensors", {"quantization_config": {"quant_method": "gptq"}}, "mlp"),
@@ -72,6 +86,7 @@ refusals = [
          "group_0": dict(CONFIG["quantization_config"]["config_groups"]["group_0"],
                          input_activations={"num_bits": 8, "type": "int"})})}, "mlp"),
     ("an invalid regex", CONFIG, "("),
+    ("incompatible regex flags", CONFIG, "(?a)(?u)mlp"),
     ("empty INT8_LAYERS", CONFIG, ""),
 ]
 for name, config, layers in refusals:
@@ -91,8 +106,8 @@ try:
 except ImportError as e:
     print(f"skip vLLM matching ({e})")
 else:
-    for layers, want_int8 in (("mlp", {"model.language_model.layers.0.mlp.gate_up_proj",
-                                        "model.language_model.layers.0.mlp.down_proj"}),
+    mlp_layers = {"model.language_model.layers.0.mlp.gate_up_proj", "model.language_model.layers.0.mlp.down_proj"}
+    for layers, want_int8 in (("mlp", mlp_layers), ("(?i)MLP", mlp_layers), ("(?x) mlp # MLP", mlp_layers),
                               (".", {"model.language_model.layers.0.mlp.gate_up_proj",
                                      "model.language_model.layers.0.mlp.down_proj",
                                      "model.language_model.layers.3.self_attn.qkv_proj",

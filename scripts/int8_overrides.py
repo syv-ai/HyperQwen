@@ -28,6 +28,22 @@ def fail(msg):
     sys.exit(2)
 
 
+def search_target(layers):
+    try:
+        flags = re.compile(layers).flags
+        leading = r"\(\?[aiLmsux]+\)|\(\?#(?:\\[\s\S]|[^\\)])*\)"
+        newline = ""
+        if flags & re.VERBOSE:
+            leading += r"|[ \t\n\r\v\f]+|#[^\n]*(?:\n|$)"
+            newline = "\n"
+        prefix = re.match(f"(?:{leading})*", layers)[0]
+        pattern = f"{prefix}{newline}.*(?:{layers[len(prefix):]}{newline}).*"
+        re.compile(pattern)
+    except (re.error, ValueError) as e:
+        fail(f"INT8_LAYERS={layers!r} is not a regex: {e}")
+    return f"re:{pattern}"
+
+
 def overrides(config, layers):
     q = config.get("quantization_config")
     if not isinstance(q, dict) or q.get("quant_method") != "compressed-tensors":
@@ -44,15 +60,12 @@ def overrides(config, layers):
         fail(f"the Linear group's weights are not static int ({w.get('type')!r})")
     if base.get("input_activations") is not None:
         fail("the Linear group already declares input activations; nothing to add")
-    try:
-        re.compile(layers)
-    except re.error as e:
-        fail(f"INT8_LAYERS={layers!r} is not a regex: {e}")
+    target = search_target(layers)
     q = copy.deepcopy(q)
     name = "group_int8_act"
     while name in q["config_groups"]:
         name += "_"
-    q["config_groups"][name] = dict(copy.deepcopy(base), targets=[f"re:.*(?:{layers}).*"], input_activations=ACT)
+    q["config_groups"][name] = dict(copy.deepcopy(base), targets=[target], input_activations=ACT)
     return {"quantization_config": q}
 
 
