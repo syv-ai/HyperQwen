@@ -44,13 +44,13 @@ Kind: feature
 What: daemon thread warns once per episode when no step completes for `VLLM_ENGINE_STALL_SENTINEL_S`
   while requests are live
 Upstream: upstream PR (syv-ai #94/#110)
-Cut-against: 0.33.0: envs.py beside upstream's VLLM_CHAT_TEMPLATE_FUEL
+Cut-against: 0.34.0: envs.py beside upstream's VLLM_CHAT_TEMPLATE_FUEL
 Retires-when: upstreamed
 
---- exported from 94b511cdd2 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 2dabc99389 (engine-stall-sentinel); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/envs.py b/envs.py
-index ccf193bf9e..d58f8ac6a1 100755
+index bbda2a3d96..2fc7585dbb 100644
 --- a/envs.py
 +++ b/envs.py
 @@ -26,6 +26,7 @@
@@ -61,7 +61,7 @@ index ccf193bf9e..d58f8ac6a1 100755
      VLLM_API_KEY: str | None = None
      VLLM_DEBUG_LOG_API_SERVER_RESPONSE: bool = False
      S3_ACCESS_KEY_ID: str | None = None
-@@ -864,6 +865,11 @@
+@@ -912,6 +913,11 @@
      "LOCAL_RANK": lambda: int(os.environ.get("LOCAL_RANK", "0")),
      # used to control the visible devices in the distributed setting
      "CUDA_VISIBLE_DEVICES": lambda: os.environ.get("CUDA_VISIBLE_DEVICES", None),
@@ -74,10 +74,10 @@ index ccf193bf9e..d58f8ac6a1 100755
      # during startup. Default is 600 seconds (10 minutes).
      "VLLM_ENGINE_READY_TIMEOUT_S": lambda: int(
 diff --git a/v1/engine/core.py b/v1/engine/core.py
-index 181900a2d2..e29ab13b0f 100644
+index 0d68457f60..ab7cc79872 100644
 --- a/v1/engine/core.py
 +++ b/v1/engine/core.py
-@@ -118,6 +118,68 @@
+@@ -126,6 +126,68 @@
  _R = TypeVar("_R")  # Return type for collective_rpc
  
  
@@ -146,7 +146,7 @@ index 181900a2d2..e29ab13b0f 100644
  class EngineCore:
      """Inner loop of vLLM's Engine."""
  
-@@ -1237,6 +1299,24 @@
+@@ -1404,6 +1466,24 @@
                  internal_dp_balancing,
              )
  
@@ -171,7 +171,7 @@ index 181900a2d2..e29ab13b0f 100644
              # Initialize fault tolerance settings.
              self.enable_fault_tolerance = (
                  vllm_config.parallel_config.enable_fault_tolerance
-@@ -1686,6 +1766,8 @@
+@@ -1863,6 +1943,8 @@
              self.output_queue.put_nowait(output)
          # Post-step hook.
          self.post_step(model_executed)

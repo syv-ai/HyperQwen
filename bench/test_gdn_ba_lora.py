@@ -50,12 +50,15 @@ class GdnBaTests(unittest.TestCase):
                           and isinstance(n.targets[0], ast.Attribute) and n.targets[0].attr == "ba_proj_pad_small_m")
         cls.gate_code = compile(ast.Expression(assignment.value), str(path), "eval")
         forward = next(n for n in layer.body if isinstance(n, ast.FunctionDef) and n.name == "forward_cuda")
-        branch = next(n for n in forward.body if isinstance(n, ast.If)
-                      and isinstance(n.test, ast.Attribute) and n.test.attr == "ba_proj_pad_small_m")
+        # On vLLM 0.34 the selection is forward_cuda's local _ba(), used on both of upstream's paths (with and
+        # without the aux-stream overlap); its body returns the projection.
+        local = next(n for n in ast.walk(forward) if isinstance(n, ast.FunctionDef) and n.name == "_ba")
+        assert any(isinstance(n, ast.If) and isinstance(n.test, ast.Attribute)
+                   and n.test.attr == "ba_proj_pad_small_m" for n in local.body)
         project = ast.FunctionDef(name="project", args=ast.arguments(posonlyargs=[],
                                   args=[ast.arg(arg="self"), ast.arg(arg="hidden_states")],
                                   kwonlyargs=[], kw_defaults=[], defaults=[]),
-                                  body=[branch, ast.Return(ast.Name(id="ba", ctx=ast.Load()))], decorator_list=[])
+                                  body=list(local.body), decorator_list=[])
         functions = [n for n in tree.body if isinstance(n, ast.FunctionDef)
                      and n.name in ("gdn_ba_proj", "gdn_ba_proj_fake")]
         getter_tree = ast.parse((root / "lora/layers/base.py").read_text(encoding="utf-8"))

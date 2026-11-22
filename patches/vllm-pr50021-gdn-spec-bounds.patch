@@ -9,16 +9,16 @@ drafts and async scheduling is off, got a zeroed conv output on every GDN layer 
 Kind: backport
 What: bounds checks in GDN/KDA spec-decode state lookups
 Upstream: vllm #50021 (open)
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: the pin that carries #50021
 
---- exported from e96a1cb08a (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 5965504b43 (vllm-pr50021-gdn-spec-bounds); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/layers/mamba/ops/causal_conv1d.py b/model_executor/layers/mamba/ops/causal_conv1d.py
-index 2094df902a..76f0d0f70b 100644
+index d440fd07bc..e8f234896d 100644
 --- a/model_executor/layers/mamba/ops/causal_conv1d.py
 +++ b/model_executor/layers/mamba/ops/causal_conv1d.py
-@@ -702,6 +702,7 @@
+@@ -834,6 +834,7 @@
                  tl.extra.cuda.gdc_launch_dependents()
              return
  
@@ -26,7 +26,7 @@ index 2094df902a..76f0d0f70b 100644
      if IS_VARLEN:
          query_start_index = tl.load(query_start_loc_ptr + idx_seq).to(tl.int64)
          query_end_index = tl.load(query_start_loc_ptr + (idx_seq + 1)).to(tl.int64)
-@@ -735,9 +736,24 @@
+@@ -867,9 +868,24 @@
          # - accept 1 tokens: [history2, ..., historyM, draft1]
          # - accept 2 tokens: [history3, ..., historyM, draft1, draft2]
          # - and so on.
@@ -55,10 +55,10 @@ index 2094df902a..76f0d0f70b 100644
          conv_state_token_offset = 0
  
 diff --git a/model_executor/layers/mamba/ops/mamba_ssm.py b/model_executor/layers/mamba/ops/mamba_ssm.py
-index 0f2041d226..969558d12d 100644
+index b723ba9cc2..41d02d9e47 100644
 --- a/model_executor/layers/mamba/ops/mamba_ssm.py
 +++ b/model_executor/layers/mamba/ops/mamba_ssm.py
-@@ -332,7 +332,15 @@
+@@ -333,7 +333,15 @@
      if HAS_STATE_BATCH_INDICES:
          if IS_SPEC_DECODING:
              num_accepted = tl.load(num_accepted_tokens_ptr + pid_b).to(tl.int64)
@@ -74,7 +74,7 @@ index 0f2041d226..969558d12d 100644
          else:
              init_token_idx = 0
  
-@@ -346,9 +354,17 @@
+@@ -347,9 +355,17 @@
                  dst_state_batch_idx * stride_state_batch + pid_h * stride_state_head
              )
  
@@ -96,7 +96,7 @@ index 0f2041d226..969558d12d 100644
          state_ptr += state_batch_idx * stride_state_batch + pid_h * stride_state_head
      else:
 diff --git a/third_party/flash_linear_attention/ops/fused_recurrent.py b/third_party/flash_linear_attention/ops/fused_recurrent.py
-index 2f3997e995..2999473898 100644
+index 7de8e40c2f..9eb3225ffb 100644
 --- a/third_party/flash_linear_attention/ops/fused_recurrent.py
 +++ b/third_party/flash_linear_attention/ops/fused_recurrent.py
 @@ -108,11 +108,29 @@

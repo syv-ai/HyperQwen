@@ -3,7 +3,8 @@
 Output: data/gen.jsonl lines {"id","src","think","prompt_ids","output_ids","finish"}.
 Resumable: skips ids already present in the output file.
 
-  VLLM_MARLIN_INPUT_DTYPE=int8 VLLM_MARLIN_INT8_INCLUDE_RE=mlp python gen_data.py [--limit N] [--chunk 512]
+  python gen_data.py [--limit N] [--chunk 512]
+(the 5.4M-token run set VLLM_MARLIN_INPUT_DTYPE=int8 VLLM_MARLIN_INT8_INCLUDE_RE=mlp on vLLM 0.33 or earlier; 0.34 rejects them)
 """
 import json, os, sys, time
 HERE = os.path.dirname(os.path.abspath(__file__)); REPO = os.path.dirname(HERE)

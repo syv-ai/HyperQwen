@@ -5,14 +5,14 @@ num_tokens_across_dp from the base.
 Kind: feature
 What: quantized candidate chains for the drafter; `propose` override
 Upstream: none
-Cut-against: 0.33.0: #61161 (per-step draws) changed the shared sampler's seed, which chains reaches through seeds;
+Cut-against: 0.34.0: #61161 (per-step draws) changed the shared sampler's seed, which chains reaches through seeds;
   prepare_context_anchor now takes (num_reqs, query_start_loc, num_rejected)
 Retires-when: upstreamed
 
---- exported from ac8403718c (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 457a9b2003 (dflash2-ngram-chains); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/worker/gpu/spec_decode/dflash2/speculator.py b/v1/worker/gpu/spec_decode/dflash2/speculator.py
-index 0bc1042ec5..6c060c021b 100644
+index 442b1a4400..b788b59a6d 100644
 --- a/v1/worker/gpu/spec_decode/dflash2/speculator.py
 +++ b/v1/worker/gpu/spec_decode/dflash2/speculator.py
 @@ -1,7 +1,7 @@
@@ -33,10 +33,10 @@ index 0bc1042ec5..6c060c021b 100644
 +    DFlashSpeculator,
 +    prepare_dflash_inputs,
 +)
- 
- logger = init_logger(__name__)
- from vllm.v1.worker.gpu.spec_decode.dflash2.lookup import (
-@@ -347,6 +350,48 @@
+ from vllm.v1.worker.gpu.spec_decode.draft_logits import (
+     DraftLogitsCache,
+     draft_logits_row,
+@@ -355,6 +358,48 @@
          self._lookup_sticky = envs.VLLM_DFLASH2_LOOKUP_STICKY
          self._sticky = 0
  
@@ -85,7 +85,7 @@ index 0bc1042ec5..6c060c021b 100644
          if self._lookup:
              logger.info(
                  "DFlash2 lookup-augmented drafting on (k=%d nmin=%d nmax=%d nstrong=%d "
-@@ -369,6 +414,11 @@
+@@ -377,6 +422,11 @@
          unanimity across the batch. Below CHEAP_CTX tokens of context an extra verify
          position is nearly free (+6% per step at 1.5k against +27% at 25k), so there the
          flag alone is enough."""
@@ -97,7 +97,7 @@ index 0bc1042ec5..6c060c021b 100644
          if not self._adaptive:
              return None
          emitted = getattr(self, "last_num_emitted", None)
-@@ -406,6 +456,257 @@
+@@ -414,6 +464,258 @@
          self._prev_want = want
          return self.num_speculative_steps if long_block else self.draft_block
  
@@ -336,15 +336,16 @@ index 0bc1042ec5..6c060c021b 100644
 +            return self.draft_tokens[:num_reqs]
 +        block_k = triton.next_power_of_2(self.top_k)
 +        _point_mass_draft_logits_kernel[(num_reqs * k,)](
-+            draft_logits,
++            draft_logits.values,
 +            self.candidate_sampler.cached_candidate_ids,
 +            self.draft_tokens,
 +            self.draft_tokens.stride(0),
 +            self._lookup_use,
 +            self.sample_idx_mapping,
 +            self.draft_block,
-+            draft_logits.stride(0),
-+            draft_logits.stride(1),
++            draft_logits.row_mapping,
++            draft_logits.values.stride(0),
++            draft_logits.values.stride(1),
 +            num_steps=k,
 +            top_k=self.top_k,
 +            BLOCK_K=block_k,
@@ -355,7 +356,7 @@ index 0bc1042ec5..6c060c021b 100644
      def set_req_states(self, req_states) -> None:
          """The token history the lookup matches against (set by the model runner)."""
          self._req_states = req_states
-@@ -418,6 +719,10 @@
+@@ -426,6 +728,10 @@
      def set_sampling_states(self, sampling_states) -> None:
          self._req_top_p = sampling_states.top_p.gpu
          self._req_top_k = sampling_states.top_k.gpu
@@ -366,7 +367,7 @@ index 0bc1042ec5..6c060c021b 100644
  
      def _generate_draft(
          self,
-@@ -549,3 +854,16 @@
+@@ -558,3 +864,16 @@
              BLOCK_K=block_k,
              num_warps=1,
          )

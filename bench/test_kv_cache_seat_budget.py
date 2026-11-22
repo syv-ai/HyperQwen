@@ -153,9 +153,12 @@ class Behaviour(unittest.TestCase):
             draft = root/"models/Qwen3.8-27B-DFlash2-W4A16"
             draft.mkdir(parents=True)
             (draft/"model.safetensors").touch()
-            for k, block, pool, kv, depth in [(7,448,380,"bfloat16",2), (7,864,382,"int8_per_token_head",2),
-                                              (3,816,404,"int8_per_token_head",2), (1,800,412,"int8_per_token_head",2),
-                                              (7,880,387,"fp8",2), (7,448,380,"bfloat16",1)]:
+            # Engine blocks as vLLM 0.34 sets them: 0.33's rounded up to the 64-token kernel-block alignment
+            # (platforms/interface.py backend_block_alignment; 864, 816, 800 and 880 were 0.33's), which the
+            # launcher's estimate now applies too.
+            for k, block, pool, kv, depth in [(7,448,380,"bfloat16",2), (7,896,382,"int8_per_token_head",2),
+                                              (3,832,404,"int8_per_token_head",2), (1,832,412,"int8_per_token_head",2),
+                                              (7,896,387,"fp8",2), (7,448,380,"bfloat16",1)]:
                 with self.subTest(k=k, kv=kv, depth=depth):
                     dtype = torch.int8 if kv.startswith("int8") else torch.bfloat16
                     page = 8*block*({"bfloat16":4096,"int8_per_token_head":2112,"fp8":2048}[kv])

@@ -1,0 +1,59 @@
+HummingLinearKernel called prepare_humming_linear_layer_config with the default allow_input_schema_fallback=True, and
+check_and_fallback_input_schema then returns a 16-bit input schema for 8-bit activations on groupwise weights
+("prefer wna16 for groupwise weight or groupwise input"). An int8 activation config that a checkpoint declares
+explicitly (CompressedTensorsWNA8Int) was therefore served as W4A16, silently. On the int4 g128 Qwen3.8-27B
+checkpoint at 64 concurrent requests on an RTX 3090 the int8 path is the faster one: 1,119 tok/s against 790 at
+128/512, for +1.04% perplexity. A layer with an input quant config now passes allow_input_schema_fallback=False,
+so the schema it asked for is the one built (an incompatible pair raises in Humming instead of falling back), and
+the first layer config built for each activation dtype is logged ("Humming layer config: a_dtype=int8").
+
+Kind: fix
+What: the Humming linear kernel honours an explicit int8 input quant config (input-schema fallback off for it),
+  where Humming's groupwise heuristic served it 16-bit, and logs the first layer config per activation dtype;
+  INT8_ACT=int8 rides on this and wna8-int-humming-kernel
+Upstream: none yet; upstream main warns on that fallback and forbids it under VLLM_STRICT_QUANT_SCHEME=1 (#59460)
+Cut-against: 0.34.0
+Retires-when: upstream honours an explicit input quant config
+
+--- exported from a2388482a4 (humming-explicit-input-schema); regenerate with scripts/export-patch.sh, do not edit ---
+
+diff --git a/model_executor/kernels/linear/mixed_precision/humming.py b/model_executor/kernels/linear/mixed_precision/humming.py
+index 6d6933776d..34d294360e 100644
+--- a/model_executor/kernels/linear/mixed_precision/humming.py
++++ b/model_executor/kernels/linear/mixed_precision/humming.py
+@@ -14,6 +14,11 @@
+ 
+ from .MPLinearKernel import MPLinearKernel, MPLinearLayerConfig
+ 
++from vllm.logger import init_logger
++
++logger = init_logger(__name__)
++_A_DTYPES_SEEN: set[str] = set()
++
+ # Per-token activation quantization requested through `act_type`.
+ _ACT_QUANT_KEYS = {
+     torch.int8: kInt8DynamicTokenSym,
+@@ -65,12 +70,23 @@
+         input_schema = None
+         if (act_key := _ACT_QUANT_KEYS.get(self.config.act_type)) is not None:
+             input_schema = quant_key_to_input_schema(act_key)
++        # An explicit input quant config (CompressedTensorsWNA8Int) is honoured: with fallback allowed, Humming's
++        # check_and_fallback_input_schema returns a 16-bit input schema for int8 activations on groupwise weights.
+         self.layer_config = prepare_humming_linear_layer_config(
+             layer,
+             quant_config,
+             input_quant_config=input_quant_config,
+             input_schema=input_schema,
++            allow_input_schema_fallback=input_quant_config is None and input_schema is None,
+         )
++        a_dtype = str(getattr(self.layer_config, "a_dtype", None))
++        if a_dtype not in _A_DTYPES_SEEN:
++            _A_DTYPES_SEEN.add(a_dtype)
++            logger.info(
++                "Humming layer config: a_dtype=%s (input quant config %s)",
++                a_dtype,
++                "set" if input_quant_config is not None else "none",
++            )
+         self.compute_config = get_humming_linear_compute_config()
+         self.locks = create_humming_locks(layer.weight.device)
+ 

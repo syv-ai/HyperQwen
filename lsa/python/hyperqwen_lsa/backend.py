@@ -236,6 +236,13 @@ class LsaAttentionImpl(BaseImpl):
         from vllm.config import get_current_vllm_config
         # Only the constructor runs inside set_current_vllm_config; forward does not.
         self._lsa_vllm_config = get_current_vllm_config()
+        cache_config = getattr(self._lsa_vllm_config, "cache_config", None)
+        if getattr(cache_config, "enable_extensible_kv_cache", False):
+            # The tables follow the cache tensor they are handed, and an extensible cache hands them its whole
+            # reserved range before it commits pages: on vLLM 0.34 a 50k/100k ruler then read 0/8 and 0/6 with
+            # no error, against 8/8 and 6/6 with the cache off.
+            raise RuntimeError("LSA cannot run on vLLM's extensible KV cache (it serves wrong answers there); "
+                               "pass --disable-extensible-kv-cache, as single-user/start_qwen.sh LSA=1 does")
 
     def _lsa_setup(self, layer, kv_cache: torch.Tensor) -> core.LayerTables | None:
         """The layer's tables, sized to the cache it is handed; None if the layer is not indexed.

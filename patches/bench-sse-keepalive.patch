@@ -22,17 +22,17 @@ What: `vllm bench serve` no longer fails a request whose server sends an SSE kee
   (`run_benchmarks.sh --long` read zeros; #216 lost its 48k+ rows). The audio request function also
   skips SSE comments now
 Upstream: none yet
-Cut-against: 0.33.0: #51172 passes chunks unstripped upstream; what is left is the audio function's skip of SSE
+Cut-against: 0.34.0: #51172 passes chunks unstripped upstream; what is left is the audio function's skip of SSE
   comments
 Retires-when: upstream skips SSE comments in async_request_openai_audio (#51172 carries the rest)
 
---- exported from b7080c4a1b (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from a41c193d8c (bench-sse-keepalive); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/benchmarks/lib/endpoint_request_func.py b/benchmarks/lib/endpoint_request_func.py
-index 442b8fa53a..bfdaced5d3 100644
+index 51c738d14b..48c66801b5 100644
 --- a/benchmarks/lib/endpoint_request_func.py
 +++ b/benchmarks/lib/endpoint_request_func.py
-@@ -759,6 +759,10 @@
+@@ -779,6 +779,10 @@
                          for message in messages:
                              if type(message) is bytes:
                                  message = message.decode("utf-8")

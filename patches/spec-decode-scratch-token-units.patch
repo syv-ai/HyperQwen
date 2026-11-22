@@ -95,14 +95,14 @@ VERIFICATION
 Kind: own
 What: mq3d scratch sized in tokens, not sequences (fork #46, #57)
 Upstream: none
-Cut-against: 0.33.0: #56148 gave upstream its own multi-query 3D path (q <= 8, not INT4) over the same scratch;
+Cut-against: 0.34.0: #56148 gave upstream its own multi-query 3D path (q <= 8, not INT4) over the same scratch;
   within-budget's plan covers both readers
 Retires-when: rides with mq3d
 
---- exported from 95d2242620 (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 55ee3c67ca (spec-decode-scratch-token-units); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/attention/backends/triton_attn.py b/v1/attention/backends/triton_attn.py
-index 86aa8c12ef..4722fa2057 100644
+index e358d7179f..6bec315127 100644
 --- a/v1/attention/backends/triton_attn.py
 +++ b/v1/attention/backends/triton_attn.py
 @@ -62,6 +62,10 @@
@@ -144,7 +144,7 @@ index 86aa8c12ef..4722fa2057 100644
              speculative_config is not None
              and kv_cache_spec.kv_quant_mode != KVQuantMode.INT4_PER_TOKEN_HEAD
 @@ -178,24 +189,71 @@
-                 2 if speculative_config.parallel_drafting else 1
+                 2 if speculative_config.speculator_config.parallel_drafting else 1
              )
              max_query_len_3d = min(query_len, MAX_3D_QUERY_LEN)
 -        # Scratch is indexed by query token, including verification tokens.
@@ -264,7 +264,7 @@ index 86aa8c12ef..4722fa2057 100644
              num_par_softmax_segments=self.num_par_softmax_segments,
              softmax_segm_output=self.softmax_segm_output,
              softmax_segm_max=self.softmax_segm_max,
-@@ -692,6 +765,8 @@
+@@ -695,6 +768,8 @@
          block_table = attn_metadata.block_table
  
          seq_threshold_3D = attn_metadata.seq_threshold_3D
@@ -273,7 +273,7 @@ index 86aa8c12ef..4722fa2057 100644
          num_par_softmax_segments = attn_metadata.num_par_softmax_segments
          softmax_segm_output = attn_metadata.softmax_segm_output
          softmax_segm_max = attn_metadata.softmax_segm_max
-@@ -757,6 +832,8 @@
+@@ -760,6 +835,8 @@
              k_descale=k_descale,
              v_descale=v_descale,
              seq_threshold_3D=seq_threshold_3D,
@@ -459,10 +459,10 @@ index a9231396be..626bc9d6c0 100644
          softmax_segm_output=softmax_segm_output,
          softmax_segm_max=softmax_segm_max,
 diff --git a/v1/attention/ops/triton_unified_attention.py b/v1/attention/ops/triton_unified_attention.py
-index c8b6d680c8..a081f87cc1 100644
+index f918875bf1..718f6f17e0 100644
 --- a/v1/attention/ops/triton_unified_attention.py
 +++ b/v1/attention/ops/triton_unified_attention.py
-@@ -864,6 +864,8 @@
+@@ -978,6 +978,8 @@
      k_descale,
      v_descale,
      seq_threshold_3D=None,
@@ -471,7 +471,7 @@ index c8b6d680c8..a081f87cc1 100644
      num_par_softmax_segments=None,
      softmax_segm_output=None,
      softmax_segm_max=None,
-@@ -931,6 +933,8 @@
+@@ -1045,6 +1047,8 @@
              k_scale_cache=k_scale_cache,
              v_scale_cache=v_scale_cache,
              seq_threshold_3D=seq_threshold_3D,

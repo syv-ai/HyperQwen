@@ -23,16 +23,16 @@ Apply with the patches/ set.
 Kind: fix
 What: compile the rejection sampler's Triton kernels at boot (fork #48)
 Upstream: none yet
-Cut-against: 0.33.0
+Cut-against: 0.34.0
 Retires-when: upstream PR
 
---- exported from ac57e9751b (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 3496e092a2 (spec-sampler-prewarm); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/model_executor/warmup/kernel_warmup.py b/model_executor/warmup/kernel_warmup.py
-index 0f1058a986..41cd8c8456 100644
+index bfb04f2c4c..3c7fcf035e 100644
 --- a/model_executor/warmup/kernel_warmup.py
 +++ b/model_executor/warmup/kernel_warmup.py
-@@ -11,6 +11,7 @@
+@@ -14,6 +14,7 @@
  from pathlib import Path
  from typing import TYPE_CHECKING
  
@@ -40,7 +40,7 @@ index 0f1058a986..41cd8c8456 100644
  import torch
  
  import vllm.envs as envs
-@@ -142,6 +143,63 @@
+@@ -224,6 +225,65 @@
      logger.info_once("Warmed up BF16x3 router GEMM configs: %s.", configs)
  
  
@@ -59,7 +59,9 @@ index 0f1058a986..41cd8c8456 100644
 +    mr = worker.model_runner
 +    rs = getattr(mr, "rejection_sampler", None)
 +    sp = getattr(mr, "speculator", None)
-+    if rs is None or sp is None or not getattr(worker, "use_v2_model_runner", False):
++    # 0.34 removed Model Runner V1 (#63373) and with it the worker's
++    # use_v2_model_runner flag: every runner is V2.
++    if rs is None or sp is None:
 +        return
 +    import dataclasses
 +
@@ -104,7 +106,7 @@ index 0f1058a986..41cd8c8456 100644
  def _warmup_gemm_rs_ar() -> None:
      # Model construction (Kimi-K3, DeepSeek-V4.1) imports this module only
      # when GEMM-RS/AR is enabled and initializes its singleton before
-@@ -201,6 +259,10 @@
+@@ -313,6 +373,10 @@
      compilation_config = worker.vllm_config.compilation_config
      cudagraph_capture_sizes = list(compilation_config.cudagraph_capture_sizes or [])
  

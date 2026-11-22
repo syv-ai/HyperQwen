@@ -1,5 +1,5 @@
 #!/bin/bash
-# Install the KVarN KV-cache port into this repo's vLLM 0.33.0 venv:
+# Install the KVarN KV-cache port into this repo's vLLM 0.34.0 venv:
 # applies the upstream hunks, then copies the new modules into site-packages/vllm.
 # usage: bash kvarn/install.sh            (idempotent: re-copying files is fine, and
 #        patches/apply.sh --kvarn skips a patch whose every hunk is already in the tree)

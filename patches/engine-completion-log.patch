@@ -30,16 +30,16 @@ Kind: feature
 What: one log line per completed engine step, so a stalled core is visible without scraping stats
   gaps
 Upstream: upstream PR (syv-ai #94/#110)
-Cut-against: 0.33.0: the log stays in the finished branch, before #58778's continuing_reqs else
+Cut-against: 0.34.0: the log stays in the finished branch, before #58778's continuing_reqs else
 Retires-when: upstreamed
 
---- exported from 5e695c6ed5 (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
+--- exported from 83fec94b42 (engine-completion-log); regenerate with scripts/export-patch.sh, do not edit ---
 
 diff --git a/v1/core/sched/scheduler.py b/v1/core/sched/scheduler.py
-index d35b7dfac4..373d7548f2 100644
+index 3dd7aa3d00..c23f60cb56 100644
 --- a/v1/core/sched/scheduler.py
 +++ b/v1/core/sched/scheduler.py
-@@ -2485,6 +2485,20 @@
+@@ -2550,6 +2550,20 @@
                          kv_transfer_params["remote_prefill_cached_tokens"] = (
                              prefill_stats.num_cached_tokens
                          )

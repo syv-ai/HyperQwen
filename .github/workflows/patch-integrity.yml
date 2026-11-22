@@ -65,6 +65,10 @@ jobs:
         run: bash bench/test_bool_knobs.sh
       - name: Check alternative.sh defaults GPU_UTIL to 0.93 under WSL2 and 0.95 natively (#401)
         run: bash bench/test_alt_wsl_gpu_util.sh
+      - name: Check every launcher turns vLLM 0.34's extensible KV cache off unless EXTRA_ARGS names it, and batch's fp8 GPU_UTIL is 0.93
+        run: bash bench/test_extensible_kv_default.sh
+      - name: Check the extensible KV stress report distinguishes unavailable telemetry from zero
+        run: python bench/test_ekv_stress.py
       - name: Check Vision limits, tower offload and boolean controls in every launcher without a GPU
         run: python bench/test_vision_knobs.py
       - name: Check the dflash2 seat note against the measured pools and resident counts
@@ -77,6 +81,8 @@ jobs:
         run: python bench/test_t4_battery.py
       - name: Check PTH_FA in the launchers (argv, refusals, unset = unchanged) without a GPU
         run: bash bench/test_pthfa_knob.sh
+      - name: Check INT8_ACT and INT8_LAYERS in every launcher (the int8 override, refusals, batch's W4A16 fallback) without a GPU
+        run: bash bench/test_int8_knob.sh
       - name: Check pthfa/install.sh builds with an nvcc of torch's CUDA major and checks with a cuobjdump not older
         run: bash bench/test_pthfa_install_toolchain.sh
       - name: Check patches/apply.sh leaves the package unchanged when a patch fails, and what its stamp tells apart (#445)
@@ -87,7 +93,7 @@ jobs:
           printf '#!/bin/sh\ncase "$*" in *compute_cap*) echo 8.6 ;; *) exit 9 ;; esac\n' > "$RUNNER_TEMP/cc86/nvidia-smi"
           chmod +x "$RUNNER_TEMP/cc86/nvidia-smi"
           export PATH="$RUNNER_TEMP/cc86:$PATH"
-          for t in no_key_bind prefix_cache_knob kv_offload_knob dynamic_k_knob tp_size bool_knobs resident_print fa2_fp8kv_knob pthfa_knob; do
+          for t in no_key_bind prefix_cache_knob kv_offload_knob dynamic_k_knob tp_size bool_knobs resident_print fa2_fp8kv_knob pthfa_knob int8_knob; do
             bash "bench/test_$t.sh"
           done
 
