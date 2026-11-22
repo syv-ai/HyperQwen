@@ -180,7 +180,9 @@ KV pin was set; each fix was then checked on a later image.
   0.7-0.8 s). One prompt sent twice does hit the GPU prefix cache. The decode gap is acceptance, not step time:
   one request at a time on that card, 0.33 and 0.34 run 22.27 and 22.30 ms per decode step over six greedy prompts.
   The gap comes from that one prompt, a 600-token essay: under greedy it reads 2.358 tokens per step on 0.34 against
-  2.549 there, and on a second RTX 4090 (WSL, 64k context, three boots each) 2.400 against 2.496-2.593. The other five
+  2.549 there, and on a second RTX 4090 (WSL, 64k context, three boots each; corrected 11-22: those boots ran
+  `single-user/start_qwen.sh`'s `SPEC=dflash2` profile on the `-fast` checkpoint, not `alternative.sh`) 2.400 against
+  2.496-2.593. The other five
   prompts show no greedy gap on either card (lepton 4.796 against 4.704). At the server's default sampling, 78
   requests per version over all six, 0.34 reads 1.9% lower (95% interval -3.9% to +0.1%), not established; the essay
   alone reads 2.5% lower. The reuse cost was `alternative.sh`'s dense retention with a KV tier, which now defaults to `0`
