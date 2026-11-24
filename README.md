@@ -242,6 +242,7 @@ Everything that used to be in this README, in the folder it belongs to.
 |---|---|
 | [batch/](batch/) · [single-user/](single-user/) | The two serving modes: full benchmark tables, every env knob, systemd units. |
 | [docs/install.md](docs/install.md) | The bare-metal venv install, for when you are not using the container. |
+| [docs/debian-13-native.md](docs/debian-13-native.md) | Native Debian 13 install: managed Python, pip CUDA and a verified two-card TP=2 DFlash2 service; one-card example unverified. |
 | [docs/docker.md](docs/docker.md) | The container image, and an independent WSL2 reproduction. |
 | [docs/clients.md](docs/clients.md) | Pointing coding agents and OpenAI-protocol clients at the server. |
 | [docs/multi-gpu.md](docs/multi-gpu.md) | What transfers to a second card, and which tensor-parallel shapes this model allows. |
