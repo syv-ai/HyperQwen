@@ -111,4 +111,15 @@ check 0    "$(arg_of $R $AL)"                                  "PREFIX_CACHE uns
 check none "$(arg_of $R $AL PREFIX_CACHE=0)"                   "PREFIX_CACHE=0: retention interval"
 check 0    "$(arg_of $R $AL PREFIX_CACHE=0 EXTRA_ARGS=$ON)"    "PREFIX_CACHE=0, $ON in EXTRA_ARGS: retention interval"
 check none "$(arg_of $R $AL EXTRA_ARGS=$OFF)"                  "$OFF in EXTRA_ARGS: retention interval"
+for sc in "$SU" "$AL"; do
+  # A revision is a value, even when it contains the flag name.
+  check 4096 "$(arg_of "$R" "$sc" CTX=fast PREFIX_RETENTION=4096 "EXTRA_ARGS=--revision=demo$R")" \
+    "$sc: a revision containing the retention flag preserves PREFIX_RETENTION"
+  for override in "$R 128" "--prefix_cache_retention_interval=128"; do
+    # Read every occurrence so a duplicate launcher default also fails the check.
+    values=$(run "$sc" CTX=fast PREFIX_RETENTION=4096 "EXTRA_ARGS=$override" |
+      awk -v flag="$R" '$0 == flag {getline; print; next} index($0, flag "=") == 1 {print substr($0, length(flag)+2)}')
+    check 128 "$values" "$sc: $override overrides PREFIX_RETENTION exactly once"
+  done
+done
 echo; [ $FAILS = 0 ] && echo "all checks passed" || { echo "$FAILS checks FAILED"; exit 1; }
