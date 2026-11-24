@@ -1429,13 +1429,15 @@ Things that each cost us hours, in rough order of pain. Worth skimming before yo
     interval on every draft profile: the measured one above, else `None` (dense,
     0.29's behaviour). `PREFIX_RETENTION=0` asks for boundaries only
     ([vllm-0.30.md](vllm-0.30.md) has the measurement). At `CTX=long`, the dense
-    default can also evict long documents advanced in turn: on 2x RTX 3090, TP=2,
-    DFlash2, 220 W, seven different ~88K-token documents then the first again gave
+    default can also evict long documents cycled in turn: on vLLM 0.33.0,
+    2x RTX 3090, TP=2, DFlash2, `DFLASH_TOKENS=7`, 220 W, seven different
+    ~88K-token documents then the first again gave
     0 cached tokens / 81.04 s TTFT dense, against 88,128 / 0.44 s with
     `PREFIX_RETENTION=0`; an immediate re-read hit in both (0.42 s,
-    [#482](https://github.com/syv-ai/HyperQwen/issues/482)). The launcher hints when
+    [#482](https://github.com/syv-ai/HyperQwen/issues/482)). `single-user/start_qwen.sh` hints when
     `CTX=long` uses dense implicitly with speculation and prefix caching on; set
-    `PREFIX_RETENTION=0` to keep replay boundaries only. The default stays dense.
+    `PREFIX_RETENTION=0` to keep replay boundaries only, or `PREFIX_RETENTION=`
+    (empty) to keep dense explicitly and silence the hint. The default stays dense.
     `alternative.sh` keys its default on a KV tier, so `None` in one boot log and
     `0` in another is the tier:
     without one it passes `0`, because at dense two ~60K conversations on its int4
