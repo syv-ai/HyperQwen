@@ -792,7 +792,7 @@ if [ "$PREFIX_CACHE_ON" = 1 ]; then
   # over as the flag), then PREFIX_RETENTION (0 keeps boundaries only; empty means dense).
   if [ -n "$SPEC_CFG" ]; then
     case " ${EXTRA_ARGS:-} " in
-      *"--prefix-cache-retention-interval"*) ;;
+      *" --prefix-cache-retention-interval "*|*" --prefix-cache-retention-interval="*) ;;
       *)
         RETENTION=
         if [ "$CTX" = "huge" ] && [ "$SPEC" = "dflash2" ]; then

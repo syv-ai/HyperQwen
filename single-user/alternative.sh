@@ -121,7 +121,7 @@ qwen_vision_args
 # only, empty = dense); the flag in EXTRA_ARGS wins.
 if [ "$PREFIX_CACHE_ON" = 1 ] && [ "$SPEC" = dflash2 ]; then
   case " ${EXTRA_ARGS:-} " in
-    *"--prefix-cache-retention-interval"*) ;;
+    *" --prefix-cache-retention-interval "*|*" --prefix-cache-retention-interval="*) ;;
     *)
       case " ${EXTRA_ARGS:-} " in
         *"--kv-offloading-size"*|*"--kv-transfer-config"*) R_DEFAULT=None ;;
