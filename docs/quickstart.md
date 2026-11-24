@@ -2,7 +2,7 @@
 
 The one canonical path to a running server. Bare metal instead?
 See [docs/install.md](install.md), or [native Debian 13](debian-13-native.md)
-for one or two RTX 3090s.
+for a verified two-RTX-3090 TP=2 DFlash2 service and an unverified one-card example.
 
 [← back to the main README](../README.md)
 
