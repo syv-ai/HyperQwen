@@ -88,26 +88,31 @@ steps expect a toolkit layout with `lib64/libcudart.so`; the wheels supply
 `lib/libcudart.so.13`. Assemble a symlink tree from the venv's compiler wheels:
 
 ```bash
-CU=$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')/nvidia/cu13
-"$CU/bin/nvcc" --version                 # must report V13.0.88
 export CUDA_HOME="$RELEASE/cuda13-home"
-mkdir -p "$CUDA_HOME/lib64"
-for d in bin include nvvm cccl; do
-  if [ -e "$CU/$d" ]; then
-    ln -sfn "$CU/$d" "$CUDA_HOME/$d"
-  fi
-done
-for lib in "$CU/lib/"*; do
-  if [ -f "$lib" ]; then
-    ln -sfn "$lib" "$CUDA_HOME/lib64/$(basename "$lib")"
-  fi
-done
-test -f "$CU/lib/libcudart.so.13"
-ln -sfn "$CU/lib/libcudart.so.13" "$CUDA_HOME/lib64/libcudart.so"
 export PATH="$CUDA_HOME/bin:$PATH"
 export FA2_CACHE="$RELEASE/.build-cache/fa2"
 export MAX_JOBS=4
+(
+  set -euo pipefail
+  CU=$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["platlib"])')/nvidia/cu13
+  "$CU/bin/nvcc" --version                 # must report V13.0.88
+  mkdir -p "$CUDA_HOME/lib64"
+  for d in bin include nvvm cccl; do
+    if [ -e "$CU/$d" ]; then
+      ln -sfn "$CU/$d" "$CUDA_HOME/$d"
+    fi
+  done
+  for lib in "$CU/lib/"*; do
+    if [ -f "$lib" ]; then
+      ln -sfn "$lib" "$CUDA_HOME/lib64/$(basename "$lib")"
+    fi
+  done
+  test -f "$CU/lib/libcudart.so.13"
+  ln -sfn "$CU/lib/libcudart.so.13" "$CUDA_HOME/lib64/libcudart.so"
+)
 ```
+
+CUDA setup and model preparation stop on failure in subshells; `CUDA_HOME`, `PATH`, `FA2_CACHE` and `MAX_JOBS` stay exported in the parent shell.
 
 This is the **compiler** version, not a claim that every CUDA runtime package
 has version 13.0.88. Preserve `CUDA_HOME` and the venv's `PATH` in the service
@@ -166,7 +171,7 @@ patch order. `verify.sh --install` checks installation state, not live GPU
 behavior. Continue only after the entire block exits successfully.
 
 There is one expected metadata conflict after the xgrammar overlay: vLLM
-0.33.0 requires `xgrammar==0.2.8`, while this checkout builds the commit in
+0.33.0 requires `xgrammar==0.2.8`, while the 3d6c954 checkout builds the commit in
 `xgrammar/PIN` (`fa893f0cc2d117e51218e55ea5b0d88579741bf7`). Inspect the pin and
 installed version, run the grammar check and import the vLLM backend:
 
@@ -176,7 +181,7 @@ cat xgrammar/PIN
 CUDA_VISIBLE_DEVICES= "$PY" xgrammar/check.py
 CUDA_VISIBLE_DEVICES= "$PY" -c 'import vllm.v1.structured_output.backend_xgrammar'
 "$PY" -m pip check
-"$PY" -m pip freeze --all > "$RELEASE/.build-cache/pip-freeze.txt"
+"$PY" -m pip freeze --all > "$RELEASE/pip-freeze.txt"
 ```
 
 Expect the post-overlay `pip check` to exit nonzero with only the conflict
@@ -197,26 +202,29 @@ Keep those steps. Copy the script under the build directory, replace only its
 fixed `cd /app` and venv `PATH`, and supply `BASE_MODEL_DIR` explicitly:
 
 ```bash
-grep -Fxq 'cd /app' docker/prepare.sh
-grep -Fxq 'export PATH=/app/venv/bin:$PATH' docker/prepare.sh
-sed 's|^cd /app$|cd "${HYPERQWEN_ROOT:?}"|; s|^export PATH=/app/venv/bin:\$PATH$|export PATH="$HYPERQWEN_ROOT/venv/bin:$PATH"|' \
-  docker/prepare.sh > "$RELEASE/.build-cache/prepare-native.sh"
+(
+  set -euo pipefail
+  grep -Fxq 'cd /app' docker/prepare.sh
+  grep -Fxq 'export PATH=/app/venv/bin:$PATH' docker/prepare.sh
+  sed 's|^cd /app$|cd "${HYPERQWEN_ROOT:?}"|; s|^export PATH=/app/venv/bin:\$PATH$|export PATH="$HYPERQWEN_ROOT/venv/bin:$PATH"|' \
+    docker/prepare.sh > "$RELEASE/.build-cache/prepare-native.sh"
 
-export HF_HOME="$RELEASE/.build-cache/huggingface"
-export HF_HUB_CACHE="$MODELS/.hf-hub"
-export HF_XET_HIGH_PERFORMANCE=1
-env CUDA_VISIBLE_DEVICES= HYPERQWEN_ROOT="$RELEASE" \
-  BASE_MODEL_DIR="$MODELS/Qwen3.8-27B-W4A16-AutoRound" \
-  HF_REPO=dbirks/Qwen3.8-27B-W4A16-AutoRound \
-  FAST_VARIANT=1 DFLASH2=0 LSA=0 HARDEN_TEMPLATES=1 TRANSLATE_EFFORT=1 \
-  bash "$RELEASE/.build-cache/prepare-native.sh"
+  export HF_HOME="$RELEASE/.build-cache/huggingface"
+  export HF_HUB_CACHE="$MODELS/.hf-hub"
+  export HF_XET_HIGH_PERFORMANCE=1
+  env CUDA_VISIBLE_DEVICES= HYPERQWEN_ROOT="$RELEASE" \
+    BASE_MODEL_DIR="$MODELS/Qwen3.8-27B-W4A16-AutoRound" \
+    HF_REPO=dbirks/Qwen3.8-27B-W4A16-AutoRound \
+    FAST_VARIANT=1 DFLASH2=0 LSA=0 HARDEN_TEMPLATES=1 TRANSLATE_EFFORT=1 \
+    bash "$RELEASE/.build-cache/prepare-native.sh"
 
-# Required for the two-card DFlash2 launch below; stop if this download fails.
-CUDA_VISIBLE_DEVICES= "$PY" prepare/fetch_dflash2.py "$MODELS/Qwen3.8-27B-DFlash2-W4A16"
+  # Required for the two-card DFlash2 launch below; stop if this download fails.
+  CUDA_VISIBLE_DEVICES= "$PY" prepare/fetch_dflash2.py "$MODELS/Qwen3.8-27B-DFlash2-W4A16"
 
-for model in Qwen3.8-27B-W4A16-AutoRound Qwen3.8-27B-W4A16-AutoRound-fast; do
-  MODEL="$MODELS/$model" bash verify.sh --no-server
-done
+  for model in Qwen3.8-27B-W4A16-AutoRound Qwen3.8-27B-W4A16-AutoRound-fast; do
+    MODEL="$MODELS/$model" bash verify.sh --no-server
+  done
+)
 ```
 
 The `models` symlink created earlier matters: the template hardener's default
