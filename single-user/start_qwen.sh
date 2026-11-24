@@ -790,6 +790,9 @@ if [ "$PREFIX_CACHE_ON" = 1 ]; then
   # DFlash2 at 7/15 drafts, else None, which is 0.29's behaviour. The flag in EXTRA_ARGS wins, then
   # an exported VLLM_PREFIX_CACHE_RETENTION_INTERVAL (a spelling 0.30 no longer reads, carried
   # over as the flag), then PREFIX_RETENTION (0 keeps boundaries only; empty means dense).
+  # CTX=long, 2x RTX 3090 TP=2, DFlash2, 220 W (#482): seven different ~88K-token
+  # documents then the first again gave 0 cached tokens / 81.04 s TTFT dense, against
+  # 88,128 / 0.44 s with PREFIX_RETENTION=0. An immediate re-read hit in both (0.42 s).
   if [ -n "$SPEC_CFG" ]; then
     case " ${EXTRA_ARGS:-} " in
       *"--prefix-cache-retention-interval"*) ;;
@@ -803,6 +806,10 @@ if [ "$PREFIX_CACHE_ON" = 1 ]; then
                  "evict each other (#174). Set PREFIX_RETENTION to 6x the 'attention block size'" \
                  "line this boot prints." >&2
           fi
+        elif [ "$CTX" = "long" ] && [ -z "${PREFIX_RETENTION+x}" ] && [ -z "${VLLM_PREFIX_CACHE_RETENTION_INTERVAL+x}" ]; then
+          echo "[start_qwen] CTX=long: prefix retention stays dense; several long documents or" \
+               "conversations advanced in turn evict each other (#174, #482). Set PREFIX_RETENTION=0" \
+               "to keep replay boundaries only." >&2
         fi
         RETENTION=${VLLM_PREFIX_CACHE_RETENTION_INTERVAL-${PREFIX_RETENTION-$RETENTION}}
         EXTRA_ARGS="--prefix-cache-retention-interval ${RETENTION:-None} ${EXTRA_ARGS}" ;;
