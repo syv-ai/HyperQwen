@@ -12,6 +12,9 @@ Stack: Ubuntu 26.04, system Python 3.14.4, native venv (no container), RTX 3090
 @ 250 W, vLLM 0.27.1 + the full patch stack. See the reproduction doc for the
 detailed table.
 
+For the later Debian 13 installation on one or two RTX 3090s, see
+[debian-13-native.md](debian-13-native.md).
+
 ## Offload fix validation (the native control arm)
 
 The [OffloadingConnector WSL2 fix](wsl2-4090.md#cpu-offload-tier-under-wsl2-the-offloadingconnector-fix-2026-08-28)

@@ -18,6 +18,8 @@ full reproductions; the list below collects the shorter reports from issues.
   batch arm only a headless box can run
 - [../wsl2-4090.md](../wsl2-4090.md) — RTX 4090 under Windows 11 / WSL2, the
   cross-platform half of the same campaign
+- [../debian-13-native.md](../debian-13-native.md) — native Debian 13 on one
+  or two RTX 3090s: verified installation and service notes at `3d6c954`
 - [cmp-170hx-64gb.md](cmp-170hx-64gb.md) — the third sm80 box the README asked for:
   unlocked CMP 170HX 64 GB, Docker, vLLM 0.27.1 AND 0.29.0. The #72/#98 fault did
   not reproduce on either image (including a stock positive control and the

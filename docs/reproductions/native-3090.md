@@ -5,6 +5,9 @@ applied. Every run below discards a warmup pass, per the README's own instructio
 
 [← back to Python 3.14](../python-314.md) · [← main README](../../README.md)
 
+For native Debian 13 installation notes, see
+[debian-13-native.md](../debian-13-native.md).
+
 ## Hardware and stack
 
 | | |

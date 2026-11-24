@@ -6,6 +6,10 @@ this.
 
 [← back to the main README](../README.md)
 
+For Debian 13 on one or two RTX 3090s, see
+[debian-13-native.md](debian-13-native.md): the verified Python 3.12.12 and pip
+CUDA path, including the GCC 14 xgrammar build workaround.
+
 The default install is the container ([Quick start](../README.md#quick-start) — the
 prebuilt image already contains everything this section builds), so this
 manual venv path is for hacking on the stack, or running it bare-metal.

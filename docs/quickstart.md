@@ -1,7 +1,8 @@
 # Quickstart (Docker)
 
 The one canonical path to a running server. Bare metal instead?
-See [docs/install.md](install.md).
+See [docs/install.md](install.md), or [native Debian 13](debian-13-native.md)
+for one or two RTX 3090s.
 
 [← back to the main README](../README.md)
 
