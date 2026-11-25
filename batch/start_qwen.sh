@@ -222,11 +222,10 @@ fi
 # vLLM 0.28 refuses every KV connector under expandable_segments:True unless the cumem allocator is on: the VMM
 # allocator can move KV pages out from under the connector's pinned copies. On WSL2 the default above already
 # avoids it; on native it is the default, so the tier could not boot with the launcher's defaults (#95).
-case " ${EXTRA_ARGS:-} " in
-  *"--kv-offloading-size"*|*"--kv-transfer-config"*)
-    [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
-    ALLOC_DEFAULT=expandable_segments:False ;;
-esac
+if qwen_has_kv_connector; then
+  [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
+  ALLOC_DEFAULT=expandable_segments:False
+fi
 # vLLM's custom all-reduce exports its graph buffers over CUDA IPC
 # (`cudaIpcGetMemHandle`, csrc/custom_all_reduce.cuh:164) and an expandable
 # (VMM) segment has no handle to export, so at TP>1 with CUDA graphs capture

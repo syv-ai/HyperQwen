@@ -22,6 +22,7 @@ class ModelVerificationTests(unittest.TestCase):
                 root = Path(tmp)
                 (root / "single-user").mkdir()
                 shutil.copyfile(REPO / "resolve_config.sh", root / "resolve_config.sh")
+                shutil.copyfile(REPO / "launcher_common.sh", root / "launcher_common.sh")
                 shutil.copyfile(REPO / "single-user/select_model.sh", root / "single-user/select_model.sh")
                 if fast:
                     (root / "models/Qwen3.8-27B-W4A16-AutoRound-fast").mkdir(parents=True)
