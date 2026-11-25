@@ -187,13 +187,21 @@ qwen_fa2_fp8kv_single_only() {
   fi
 }
 
+# Match option names in EXTRA_ARGS, including vLLM's dotted JSON fields.
+# The standalone config resolver can receive raw whitespace and underscores.
+qwen_has_kv_connector() {
+  local size='--kv[-_]offloading[-_]size([[:space:]=]|$)'
+  local transfer='--kv[-_]transfer[-_]config([[:space:].=]|$)'
+  [[ ${EXTRA_ARGS:-} =~ (^|[[:space:]])($size|$transfer) ]]
+}
+
 qwen_kv_offload_args() {
   if [ -n "${KV_OFFLOAD_GB:-}" ] && [ "$KV_OFFLOAD_GB" != 0 ]; then
-    case " ${EXTRA_ARGS:-} " in
-      *"--kv-offloading-size"*|*"--kv-transfer-config"*)
-        echo "KV_OFFLOAD_GB=$KV_OFFLOAD_GB ignored: EXTRA_ARGS already configures a KV connector" >&2 ;;
-      *) EXTRA_ARGS="--kv-offloading-size $KV_OFFLOAD_GB ${EXTRA_ARGS:-}" ;;
-    esac
+    if qwen_has_kv_connector; then
+      echo "KV_OFFLOAD_GB=$KV_OFFLOAD_GB ignored: EXTRA_ARGS already configures a KV connector" >&2
+    else
+      EXTRA_ARGS="--kv-offloading-size $KV_OFFLOAD_GB ${EXTRA_ARGS:-}"
+    fi
   fi
 }
 

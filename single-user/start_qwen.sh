@@ -340,11 +340,12 @@ if [ "$PTH_FA" = 1 ]; then
       echo "PTH_FA=1 sets --attention-backend, --kv-cache-dtype and the speculative config itself;" >&2
       echo "  EXTRA_ARGS carries one of them and would override it. Remove it from EXTRA_ARGS." >&2
       exit 1 ;;
-    *"--kv-offloading-size"*|*"--kv-transfer-config"*)
-      echo "PTH_FA=1 with a KV connector (KV_OFFLOAD_GB, --kv-offloading-size, --kv-transfer-config) is" >&2
-      echo "  untested on this backend; refusing. Use PTH_FA=0 for a CPU KV tier." >&2
-      exit 1 ;;
   esac
+  if qwen_has_kv_connector; then
+    echo "PTH_FA=1 with a KV connector (KV_OFFLOAD_GB, --kv-offloading-size, --kv-transfer-config) is" >&2
+    echo "  untested on this backend; refusing. Use PTH_FA=0 for a CPU KV tier." >&2
+    exit 1
+  fi
   pthfa_installed || {
     echo "PTH_FA=1 needs the pth_flash_attn package and its op library in the venv: bash pthfa/install.sh" >&2
     echo "  (the Docker image has it), or PTH_FA=0." >&2
@@ -1007,11 +1008,10 @@ fi
 # vLLM 0.28 refuses every KV connector under expandable_segments:True unless the cumem allocator is on: the VMM
 # allocator can move KV pages out from under the connector's pinned copies. On WSL2 the default above already
 # avoids it; on native it is the default, so the tier could not boot with the launcher's defaults (#95).
-case " ${EXTRA_ARGS:-} " in
-  *"--kv-offloading-size"*|*"--kv-transfer-config"*)
-    [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
-    ALLOC_DEFAULT=expandable_segments:False ;;
-esac
+if qwen_has_kv_connector; then
+  [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
+  ALLOC_DEFAULT=expandable_segments:False
+fi
 # vLLM's custom all-reduce exports its graph buffers over CUDA IPC
 # (`cudaIpcGetMemHandle`, csrc/custom_all_reduce.cuh:164) and an expandable
 # (VMM) segment has no handle to export, so at TP>1 with CUDA graphs capture

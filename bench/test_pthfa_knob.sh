@@ -77,6 +77,8 @@ for arm in "${ARMS[@]}"; do
 done
 
 echo "== PTH_FA=1, SPEC=mtp CTX=long"
+run "$T/new" single-user/start_qwen.sh SPEC=mtp CTX=long PTH_FA=1 EXTRA_ARGS='--revision=example--kv-transfer-config' > "$T/revision"
+check "0 CUSTOM" "$(rc) $(after --attention-backend < "$T/revision")" "PTH_FA=1 accepts a revision containing a connector option name"
 run "$T/new" single-user/start_qwen.sh SPEC=mtp CTX=long > "$T/off"
 run "$T/new" single-user/start_qwen.sh SPEC=mtp CTX=long PTH_FA=1 > "$T/on"; cp "$T/err" "$T/on.err"
 check 0 "$(rc)" "boots"

@@ -20,7 +20,7 @@
 #      never printed, only set/unset + length; api_key.txt as present/absent).
 #
 # Fail-closed: refusal paths call exit, which terminates a sourcing launcher
-# even without `set -e`. This file needs nothing but bash and REPO set.
+# even without `set -e`. Set REPO to the checkout containing launcher_common.sh.
 # Run standalone for tests/CI: `bash resolve_config.sh single`.
 
 # _refuse prints the reason and stops the launcher. Separate function so the
@@ -50,6 +50,10 @@ resolve_effective_config() {
   [ "$mode" = "batch" ] || [ "$mode" = "single" ] \
     || _refuse "unknown mode $mode (want batch|single)"
   [ -n "${REPO:-}" ] || _refuse "REPO is unset"
+  # The launchers already loaded these helpers; doctor and standalone callers may not have.
+  if ! declare -F qwen_has_kv_connector >/dev/null; then
+    source "$REPO/launcher_common.sh" || _refuse "cannot load launcher_common.sh"
+  fi
 
   # 1. Validate the enumerated controls. Defaults mirror the launchers.
   local ctx=${CTX:-} spec=${SPEC:-} kv=${KV:-}
@@ -74,9 +78,8 @@ resolve_effective_config() {
     # FA2_FP8KV=1 alongside it is refused here, before the launcher probes either plugin.
     local _fa2_tier=
     if [ -n "${KV_OFFLOAD_GB:-}" ] && [ "$KV_OFFLOAD_GB" != 0 ]; then _fa2_tier="KV_OFFLOAD_GB=$KV_OFFLOAD_GB"
-    else case " ${EXTRA_ARGS:-} " in
-      *"--kv-offloading-size"*|*"--kv-transfer-config"*) _fa2_tier="a KV connector in EXTRA_ARGS (--kv-offloading-size/--kv-transfer-config)" ;;
-    esac; fi
+    elif qwen_has_kv_connector; then _fa2_tier="a KV connector in EXTRA_ARGS (--kv-offloading-size/--kv-transfer-config)"
+    fi
     # LSA=1 (D-LSA flat, lsa/) runs only on SPEC=mtp CTX=long, on the arm's int8_per_token_head cache, as
     # the CUSTOM backend -- the slot pthfa/ also takes -- so it settles PTH_FA (0, and an explicit 1 is
     # refused) and FA2_FP8KV (unused on mtp, an explicit 1 is refused) before their defaults below.

@@ -29,11 +29,10 @@ fi
 # vLLM 0.28 refuses every KV connector under expandable_segments:True unless the cumem allocator is on: the VMM
 # allocator can move KV pages out from under the connector's pinned copies. On WSL2 the default above already
 # avoids it; on native it is the default, so the tier could not boot with the launcher's defaults (#95).
-case " ${EXTRA_ARGS:-} " in
-  *"--kv-offloading-size"*|*"--kv-transfer-config"*)
-    [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
-    ALLOC_DEFAULT=expandable_segments:False ;;
-esac
+if qwen_has_kv_connector; then
+  [ -z "${PYTORCH_CUDA_ALLOC_CONF:-}" ] && [ "$ALLOC_DEFAULT" = expandable_segments:True ] && echo "KV connector in EXTRA_ARGS: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:False (vLLM rejects the connector under VMM; set it explicitly to override)"
+  ALLOC_DEFAULT=expandable_segments:False
+fi
 export PYTORCH_CUDA_ALLOC_CONF=${PYTORCH_CUDA_ALLOC_CONF:-$ALLOC_DEFAULT}
 export FLASHINFER_DISABLE_VERSION_CHECK=1
 export VLLM_USE_FLASHINFER_SAMPLER=0
@@ -123,10 +122,7 @@ if [ "$PREFIX_CACHE_ON" = 1 ] && [ "$SPEC" = dflash2 ]; then
   case " ${EXTRA_ARGS:-} " in
     *"--prefix-cache-retention-interval"*) ;;
     *)
-      case " ${EXTRA_ARGS:-} " in
-        *"--kv-offloading-size"*|*"--kv-transfer-config"*) R_DEFAULT=None ;;
-        *) R_DEFAULT=0 ;;
-      esac
+      if qwen_has_kv_connector; then R_DEFAULT=None; else R_DEFAULT=0; fi
       if [ "${PREFIX_RETENTION+set}" = set ]; then R=${PREFIX_RETENTION:-None}; else R=$R_DEFAULT; fi
       EXTRA_ARGS="--prefix-cache-retention-interval $R ${EXTRA_ARGS:-}" ;;
   esac
